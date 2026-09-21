@@ -1,0 +1,46 @@
+# CI 基线（M0 收尾项，总计划 RISK-2026-003 的解除条件：Linux CI 门禁）。
+# 门禁：PR 与 master push 必须全绿；按 preset 矩阵覆盖 Linux 三档与 Windows。
+# 测试集：ctest 全量（unit / smoke；integration 标签随 M1-06 加入后自动纳入）。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux / ${{ matrix.preset }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [debug, asan, ubsan]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure (${{ matrix.preset }})
+        run: cmake --preset ${{ matrix.preset }}
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} --parallel
+      - name: Test
+        run: ctest --preset ${{ matrix.preset }} --output-on-failure
+
+  windows:
+    name: Windows / debug (MSVC)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure
+        run: cmake --preset debug
+      - name: Build
+        run: cmake --build --preset debug --config Debug --parallel
+      - name: Test
+        run: ctest --preset debug -C Debug --output-on-failure
