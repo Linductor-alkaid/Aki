@@ -13,9 +13,11 @@ include(cmake/Dependencies.cmake)
 
 # 警告级别只作用于第一方目标；第三方依赖（FetchContent 引入的测试框架等）不继承，
 # 避免上游告警被 -Werror 放大成构建失败。
+# MSVC 的 /utf-8：源码为 UTF-8 无 BOM，缺省 GBK 代码页会把多字节序列与换行符合并，
+# 破坏后续行解析（M1 验证中实际复现）。
 function(aki_apply_warnings target scope)
     if(MSVC)
-        target_compile_options(${target} ${scope} /W4 /permissive- /EHsc)
+        target_compile_options(${target} ${scope} /W4 /permissive- /EHsc /utf-8)
     else()
         target_compile_options(${target} ${scope} -Wall -Wextra -Wpedantic)
     endif()
