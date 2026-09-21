@@ -275,6 +275,38 @@ graph TD
 不需要直接依赖 Heyaki 的具体接口。Heyaki
 后续调整接口时，变化也主要收敛在这一层。
 
+### 8.1 Heyaki Adapter SPI（M1 契约）
+
+M1 以纯虚抽象接口固定 SPI（`DEC-002`），真实 Heyaki 在 M3 目标级接入
+（`DEC-003` / `DEC-006`）。接口只表达应用语义，不出现 Heyaki / EUI-NEO / 平台 /
+executor 类型（`RULE-10`）；heyaki 层仅依赖第 3~7 节领域类型，不反向依赖 app 层
+（`RULE-01`）。
+
+出站（应用 → Adapter），`bool` 返回值为有界 admission 结果，拒绝必须可见：
+
+- `start_discovery(DiscoveryMethod)` / `stop_discovery()`：设备发现启停（第 4 节）；
+  扫描型来源（LAN 发现 / Relay）启动扫描，记录型来源的接入在 M3 细化。
+- `send_text_message(receiver, MessageId, text)`：文本消息发送（第 6 节）；
+  `MessageId` 由应用生成并保持稳定（`RULE-08`）。
+- `start_file_transfer(receiver, TransferId, FileMetadata)` /
+  `pause_transfer` / `resume_transfer` / `cancel_transfer(TransferId)`：文件传输
+  接口面（第 7 节）。M4 前仅签名与 TransferId 语义——一个 `TransferId` 对应一个
+  传输会话，不可重复启动；文件本体不经本接口传输（`RULE-05`）。
+
+入站（Adapter → 应用）经 `HeyakiAdapterSink` 纯虚接口投递，方法与第 10 节 9 类事件
+一一对应（`on_device_discovered` / `on_device_connected` / `on_device_disconnected` /
+`on_message_received` / `on_message_delivered` / `on_transfer_started` /
+`on_transfer_progress` / `on_transfer_completed` / `on_connection_path_changed`），
+返回值表示投递是否被接受（校验失败或下游背压拒绝可见）。其中
+`on_transfer_completed` 的 `final_state` 仅取 `Completed` / `Failed` / `Cancelled`
+（第 10.1 节）。
+
+纪律：Adapter 回调只做有界校验与投递（`EXEC-02`），业务处理一律在 Manager 的执行
+上下文（M1-05）；事件从 Sink 到 Application State 的桥接由应用层完成——Sink 实现把
+事件写入第 10.1 节的事件入口并提交对应的状态更新。测试与冒烟宿主使用同目录的
+`FakeHeyakiAdapter`：以 `inject_*` 编程式注入上述入站事件，注入路径即 `EXEC-02`
+回调路径（有界校验 + 投递），不做任何真实 I/O。
+
 ## 9. GUI
 
 桌面客户端使用 C++，GUI 采用 EUI-NEO。Aki

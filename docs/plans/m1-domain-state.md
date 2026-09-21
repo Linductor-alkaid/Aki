@@ -58,8 +58,14 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
   pinned executor 库经根 `CMakeLists.txt` 完成目标级接入；设计第 10.1 节补充 comm
   语义映射；单测 `test_app_state`（13 test case / 168 断言）覆盖验收 ①②④，
   详见验证记录。）
-- [ ] `M1-03` 提供 Heyaki Adapter SPI 抽象接口与 `FakeHeyakiAdapter`，支持注入发现、
-  连接路径变化与消息事件。
+- [x] `M1-03` 提供 Heyaki Adapter SPI 抽象接口与 `FakeHeyakiAdapter`，支持注入发现、
+  连接路径变化与消息事件。（2026-09-22：`heyaki/adapter/heyaki_adapter.hpp`
+  （`HeyakiAdapter` 出站 + `HeyakiAdapterSink` 入站，9 个 Sink 方法与设计第 10 节
+  9 类事件一一对应，仅依赖第 3~7 节领域类型，`RULE-01`/`RULE-10`）、
+  `heyaki/adapter/fake_heyaki_adapter.hpp`（`inject_*` 编程式注入，`EXEC-02`
+  有界校验 + 投递，结果经返回值可见）；设计第 8.1 节先行固化 SPI 契约；
+  单测 `test_heyaki_adapter`（11 test case / 116 断言）覆盖验收 ①② 与 DOD-02
+  六项；`heyaki/events` 未引入——Heyaki 原生事件类型随 M3 `DEC-006` 落地。）
 - [ ] `M1-04` 提供 `app/lifecycle` 的 Executor 初始化/关闭 owner 实现并满足 `EXEC-01`
   关闭顺序，附 shutdown 测试。
 - [ ] `M1-05` 提供 Device / Conversation / Message / Transfer Manager 骨架，任务全部经
@@ -162,3 +168,41 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
     尚无 CI job（预设已存在），补跑条件：CI 矩阵增加 tsan preset。
   - 同步：设计第 10.1 节、[DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)
     冻结 Accepted、总计划决策表与当前状态、本里程碑工作项与风险节。
+
+- 2026-09-22（`M1-03`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 / CMake 4.1.0）：
+  - 范围：`heyaki/adapter/heyaki_adapter.hpp`（SPI 纯虚接口）、
+    `heyaki/adapter/fake_heyaki_adapter.hpp`（假实现）、设计第 8.1 节（先行固化）、
+    `tests/unit/test_heyaki_adapter.cpp`（自带 main 的 Executor owner，
+    AGENTS 规则 7）、`tests/CMakeLists.txt` 接入；`heyaki/events` 不引入。
+  - 依据：[设计第 3~8.1/10/10.1/14 节](../design/aki_design.md)（8.1 为本次先行
+    补充）、[DEC-002](../decisions/DEC-002-layering-and-state-boundary.md)、
+    [DEC-003](../decisions/DEC-003-dependency-locking.md)、总计划
+    `RULE-01`/`RULE-03`/`RULE-08`/`RULE-09`/`RULE-10`/`EXEC-02`、
+    executor-integration communication 卡片（本会话已加载）。
+  - 验证（生成器说明同 `M1-02` 记录：MinGW 默认生成器受限制 1 阻塞，以 MSVC
+    生成器等价执行）：
+    - `cmake --preset debug -G "Visual Studio 17 2022" -A x64 &&
+      cmake --build --preset debug --config Debug && ctest --preset debug -C Debug`
+      → 8/8 通过（新 `test_heyaki_adapter`：11 test case / 116 断言；同进程重复
+      运行 15/15 稳定）。
+    - `cmake --preset release -G "Visual Studio 17 2022" -A x64 &&
+      cmake --build --preset release --config Release && ctest --preset release -C Release`
+      → 8/8 通过。
+    - GCC 语法检查（CI Linux 告警姿势）：
+      `g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -fsyntax-only`（含
+      Catch2/executor include）通过——过程中修正两处 `uint64_t`/`int` 比较的
+      sign-compare（MSVC /W4 未报，CI Linux 会 -Werror）。
+    - RULE-10 证据（验收 ②）：`grep -n "#include" heyaki/adapter/*.hpp` 仅列出
+      第 3~7 节领域头与 `<cstdint>`/`<string_view>`/标准库容器；
+      `grep -rln "executor/" heyaki/adapter/` 无输出。
+    - 覆盖映射：注入发现 → 快照出现新设备 + 主路径事件（正常完成）；注入连接路径
+      变化 → `LatestMailbox` 更新、快照不发布（设计 10.1 单值摘要语义）；注入消息 →
+      主路径 FIFO；终态/取消后注入迟到进度/信任 → 状态机应用层拒绝
+      （`updates_rejected`，RULE-08）；DOD-02 六项沿注入管线——正常完成、任务异常
+      （future 异常 + `task_exception_count`，已入队事件不丢）、提交拒绝（无 sink /
+      空载荷 / 非终态 completed / inbox 满 / TransferId 重复启动与未知名控制）、
+      执行中取消（close 解除阻塞消费）、超时（空 outbox `Timeout`）、shutdown
+      （close 排空注入存量 → `Closed`，关闭后注入明确拒绝）。
+  - 限制：MinGW 默认生成器仍受 `M1-02` 验证记录限制 1（pinned executor 构建缺陷）
+    阻塞，未变化；ASAN/UBSAN 证据随本 PR 的 Linux CI 门禁提供；TSAN 沿用限制 2。
+  - 同步：设计第 8.1 节、本里程碑工作项、总计划当前状态。

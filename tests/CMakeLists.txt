@@ -65,3 +65,19 @@ target_link_libraries(test_app_state PRIVATE
     aki_transfer)
 add_test(NAME test_app_state COMMAND test_app_state)
 set_tests_properties(test_app_state PROPERTIES LABELS "unit")
+
+# M1-03：Heyaki Adapter SPI 与 FakeHeyakiAdapter 测试。同为自带 main 的
+# Executor owner（AGENTS.md 规则 7）；aki_heyaki 经仓库根 include 目录使用
+# 头文件形式接入，链接经 aki_app 传播 executor::executor。
+add_executable(test_heyaki_adapter unit/test_heyaki_adapter.cpp)
+target_compile_features(test_heyaki_adapter PRIVATE cxx_std_20)
+aki_apply_warnings(test_heyaki_adapter PRIVATE)
+target_link_libraries(test_heyaki_adapter PRIVATE
+    Catch2::Catch2
+    aki_app
+    aki_device
+    aki_conversation
+    aki_transfer
+    aki_heyaki)
+add_test(NAME test_heyaki_adapter COMMAND test_heyaki_adapter)
+set_tests_properties(test_heyaki_adapter PROPERTIES LABELS "unit")
