@@ -346,6 +346,42 @@ connection path changed
 是网络侧与渲染侧之间的状态边界。这个边界需要在早期固定，否则大文件传输和多设备连接加入后，网络回调直接进入
 UI 很容易形成难以控制的跨线程状态修改。
 
+### 10.1 executor::comm 语义映射
+
+Application State 的跨上下文交付落在 pinned executor（v0.5.0-7 @ `74a9419`）的
+`executor::comm` 组件上（总计划 `EXEC-03`）。按交付语义选型，不自建队列，也不以
+“共享可变状态 + mutex + 条件变量”替代：
+
+| 交付语义 | 组件 | 说明 |
+| --- | --- | --- |
+| Application State 本体（网络侧 ↔ 渲染侧状态边界） | `DoubleBuffer<AppState>` | 完整一致快照，单写多读（SWMR）；消费侧持有 `sequence`，经 `try_load` / `load_newer_than` 去重取新 |
+| 只关心最新值的单值状态（如当前连接路径摘要） | `LatestMailbox<T>` | 覆盖式 latest-wins；中间值可被覆盖，不承载逐条必达事件 |
+| 事件广播（诊断 / 日志 / 后续 Agent 观察者） | `Topic<std::shared_ptr<const AppEvent>>` | in-process、无重放、best-effort；每订阅者独立有界队列（默认 `RejectNewest`），发布方必须检查 `TopicPublishResult` 的拒绝计数 |
+| 上表 9 类必达事件的投递主路径 | `MpscChannel<AppEvent>` | 逐条 FIFO 必达；有界容量，满即拒绝（`EXEC-02` 维持不变） |
+
+单写者纪律：SWMR 是 `DoubleBuffer` 的硬契约，多个写者并发发布会互相覆盖更新。各
+Manager 的状态更新与事件经 `MpscChannel` 汇聚到单一状态 owner（Manager 侧，
+`DEC-002` / `RULE-02`），由 owner 在其执行上下文内合成新 `AppState` 后发布；任何其他
+上下文不得直接写快照。事件进入投递主路径时由 owner 统一分配单调递增序列号，消费侧
+据此排序与去重。
+
+三条硬约束：
+
+1. **单写者强制**：`AppState` 快照发布、事件序列号分配与观察者扇出只发生在状态
+   owner 的单一执行上下文；Manager 只投递，UI 只读取。
+2. **快照复制成本**：`DoubleBuffer` 每次读取整体复制 `T`。M1 的 `AppState` 为带容量
+   预算的值语义集合体；当 stores 增长使复制成本可观时，必须改为
+   `shared_ptr<const AppState>` 不可变句柄发布（executor API 文档 7.8 建议）。该变更
+   属公开契约变更，先更新本节再改代码。
+3. **关闭顺序归 `app/lifecycle` owner（`EXEC-01`）**：先停止 Heyaki / Manager 事件
+   生产者，再 drain 并关闭各 `MpscChannel` / `Topic`，最后停止快照发布并让 UI 完成
+   末次读取。`comm` 组件与 Executor 的 `shutdown` 零耦合，不参与 Executor 关闭；
+   关闭后的通道仍可排空存量，之后投递返回 `Closed`；析构前必须保证没有并发成员调用。
+
+第 10 节事件共 9 类；其中 `transfer completed` 承载传输终态结果
+（`Completed` / `Failed` / `Cancelled`），迟到的进度或结果事件不得让已终结的传输回到
+活动状态（`RULE-08`）。
+
 ## 11. 本地数据
 
 本地持久化可以使用 SQLite，保存设备身份、受信设备、Conversation

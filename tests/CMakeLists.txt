@@ -50,3 +50,18 @@ aki_add_unit_test(test_trust_state unit/test_trust_state.cpp)
 aki_add_unit_test(test_delivery_state unit/test_delivery_state.cpp)
 aki_add_unit_test(test_conversation_state unit/test_conversation_state.cpp)
 aki_add_unit_test(test_transfer_state unit/test_transfer_state.cpp)
+
+# M1-02：Application State 单写者边界测试。本测试进程的唯一 Executor owner 是
+# 测试自身的 main()（AGENTS.md 规则 7；正式 owner 由 M1-04 提供），因此链接
+# Catch2 无 main 变体并自带 main；executor::executor 经 aki_app 传播。
+add_executable(test_app_state unit/test_app_state.cpp)
+target_compile_features(test_app_state PRIVATE cxx_std_20)
+aki_apply_warnings(test_app_state PRIVATE)
+target_link_libraries(test_app_state PRIVATE
+    Catch2::Catch2
+    aki_app
+    aki_device
+    aki_conversation
+    aki_transfer)
+add_test(NAME test_app_state COMMAND test_app_state)
+set_tests_properties(test_app_state PROPERTIES LABELS "unit")
