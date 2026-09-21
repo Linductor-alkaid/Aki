@@ -20,6 +20,10 @@
   测试框架）完成并通过 debug/release 全量测试；设计文档第 3~6 节已补充状态集合
   枚举。本机 MinGW 工具链无 sanitizer 运行时，ASAN/UBSAN 证据待 Linux CI 补跑
   （`RISK-2026-003`）。详见 [M1 里程碑文档](m1-domain-state.md)。
+- 2026-09-22：PR #1 合入（`9ad1eb7`），CI 门禁建立且首轮 4/4 全绿（Linux
+  debug/asan/ubsan + Windows MSVC debug），`RISK-2026-003` 解除，M0 关闭（Done）。
+  标准 MR 闭环（分支 -> PR -> CI -> Squash 合并 -> 清理分支 -> 同步 master）经用户
+  确认固化，见 AGENTS.md 与工程规范 10.4。后续变更一律走该闭环。
 
 ## 交付边界
 
@@ -99,7 +103,7 @@
 
 | 里程碑 | 名称 | 状态 | 前置 | 建议发布点 | 文档 |
 | --- | --- | --- | --- | --- | --- |
-| M0 | 工程骨架与协作基线 | In Progress | 无 | 无（仓库基线） | [m0-project-skeleton.md](m0-project-skeleton.md) |
+| M0 | 工程骨架与协作基线 | Done | 无 | 无（仓库基线） | [m0-project-skeleton.md](m0-project-skeleton.md) |
 | M1 | 领域模型与状态边界 | In Progress | M0（依赖来源解锁） | v0.1.0 | [m1-domain-state.md](m1-domain-state.md) |
 | M2 | 本地持久化 | Planned | M1 | v0.2.0 | 待创建 |
 | M3 | Heyaki 真实接入与文本消息 | Planned | M1、M2、DEC-006 | v0.3.0 | 待创建 |
@@ -158,7 +162,7 @@ M3 引入真实 Heyaki；M5 整合 UI 并按设计第 15 节逐项验收 MVP。�
 | --- | --- | --- | --- | --- | --- |
 | `RISK-2026-001` | Resolved (2026-09-21) | executor / EUI-NEO / heyaki 来源与 pinned commit 未定 | 曾阻塞 M1 并发代码、M3、M5 | Linductor | 已解除：[DEC-003](../decisions/DEC-003-dependency-locking.md) 冻结为 Accepted，submodule + 锁文件校验通过 |
 | `RISK-2026-002` | Open | EUI-NEO 组件能力与三栏布局匹配度未验证 | M5 范围可能调整 | Linductor | M5 开始前完成组件能力盘点 |
-| `RISK-2026-003` | Open | 本机 Windows/MinGW 工具链对 sanitizer 支持有限 | TSAN/部分 ASAN 证据缺失 | Linductor | 建立 Linux CI 门禁（远程仓库已配置 GitHub，首次 push 后补 workflow） |
+| `RISK-2026-003` | Resolved (2026-09-22) | 本机 Windows/MinGW 工具链对 sanitizer 支持有限 | 曾致 TSAN/部分 ASAN 证据缺失 | Linductor | 已解除：Linux CI 门禁建立（`.github/workflows/ci.yml`，PR #1 首轮 asan/ubsan 全绿），sanitizer 证据由 CI 常规提供 |
 
 2026-09-21 复核 `RISK-2026-003`：本机 w64devkit GCC 15.2 工具链未随附 sanitizer
 运行时，asan preset configure 即失败（`cannot find -lasan`），证据见
