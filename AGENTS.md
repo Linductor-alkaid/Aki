@@ -133,6 +133,9 @@ capability card，不读取无关卡片或实现源码：
 - ASAN/UBSAN 常规运行；涉及跨上下文状态或关闭时增加 TSAN/故障注入。
 - 变更公开契约时同步更新设计文档和示例。不得宣称未通过目标平台或基准验证的实时性、性能
   或跨平台保证。
+- UI 实现必须遵循 [Aki UI 设计规范](docs/design/aki_ui_design.md)（直接采用
+  ZCode Design System 作为权威约束，原文归档于 `docs/design/zcode-design-system.md`）。
+  违反其令牌与使用纪律的 UI 变更按设计系统缺陷处理，不接受"风格偏好"抗辩。
 
 ## Git 提交与仓库纪律
 

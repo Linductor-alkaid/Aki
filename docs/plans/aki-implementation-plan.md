@@ -24,6 +24,11 @@
   debug/asan/ubsan + Windows MSVC debug），`RISK-2026-003` 解除，M0 关闭（Done）。
   标准 MR 闭环（分支 -> PR -> CI -> Squash 合并 -> 清理分支 -> 同步 master）经用户
   确认固化，见 AGENTS.md 与工程规范 10.4。后续变更一律走该闭环。
+- 2026-09-22：UI 设计约束经用户确认改为**直接采用** ZCode Design System：原文
+  归档为 [docs/design/zcode-design-system.md](../design/zcode-design-system.md)
+  （上游 commit `872ad960`，Apache-2.0），[Aki UI 设计规范](../design/aki_ui_design.md)
+  重写为其在 EUI-NEO 上的绑定映射，作为 `SCOPE-12` 与 `RISK-2026-002` 的输入；
+  组件能力实际运行验证仍留待 M5。
 
 ## 交付边界
 
