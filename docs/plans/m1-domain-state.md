@@ -62,7 +62,8 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
 - [x] `M1-07` 落地 `DEC-007` 测试框架与 `unit`/`integration` 标签，CI 可按标签选择
   执行集。（2026-09-21：[DEC-007](../decisions/DEC-007-test-framework.md) 冻结为
   Accepted，Catch2 v3.9.1 经 FetchContent 锁 commit 接入；`unit`/`smoke` 标签生效，
-  `integration` 标签随 `M1-06` 冒烟宿主启用。CI 按标签执行集待 M0 CI 基线建立后补验。）
+  `integration` 标签随 `M1-06` 冒烟宿主启用。CI 已于 2026-09-22 建立（PR #1），全量
+  ctest 进入门禁。）
 - [ ] `M1-08` 校对实现与设计偏差：SPI、事件命名或状态集若与设计不一致，先更新设计或
   新增决策，再合入代码。
 
@@ -98,3 +99,11 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
     （对应总计划 `RISK-2026-003`，退出-4 在本机保持未勾选）。
   - 备注：测试期间修正一处测试自身缺陷（对 `Failed` 终态误断言 `Failed -> Failed`
     必须失败；该转移是终态幂等 no-op，应返回 true）。
+
+- 2026-09-22（PR #1 CI 证据，M1-07 补验）：
+  - CI 门禁建立：`.github/workflows/ci.yml`（Linux debug/asan/ubsan + Windows MSVC
+    debug），PR #1 首轮 4/4 全绿，含此前本机缺失的 ASAN/UBSAN 证据（`RISK-2026-003`
+    解除）。
+  - MSVC 适配修复：`/utf-8`（本地 VS 2022 BuildTools Debug 构建 + ctest 6/6 通过）。
+  - M1-07 的"CI 按标签执行集"已可验证：CI 运行全量 ctest，`unit`/`smoke` 标签生效。
+  - PR #1 squash 合入 `master` @ `9ad1eb7`，工作分支已清理，本地 master 已同步。

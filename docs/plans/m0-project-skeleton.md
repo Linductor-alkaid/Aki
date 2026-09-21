@@ -1,11 +1,11 @@
 # M0：工程骨架与协作基线
 
-> 状态：In Progress
+> 状态：Done
 > 负责人：Linductor
 > 所属计划：[Aki 实施总计划](aki-implementation-plan.md)
 > 前置：无
 > 建议发布点：无（仓库基线，不打 tag）
-> 更新日期：2026-09-21
+> 更新日期：2026-09-22
 
 ## 目标
 
@@ -49,15 +49,18 @@
   submodule 并写入 `third_party/dependencies.lock.json`，`cmake/Dependencies.cmake`
   在 configure 时校验 commit（含负向测试）。见
   [DEC-003](../decisions/DEC-003-dependency-locking.md)（已 Accepted）。
-- [ ] `M0-06` CI 基线（GitHub Actions workflow，Linux GCC/Clang + Windows，执行预设矩阵）。
-  **待触发**：仓库首次 push 后补充并验证；解除 `RISK-2026-003` 的 sanitizer 证据缺口。
+- [x] `M0-06` CI 基线（GitHub Actions workflow，Linux GCC/Clang + Windows，执行预设矩阵）。
+  （2026-09-22：`.github/workflows/ci.yml` 随 PR #1 落地，Linux debug/asan/ubsan +
+  Windows MSVC debug 首轮 4/4 全绿，PR #1 squash 合入 `9ad1eb7`；同时固化标准 MR
+  闭环。`RISK-2026-003` 解除。）
 
 ## 风险与阻塞
 
 - ~~`RISK-2026-001`：依赖来源未定~~ 已于 2026-09-21 解除：依赖完成 submodule + 锁文件
   登记，configure 校验通过，[DEC-003](../decisions/DEC-003-dependency-locking.md) 冻结。
-- `RISK-2026-003`：本机 Windows/MinGW 工具链缺少 `libasan`/`libubsan`/`libtsan` 运行时，
-  sanitizer 预设无法在本机执行（见验证记录），需 Linux CI 补齐证据（`M0-06`）。
+- ~~`RISK-2026-003`：本机 Windows/MinGW 工具链缺少 `libasan`/`libubsan`/`libtsan` 运行时~~
+  已于 2026-09-22 解除：Linux CI 门禁建立（PR #1 首轮 asan/ubsan 全绿），后续 sanitizer
+  证据由每次 PR 的 CI Linux job 常规提供。
 - 设计第 14 节未包含 `tests/`、CMake 与 `.clang-*`/`.gitignore` 等仓库级文件，本次初始化
   按 DEC-001 补充，属对设计目录的扩展而非变更；如无异议在 M1 评审时并入设计文档。
 
@@ -108,3 +111,15 @@
   - 回归：debug 构建 + `ctest --preset debug` 2/2 通过。
 - 证据与细节：[DEC-003](../decisions/DEC-003-dependency-locking.md)（已 Accepted）。
 - 剩余：`M0-06` CI 基线（首次 push 后），完成后 M0 可关闭。
+
+2026-09-22（第三批次，CI 基线落地，M0 关闭）：
+
+- 变更：新增 `.github/workflows/ci.yml`（PR 与 master push 触发；Linux ubuntu-latest
+  走 debug/asan/ubsan 三档 preset，Windows windows-latest 走 MSVC + Debug 配置，
+  `submodules: recursive` 拉取 pinned 依赖，ctest 全量）；根 `CMakeLists.txt` 为 MSVC
+  第一方编译加 `/utf-8`（本地 MSVC 复现 GBK 代码页吞换行导致中文注释后代码失效，
+  修复后 Debug 构建 + ctest 6/6 通过）；AGENTS.md 与工程规范 10.4 固化标准 MR 闭环。
+- PR #1（`feat: land M1 domain foundation with UI spec, CI gate and MR loop`）：
+  CI 首轮 4/4 全绿（Linux debug/asan/ubsan + Windows MSVC debug），Squash 合入
+  `master` @ `9ad1eb7`，工作分支已删除，本地 master 已同步。
+- M0 全部工作项与退出条件完成，里程碑关闭。
