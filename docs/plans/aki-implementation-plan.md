@@ -2,7 +2,7 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-09-21
+> 更新日期：2026-09-22
 > 设计依据：[Aki 设计方案](../design/aki_design.md)
 > 协作约束：[AGENTS.md](../../AGENTS.md)、[项目管理与工程规范](../project/project-standards.md)
 
@@ -29,6 +29,15 @@
   （上游 commit `872ad960`，Apache-2.0），[Aki UI 设计规范](../design/aki_ui_design.md)
   重写为其在 EUI-NEO 上的绑定映射，作为 `SCOPE-12` 与 `RISK-2026-002` 的输入；
   组件能力实际运行验证仍留待 M5。
+- 2026-09-22：`M1-02` 完成：Application State 单写者边界与设计第 10 节 9 类事件模型
+  落地于 `app/state/`，跨上下文交付映射 pinned executor `executor::comm`（`EXEC-03`：
+  `DoubleBuffer<AppState>` 一致快照 / `LatestMailbox` 单值最新状态 / `Topic` 观察者
+  广播 / `MpscChannel` 必达事件与汇聚）；设计第 10.1 节先行固化 comm 语义映射与三条
+  硬约束；pinned executor 库完成 M1 目标级接入（关闭其 tests/examples 与 GPU 探测）。
+  [DEC-004](../decisions/DEC-004-local-persistence-sqlite.md) 随调研提前冻结为
+  `Accepted`。本地 MSVC debug/release ctest 7/7 通过；本地 MinGW 默认生成器受 pinned
+  executor 构建缺陷阻塞（限制与补跑条件见 M1 验证记录）；ASAN/UBSAN 证据随下次 CI
+  门禁提供。详见 [M1 里程碑文档](m1-domain-state.md)。
 
 ## 交付边界
 
@@ -123,12 +132,12 @@ M3 引入真实 Heyaki；M5 整合 UI 并按设计第 15 节逐项验收 MVP。�
 
 | 编号 | 主题 | 暂定默认值 | 负责人 | 最迟冻结里程碑 |
 | --- | --- | --- | --- | --- |
-| [DEC-004](../decisions/DEC-004-local-persistence-sqlite.md) | 本地存储采用 SQLite | SQLite C API + 薄封装，不用 ORM | Linductor | M2 开始前 |
 | `DEC-005` | EUI-NEO 集成方式 | 源码/子模块引入 + CMake target，不用 WebView | Linductor | M5 开始前 |
 | `DEC-006` | Heyaki API 契约版本 | 以 M3 启动时 pinned 版本公开 API 为准 | Linductor | M3 开始前 |
 
 `DEC-005`、`DEC-006` 在冻结时创建正式决策记录文件；已生效决策见
-[docs/decisions/](../decisions/)（含已冻结的 [DEC-003](../decisions/DEC-003-dependency-locking.md)
+[docs/decisions/](../decisions/)（含已冻结的 [DEC-003](../decisions/DEC-003-dependency-locking.md)、
+[DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)（2026-09-22 提前冻结）
 与 [DEC-007](../decisions/DEC-007-test-framework.md)）。
 
 ## 跨里程碑通用完成定义
