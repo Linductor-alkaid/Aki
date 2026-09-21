@@ -38,6 +38,13 @@
   `Accepted`。本地 MSVC debug/release ctest 7/7 通过；本地 MinGW 默认生成器受 pinned
   executor 构建缺陷阻塞（限制与补跑条件见 M1 验证记录）；ASAN/UBSAN 证据随下次 CI
   门禁提供。详见 [M1 里程碑文档](m1-domain-state.md)。
+- 2026-09-22：`M1-03` 完成：Heyaki Adapter SPI（`HeyakiAdapter` 出站 + 
+  `HeyakiAdapterSink` 入站，9 个 Sink 方法与设计第 10 节事件一一对应）与
+  `FakeHeyakiAdapter`（`EXEC-02` 有界校验 + 投递式 `inject_*` 注入）落地于
+  `heyaki/adapter/`，仅依赖第 3~7 节领域类型（`RULE-01`/`RULE-10`），未接入
+  `third_party/heyaki`（`DEC-003`，M3 才目标级集成）；设计第 8.1 节先行固化 SPI
+  契约。本地 MSVC debug/release ctest 8/8 通过；MinGW 限制与 ASAN/UBSAN 补跑条件
+  沿用 `M1-02` 记录。详见 [M1 里程碑文档](m1-domain-state.md)。
 
 ## 交付边界
 
