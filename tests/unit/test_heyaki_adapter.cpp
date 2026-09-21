@@ -532,7 +532,10 @@ TEST_CASE("DOD-02 shutdown: close drains injected backlog and rejects new work",
 }
 
 int main(int argc, char* argv[]) {
-    // 本进程唯一 Executor owner（AGENTS.md 规则 7）；正式 owner 由 M1-04 提供。
+    // 本进程唯一 Executor owner（AGENTS.md 规则 7）。
+    // owner 纪律落点说明（设计第 8.2 节）：此处的裸 Executor 实例是 M1-03 落地时
+    // 的测试形态——正式 owner 为 app/lifecycle 的 ExecutorOwner（M1-04 已交付，
+    // 见 test_executor_lifecycle）；自 M1-06 冒烟宿主起进程内改用 ExecutorOwner。
     executor::Executor executor;
     const auto initialized = executor.initialize_ex({});
     if (!initialized.ok) {
