@@ -1,6 +1,6 @@
 # M1：领域模型与状态边界
 
-> 状态：Planned
+> 状态：In Progress
 > 负责人：Linductor
 > 所属计划：[Aki 实施总计划](aki-implementation-plan.md)
 > 前置：M0（依赖已就绪：executor 已 pin 并通过校验，见
@@ -43,8 +43,12 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
 
 ## 工作项
 
-- [ ] `M1-01` 提供设计第 3~7 节领域类型与状态机的 C++ 实现，覆盖非法状态转换拒绝与
-  终态幂等测试。
+- [x] `M1-01` 提供设计第 3~7 节领域类型与状态机的 C++ 实现，覆盖非法状态转换拒绝与
+  终态幂等测试。（2026-09-21：`device/trust/trust_state.hpp`、
+  `device/device/device_types.hpp`、`device/discovery/discovery_types.hpp`、
+  `conversation/conversation/conversation_types.hpp`、`conversation/message/message_types.hpp`、
+  `transfer/transfer/transfer_types.hpp` 及四个状态机单测；设计第 3~6 节先补充了
+  PresenceState / 信任转移 / ConversationState / DeliveryState 枚举，见 `M1-08` 记录。）
 - [ ] `M1-02` 提供 Application State 单写者边界与设计第 10 节事件模型实现，跨上下文
   通信落点对应 `executor::comm` 组件选型（`EXEC-03`）。
 - [ ] `M1-03` 提供 Heyaki Adapter SPI 抽象接口与 `FakeHeyakiAdapter`，支持注入发现、
@@ -55,8 +59,10 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
   Executor 承载并具备协作式取消路径（`EXEC-04`、`EXEC-05`）。
 - [ ] `M1-06` 提供 console 冒烟宿主：两台假设备完成“发现 -> 信任 -> 文本消息 -> 断开 ->
   重连”演示，作为 v0.1.0 验收载体。
-- [ ] `M1-07` 落地 `DEC-007` 测试框架与 `unit`/`integration` 标签，CI 可按标签选择
-  执行集。
+- [x] `M1-07` 落地 `DEC-007` 测试框架与 `unit`/`integration` 标签，CI 可按标签选择
+  执行集。（2026-09-21：[DEC-007](../decisions/DEC-007-test-framework.md) 冻结为
+  Accepted，Catch2 v3.9.1 经 FetchContent 锁 commit 接入；`unit`/`smoke` 标签生效，
+  `integration` 标签随 `M1-06` 冒烟宿主启用。CI 按标签执行集待 M0 CI 基线建立后补验。）
 - [ ] `M1-08` 校对实现与设计偏差：SPI、事件命名或状态集若与设计不一致，先更新设计或
   新增决策，再合入代码。
 
@@ -80,4 +86,15 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
 
 ## 验证记录
 
-（按日期追加：记录 commit、环境、命令、结果、限制和剩余项。）
+- 2026-09-21（`M1-01`、`M1-07`，Windows 11 / MinGW w64devkit GCC 15.2.0 / CMake 4.1.0，
+  commit 见 git 历史）：
+  - `cmake --preset debug && cmake --build --preset debug && ctest --preset debug`
+    → 6/6 通过（4 个状态机单测共 17 个 test case / 193 断言 + 1 smoke）。
+  - `cmake --preset release && cmake --build --preset release && ctest --preset release`
+    → 6/6 通过。
+  - asan preset：configure 失败。证据：w64devkit GCC 15.2 工具链未随附 sanitizer
+    运行时（链接报 `cannot find -lasan`，库目录中无 libasan/libubsan/libtsan）。
+    限制与补跑条件：ASAN/UBSAN/TSAN 证据待 Linux CI 门禁建立后补跑
+    （对应总计划 `RISK-2026-003`，退出-4 在本机保持未勾选）。
+  - 备注：测试期间修正一处测试自身缺陷（对 `Failed` 终态误断言 `Failed -> Failed`
+    必须失败；该转移是终态幂等 no-op，应返回 true）。

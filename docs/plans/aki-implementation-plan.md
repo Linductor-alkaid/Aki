@@ -8,12 +8,18 @@
 
 ## 当前状态
 
-- 2026-09-21：项目完成初始化（M0 工程骨架与协作基线）。M1 及后续里程碑均为
-  `Planned`，尚未开始功能开发。
+- 2026-09-21：项目完成初始化（M0 工程骨架与协作基线）。M0 剩余：CI 基线（首次 push
+  后）与提交前 `git status` 复核。
 - 2026-09-21：executor、EUI-NEO、heyaki 三个依赖已完成 submodule + 锁文件登记与
   configure 校验，[DEC-003](../decisions/DEC-003-dependency-locking.md) 冻结为
-  `Accepted`，`RISK-2026-001` 解除。M0 剩余：CI 基线（首次 push 后）与提交前
-  `git status` 复核；M1 的依赖前置已就绪。
+  `Accepted`，`RISK-2026-001` 解除。
+- 2026-09-21：[UI 设计规范](../design/aki_ui_design.md)沉淀完成（综合
+  zai-org/ZCode Design System 与 pinned EUI-NEO 令牌体系），作为 `SCOPE-12` 与
+  `RISK-2026-002` 的前期输入；组件能力实际运行验证仍留待 M5。
+- 2026-09-21：M1 启动。`M1-01`（领域状态机与类型）与 `M1-07`（[DEC-007](../decisions/DEC-007-test-framework.md)
+  测试框架）完成并通过 debug/release 全量测试；设计文档第 3~6 节已补充状态集合
+  枚举。本机 MinGW 工具链无 sanitizer 运行时，ASAN/UBSAN 证据待 Linux CI 补跑
+  （`RISK-2026-003`）。详见 [M1 里程碑文档](m1-domain-state.md)。
 
 ## 交付边界
 
@@ -94,7 +100,7 @@
 | 里程碑 | 名称 | 状态 | 前置 | 建议发布点 | 文档 |
 | --- | --- | --- | --- | --- | --- |
 | M0 | 工程骨架与协作基线 | In Progress | 无 | 无（仓库基线） | [m0-project-skeleton.md](m0-project-skeleton.md) |
-| M1 | 领域模型与状态边界 | Planned | M0（依赖来源解锁） | v0.1.0 | [m1-domain-state.md](m1-domain-state.md) |
+| M1 | 领域模型与状态边界 | In Progress | M0（依赖来源解锁） | v0.1.0 | [m1-domain-state.md](m1-domain-state.md) |
 | M2 | 本地持久化 | Planned | M1 | v0.2.0 | 待创建 |
 | M3 | Heyaki 真实接入与文本消息 | Planned | M1、M2、DEC-006 | v0.3.0 | 待创建 |
 | M4 | 图片消息与文件传输 | Planned | M3 | v0.4.0 | 待创建 |
@@ -111,10 +117,10 @@ M3 引入真实 Heyaki；M5 整合 UI 并按设计第 15 节逐项验收 MVP。�
 | [DEC-004](../decisions/DEC-004-local-persistence-sqlite.md) | 本地存储采用 SQLite | SQLite C API + 薄封装，不用 ORM | Linductor | M2 开始前 |
 | `DEC-005` | EUI-NEO 集成方式 | 源码/子模块引入 + CMake target，不用 WebView | Linductor | M5 开始前 |
 | `DEC-006` | Heyaki API 契约版本 | 以 M3 启动时 pinned 版本公开 API 为准 | Linductor | M3 开始前 |
-| `DEC-007` | 单元测试框架 | M1 起引入（暂定 Catch2 v3），M0 用无框架 smoke | Linductor | M1 开始前 |
 
-`DEC-005` 至 `DEC-007` 在冻结时创建正式决策记录文件；已生效决策见
-[docs/decisions/](../decisions/)（含已冻结的 [DEC-003](../decisions/DEC-003-dependency-locking.md)）。
+`DEC-005`、`DEC-006` 在冻结时创建正式决策记录文件；已生效决策见
+[docs/decisions/](../decisions/)（含已冻结的 [DEC-003](../decisions/DEC-003-dependency-locking.md)
+与 [DEC-007](../decisions/DEC-007-test-framework.md)）。
 
 ## 跨里程碑通用完成定义
 
@@ -153,3 +159,7 @@ M3 引入真实 Heyaki；M5 整合 UI 并按设计第 15 节逐项验收 MVP。�
 | `RISK-2026-001` | Resolved (2026-09-21) | executor / EUI-NEO / heyaki 来源与 pinned commit 未定 | 曾阻塞 M1 并发代码、M3、M5 | Linductor | 已解除：[DEC-003](../decisions/DEC-003-dependency-locking.md) 冻结为 Accepted，submodule + 锁文件校验通过 |
 | `RISK-2026-002` | Open | EUI-NEO 组件能力与三栏布局匹配度未验证 | M5 范围可能调整 | Linductor | M5 开始前完成组件能力盘点 |
 | `RISK-2026-003` | Open | 本机 Windows/MinGW 工具链对 sanitizer 支持有限 | TSAN/部分 ASAN 证据缺失 | Linductor | 建立 Linux CI 门禁（远程仓库已配置 GitHub，首次 push 后补 workflow） |
+
+2026-09-21 复核 `RISK-2026-003`：本机 w64devkit GCC 15.2 工具链未随附 sanitizer
+运行时，asan preset configure 即失败（`cannot find -lasan`），证据见
+[M1 验证记录](m1-domain-state.md)。
