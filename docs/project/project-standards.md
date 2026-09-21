@@ -497,9 +497,13 @@ git diff --cached
 开发完成 + 自测通过 + 目标分支已同步 + 无代码冲突 + CI 通过 + Code Review 通过
 ```
 
-- 合并策略从 `Merge Commit` / `Squash and Merge` / `Rebase and Merge` 中团队统一选择一种：
-  普通功能开发推荐 Squash and Merge 保持主线简洁；需要保留完整 Commit 历史的大型功能可按
-  实际情况保留。
+- 合并策略：本仓库统一采用 `Squash and Merge`，保持主线为一个 commit 一个 MR 的简洁
+  历史；squash 说明保留分支内各 scope commit 的摘要，便于回溯细粒度变更。
+- **标准 MR 闭环**（2026-09-22 固化，Agent 在闭环内默认授权执行，见 AGENTS.md）：特性
+  分支收尾 → push → 建 PR → CI 全绿 → Squash and Merge 合入 `master` → 删除远程与本地
+  工作分支 → 本地 `master` fast-forward 同步。CI 门禁定义于 `.github/workflows/ci.yml`
+  （Linux debug/asan/ubsan + Windows debug），PR 与 `master` push 均触发，全绿是合并
+  前置条件。
 
 ### 10.5 版本与发布
 

@@ -73,6 +73,9 @@ struct DeviceIdentity {
 };
 ```
 
+`PresenceState` 取 `Online / Offline` 两值，由 Device Manager 依据 presence
+事件维护；在线/离线之间的中间形态（如连接中）不在第一阶段引入。
+
 `DeviceId` 直接复用 Heyaki
 的身份体系，并与设备长期公钥保持稳定关系。Aki
 不另外维护用户名、密码或中心账户。
@@ -115,8 +118,14 @@ ID、公钥指纹和发现来源，用户确认后建立信任关系。在这个
 ``` text
 Unknown -> Pending -> Trusted
                   ├-> Rejected
-                  └-> Revoked
+
+Trusted -> Revoked
 ```
+
+转移规则固定为：`Unknown -> Pending`（进入信任确认）、`Pending -> Trusted`（确认）、
+`Pending -> Rejected`（拒绝）、`Trusted -> Revoked`（撤销已建立的信任）。
+`Revoked` 表示对既有信任的收回，只能从 `Trusted` 进入；`Rejected` 与 `Revoked`
+是终态。新增状态或转移必须先更新本节，不允许代码私有状态。
 
 `Trusted`
 只表示身份已经得到认可，不包含远程操作授权。终端、屏幕控制、机器人控制等能力需要继续经过
@@ -140,6 +149,11 @@ Conversation
 不绑定具体网络路径。同一段会话可能最初走局域网直连，之后切换到 Internet
 P2P，在无法直连时再经过 Relay。路径切换不创建新的
 Conversation，也不改变已有消息历史。
+
+`ConversationState` 取 `Active / Disconnected / Archived`：
+`Active <-> Disconnected` 表达远端可达性的变化（断线恢复后回到
+`Active`，不新建会话）；`Active / Disconnected -> Archived` 由用户或清理策略触发；
+`Archived` 是终态。
 
 ``` text
 Conversation
@@ -176,6 +190,10 @@ struct Message {
 `System`。协议兼容的前提下，后续可以继续加入
 `Command`、`CommandResult`、`DeviceStatus`、`DeviceEvent`、`Telemetry`、`PermissionRequest`
 和 `AgentMessage`。
+
+`DeliveryState` 取 `Queued -> Sending -> Sent -> Delivered` 的正向链，任意非终态
+可以进入 `Failed`；`Delivered` 与 `Failed` 是终态。收到的消息在本地记录为
+`Delivered`。终态幂等：迟到的状态回报不得让已终结的消息重新进入活动状态。
 
 聊天窗口后续会承担设备状态和操作入口，如果消息层只提供字符串，命令、状态和
 Agent 输出最终都需要再次编码和解析。Typed message 直接保留消息语义，也让
@@ -287,6 +305,9 @@ EUI-NEO 当前的组件化 C++ UI 模型能够直接对应，同时不需要额�
 第一阶段左侧导航保留 `Conversations`、`Devices`、`Transfers` 和
 `Settings`。Devices 处理发现、身份、信任和连接信息；Conversations
 承载日常通信；Transfers 集中管理文件任务。
+
+界面令牌、语义色板、状态视觉语义与组件映射由
+[Aki UI 设计规范](aki_ui_design.md)固定。
 
 EUI-NEO 核心采用
 Apache-2.0。正式发行前仍需检查实际引入的第三方库、字体、图标、shader

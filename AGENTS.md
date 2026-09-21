@@ -147,11 +147,23 @@ Commit、分支、MR、评审与合并必须遵循工程规范第 10 节。要�
 - 提交前检查 `git status` / `git diff` / `git diff --cached`：不包含无关格式化、临时 Debug
   代码、运行日志、编译产物、IDE 文件、大文件和敏感信息；不把无关工作树改动带入提交。
 - `user.name` 与 `user.email` 必须是提交者本人，严禁使用他人身份提交。
-- Agent 可以在需要触发或验证 CI 时创建范围化 commit 并以普通非 force 方式 push 当前工作
-  分支（含同一请求内修复 CI 失败的后续提交），但不得合并 PR、创建 release/tag、修改仓库
-  设置或推送他人分支；这些操作仍需用户明确授权。
+- **标准 MR 闭环**（2026-09-22 经用户确认固化为默认流程）：每阶段开发完成（里程碑工作项
+  或一批相关变更，commit 已按 scope 整理）后，按以下顺序执行，不得跳过或改动顺序：
+  1. 确认工作树干净、目标分支已同步 master，在独立特性分支上收尾（命名见工程规范 10.1）；
+  2. 以普通非 force 方式 push 特性分支到 origin；
+  3. 创建指向 `master` 的 PR：标题同 Commit 格式，描述含工程规范 10.3 四要素；
+  4. 等待并核实 CI 全绿（`.github/workflows/ci.yml`）；失败时在同一分支补修复 commit 重推，
+     重新等待 CI；
+  5. 以 Squash and Merge 合入 `master`；
+  6. 删除远程与本地工作分支；
+  7. 本地切换 `master` 并以 fast-forward 同步（`git pull --ff-only`）。
+- Agent 在上述既定闭环内已被授权自动执行全部步骤（含创建 PR、核实 CI、Squash 合并与
+  分支清理）。创建 release/tag、修改仓库设置、推送他人分支，或偏离本闭环的合并操作
+  （如绕过 CI、直接 push master），仍需用户明确授权。
 - 认证凭据不得打印、复制进仓库、写入远程 URL、暴露于进程参数或日志。`gh` CLI 可用于
-  GitHub API 操作，使用前以 `gh auth status` 确认身份。
+  GitHub API 操作，使用前以 `gh auth status` 确认身份；无 `gh` 时可用 Git Credential
+  Manager 的凭据经 `git credential fill` 调用 GitHub API，凭据只能存在于进程内存或临时
+  凭据文件中，用后即删。
 
 ## 完成定义
 
