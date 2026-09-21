@@ -1,0 +1,42 @@
+{
+    "version": 1,
+    "note": "Aki pinned 依赖锁（docs/decisions/DEC-003-dependency-locking.md）。configure 时校验 commit，不匹配即失败。",
+    "dependencies": [
+        {
+            "name": "executor",
+            "path": "third_party/executor",
+            "url": "https://github.com/Linductor-alkaid/executor.git",
+            "commit": "74a94198fbe0f2a4081cd260658a26f969986870",
+            "version": "v0.5.0-7-g74a9419",
+            "license": "MIT",
+            "license_file": "third_party/executor/LICENSE",
+            "class": "pinned",
+            "submodule": true,
+            "used_by": "M1 起承载全部并发任务（AGENTS.md 强制约束）"
+        },
+        {
+            "name": "EUI-NEO",
+            "path": "third_party/EUI-NEO",
+            "url": "https://github.com/sudoevolve/EUI-NEO.git",
+            "commit": "b9032a8a848f8d8cf096bb7711c626f9c051e0ce",
+            "version": "v0.6.0",
+            "license": "Apache-2.0",
+            "license_file": "third_party/EUI-NEO/LICENSE",
+            "class": "pinned",
+            "submodule": true,
+            "used_by": "M5 GUI（设计第 9 节；assets 许可证在发行前审计）"
+        },
+        {
+            "name": "heyaki",
+            "path": "third_party/heyaki",
+            "url": "https://github.com/Linductor-alkaid/heyaki.git",
+            "commit": "e114508ab32d496d52e9db9bac26eb1cc88c4ae7",
+            "version": "v1.0.1-38-ge114508",
+            "license": "MIT",
+            "license_file": "third_party/heyaki/LICENSE",
+            "class": "pinned",
+            "submodule": true,
+            "used_by": "M3 设备通信网络（设计第 8 节）"
+        }
+    ]
+}

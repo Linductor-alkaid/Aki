@@ -1,0 +1,1 @@
+aki_add_skeleton_library(aki_app)
