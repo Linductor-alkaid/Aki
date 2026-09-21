@@ -36,41 +36,47 @@ using namespace std::chrono_literals;
 using aki::app::ExecutorOwner;
 using aki::app::ExecutorShutdownReport;
 
-// 满足 wakeup 可解除阻塞契约的 Fake worker（设计 8.2 节步骤 3）：
-// run() 在条件变量上等待（上限 10s），wakeup() 唤醒后立即重查 StopToken。
-// 若 wakeup 未解除阻塞，run() 只能在 10s 超时后退出——测试用耗时断言区分。
+// 满足 wakeup 可解除阻塞契约的 Fake worker（设计 8.2 节步骤 3）。
+// 可观测状态放在测试与 worker 共享的独立状态块：pinned executor 对注册的
+// worker 拥有独占所有权，manager shutdown 即销毁 worker（executor_manager.cpp
+// clear + 锁外析构，含 join），测试不得在 shutdown 后经 worker 裸指针断言
+// （CI asan 实测 heap-use-after-free）；shared_ptr 状态块使其在 worker 析构后
+// 仍可安全读取。
+struct FakeWorkerState {
+    std::mutex mutex;
+    std::condition_variable condition;
+    std::atomic<bool> running{false};
+    std::atomic<bool> ran_to_completion{false};
+    std::atomic<std::uint64_t> wake_requests{0};
+};
+
 class FakeBlockingWorker final : public executor::IBlockingIoWorker {
 public:
+    explicit FakeBlockingWorker(std::shared_ptr<FakeWorkerState> state)
+        : state_(std::move(state)) {}
+
     void run(executor::StopToken stop_token) override {
-        running_.store(true);
-        std::unique_lock<std::mutex> lock(mutex_);
+        state_->running.store(true);
+        std::unique_lock<std::mutex> lock(state_->mutex);
         // wakeup() 必须解除当前等待（blocking_io.hpp 契约）；StopToken 不能中断
         // 底层阻塞调用，因此等待原语必须可被 wakeup 唤醒。
-        condition_.wait_for(lock, std::chrono::seconds(10), [&] {
+        state_->condition.wait_for(lock, std::chrono::seconds(10), [&] {
             return stop_token.stop_requested();
         });
-        ran_to_completion_.store(true);
-        running_.store(false);
+        state_->ran_to_completion.store(true);
+        state_->running.store(false);
     }
 
     void wakeup() noexcept override {
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            ++wake_requests_;
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            state_->wake_requests.fetch_add(1);
         }
-        condition_.notify_all();
+        state_->condition.notify_all();
     }
 
-    [[nodiscard]] bool is_running() const noexcept { return running_.load(); }
-    [[nodiscard]] bool ran_to_completion() const noexcept { return ran_to_completion_.load(); }
-    [[nodiscard]] std::uint64_t wake_requests() const noexcept { return wake_requests_; }
-
 private:
-    std::mutex mutex_;
-    std::condition_variable condition_;
-    std::atomic<bool> running_{false};
-    std::atomic<bool> ran_to_completion_{false};
-    std::uint64_t wake_requests_ = 0;  // owner 线程读写（测试串行）。
+    std::shared_ptr<FakeWorkerState> state_;
 };
 
 bool wait_until(const std::function<bool()>& predicate, std::chrono::milliseconds budget) {
@@ -185,8 +191,8 @@ TEST_CASE("Blocking worker is registered, unblocked by request_stop, and joined"
     ExecutorOwner owner;
     REQUIRE(owner.initialize());
 
-    auto worker = std::make_unique<FakeBlockingWorker>();
-    auto* worker_ptr = worker.get();
+    auto state = std::make_shared<FakeWorkerState>();
+    auto worker = std::make_unique<FakeBlockingWorker>(state);
     executor::BlockingWorkerSpec spec;
     spec.name = "aki.fake_blocking";
     spec.config.thread_name = "aki-fake-blocking";  // thread_name 必填（executor.cpp 校验）。
@@ -195,7 +201,7 @@ TEST_CASE("Blocking worker is registered, unblocked by request_stop, and joined"
     REQUIRE(owner.blocking_worker_count() == 1);
 
     // worker 进入 run() 的阻塞等待。
-    REQUIRE(wait_until([&] { return worker_ptr->is_running(); }, 2s));
+    REQUIRE(wait_until([&] { return state->running.load(); }, 2s));
 
     const auto started_at = std::chrono::steady_clock::now();
     const auto report = owner.shutdown([] { /* 停生产者钩子 */ });
@@ -206,9 +212,10 @@ TEST_CASE("Blocking worker is registered, unblocked by request_stop, and joined"
     REQUIRE(report.fully_stopped());
 
     // 解除阻塞契约：request_stop + wakeup 使 run() 立即返回（远小于 10s 等待上限），
-    // 而不是靠超时轮询退出。
-    REQUIRE(worker_ptr->ran_to_completion());
-    REQUIRE(worker_ptr->wake_requests() >= 1);
+    // 而不是靠超时轮询退出。经共享状态块断言：此时 manager 已销毁 worker 对象
+    // （executor_manager.cpp：shutdown 清空注册表并在锁外析构，含 join）。
+    REQUIRE(state->ran_to_completion.load());
+    REQUIRE(state->wake_requests.load() >= 1);
     REQUIRE(elapsed < std::chrono::seconds(5));
 
     // owner 持有的句柄：步骤 2/3 之后 worker 已停止且可见（EXEC-06）。
