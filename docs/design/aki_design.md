@@ -307,6 +307,45 @@ executor 类型（`RULE-10`）；heyaki 层仅依赖第 3~7 节领域类型，�
 `FakeHeyakiAdapter`：以 `inject_*` 编程式注入上述入站事件，注入路径即 `EXEC-02`
 回调路径（有界校验 + 投递），不做任何真实 I/O。
 
+### 8.2 Executor 生命周期 owner（app/lifecycle）
+
+Executor 的初始化与关闭由 `app/lifecycle` 的唯一 owner（`ExecutorOwner`）承担
+（`EXEC-01` / `EXEC-07`，AGENTS 规则 7/8）：owner 以独立实例持有 pinned executor 的
+`Executor` facade（非单例，每个 executor 生命周期有且仅有一个 owner），经
+`initialize_ex(config)` 显式初始化；`ExecutorConfig::enable_monitoring` 默认开启并随
+config 传入，运行期切换（如有）归 owner，Manager/Adapter 不得私调。blocking I/O
+worker 的 `WorkerHandle` 由 owner 注册并持有（M1-05 / M2 预留），依赖经构造参数或
+明确 context 传递，不设隐藏全局实例；`executor()` 访问器的前置条件是已初始化
+（facade 对未初始化实例的首次提交会以默认配置懒初始化，绕过 owner 纪律，禁止）。
+
+受控关闭与总计划 `EXEC-01` 五步一一对应，关闭证据为
+`ShutdownResult::Completed` + `get_snapshot().lifecycle == Stopped` +
+`wait_timeout_count == 0`：
+
+1. **停止任务生产者**：owner 调用应用注入的停止钩子——停 Heyaki 投递 → drain/close
+   `executor::comm` 通道 → 停快照发布（第 10.1 节硬约束 3；comm 与 Executor shutdown
+   零耦合，不参与 Executor 关闭）。
+2. **发出取消/停止请求**：定时任务经 `TimerHandle` 取消、运行中任务经
+   `request_task_cancel`（句柄由各 Manager 持有并发起，`EXEC-07`），blocking worker
+   经 `WorkerHandle::request_stop()`（noexcept 非阻塞）置位停止标志并唤醒。
+3. **回收 blocking worker**：`WorkerHandle::stop()`（stop request + wakeup + join），
+   重复停止安全；worker 的 `run()` 必须满足 wakeup 可解除阻塞契约——等待原语无法
+   直接唤醒（第三方 read/poll）时，以有限 timeout 轮询 StopToken。
+4. **有界等待有限任务**：`wait_for_completion_ex(owner 预算)`；该等待只覆盖默认异步
+   future 型任务（不含 realtime/GPU/blocking worker），预算归 owner 而非库内 300s
+   内部上限，超时记录 `WaitResult` 与诊断快照作为证据，不伪造“干净关闭”。
+5. **最终关闭**：由非 worker 线程执行 `shutdown(true)`，返回 `Completed` 才算关闭
+   完成；从池 worker 内调用返回 `RequestedFromWorker` 且不完成 teardown，禁止。
+
+关闭后同一 Executor 不可二次初始化（`initialize_ex` 返回 `AlreadyShutdown`）；
+进程内需要新一轮生命周期时重建 owner。关闭后的新提交以明确异常结算（如
+"Executor is stopped"），不静默。
+
+owner 落点说明：M1-02 / M1-03 的单测 `main` 持有临时 `executor::Executor` 实例作为
+该测试进程的 owner（AGENTS 规则 7 的测试形态，生命周期同样显式：非 worker 线程
+`shutdown(true)`），正式 owner 即本节 `ExecutorOwner`；自 M1-06 冒烟宿主起进程内
+改用 `ExecutorOwner`。
+
 ## 9. GUI
 
 桌面客户端使用 C++，GUI 采用 EUI-NEO。Aki

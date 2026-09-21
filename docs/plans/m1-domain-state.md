@@ -66,8 +66,16 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
   有界校验 + 投递，结果经返回值可见）；设计第 8.1 节先行固化 SPI 契约；
   单测 `test_heyaki_adapter`（11 test case / 116 断言）覆盖验收 ①② 与 DOD-02
   六项；`heyaki/events` 未引入——Heyaki 原生事件类型随 M3 `DEC-006` 落地。）
-- [ ] `M1-04` 提供 `app/lifecycle` 的 Executor 初始化/关闭 owner 实现并满足 `EXEC-01`
-  关闭顺序，附 shutdown 测试。
+- [x] `M1-04` 提供 `app/lifecycle` 的 Executor 初始化/关闭 owner 实现并满足 `EXEC-01`
+  关闭顺序，附 shutdown 测试。（2026-09-22：`app/lifecycle/executor_owner.hpp`
+  ——`ExecutorOwner` 独立实例持有 pinned executor `Executor` facade（非单例），
+  `EXEC-01` 五步逐一注释对应（停生产者钩子 → blocking worker `request_stop` →
+  `stop` 回收 → `wait_for_completion_ex(owner 预算)` → 非 worker 线程
+  `shutdown(true)`），`ExecutorShutdownReport` 以 `Completed` +
+  `lifecycle==Stopped` + `wait_timeout_count==0` 作为可观察关闭证据；blocking
+  worker 句柄由 owner 持有（M1-05/M2 预留）；设计第 8.2 节先行固化契约与唯一
+  owner 纪律落点；单测 `test_executor_lifecycle`（8 test case / 58 断言）覆盖
+  五类 shutdown 断言与 DOD-02 六项。）
 - [ ] `M1-05` 提供 Device / Conversation / Message / Transfer Manager 骨架，任务全部经
   Executor 承载并具备协作式取消路径（`EXEC-04`、`EXEC-05`）。
 - [ ] `M1-06` 提供 console 冒烟宿主：两台假设备完成“发现 -> 信任 -> 文本消息 -> 断开 ->
@@ -206,3 +214,41 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
   - 限制：MinGW 默认生成器仍受 `M1-02` 验证记录限制 1（pinned executor 构建缺陷）
     阻塞，未变化；ASAN/UBSAN 证据随本 PR 的 Linux CI 门禁提供；TSAN 沿用限制 2。
   - 同步：设计第 8.1 节、本里程碑工作项、总计划当前状态。
+
+- 2026-09-22（`M1-04`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 / CMake 4.1.0）：
+  - 范围：`app/lifecycle/executor_owner.hpp`（`ExecutorOwner` + `ExecutorShutdownReport`）、
+    设计第 8.2 节（先行固化：EXEC-01 五步映射、关闭证据、唯一 owner 纪律落点）、
+    `tests/unit/test_executor_lifecycle.cpp`、`tests/CMakeLists.txt` 接入；
+    M1-02/M1-03 测试 main 增加 owner 纪律落点说明（临时测试形态 → 正式
+    `ExecutorOwner`，M1-06 起切换）。
+  - 依据：总计划 `EXEC-01`/`EXEC-06`/`EXEC-07`、`RULE-07`/`RULE-08`、AGENTS.md
+    规则 1/2/7/9/10；executor-integration SKILL 路由 → quick-start 与
+    tasks-and-lifecycle 卡（本会话加载）；pinned executor 公开头文件核对
+    （blocking_io.hpp `WorkerHandle::request_stop/stop`、types.hpp
+    `WaitResult`/`ExecutorSnapshot.lifecycle`、config.hpp `enable_monitoring`、
+    executor.hpp `wait_for_completion_ex`/`get_snapshot`/`start_worker`）。
+    调研结论：EXEC-01 五步与库官方关闭协议一致，无能力缺口，不进 9.4 台账。
+  - 验证（生成器说明同 `M1-02` 记录）：
+    - `cmake --preset debug -G "Visual Studio 17 2022" -A x64 &&
+      cmake --build --preset debug --config Debug && ctest --preset debug -C Debug`
+      → 9/9 通过（新 `test_executor_lifecycle`：8 test case / 58 断言）。
+    - `cmake --preset release -G "Visual Studio 17 2022" -A x64 &&
+      cmake --build --preset release --config Release && ctest --preset release -C Release`
+      → 9/9 通过。
+    - GCC 语法检查（CI Linux 告警姿势）对 `test_executor_lifecycle.cpp` 通过
+      （-Wall -Wextra -Wpedantic -Werror）。
+    - 稳定性：`test_executor_lifecycle` 连续 100 次运行全部通过（修复两处偶发
+      后：①任务失败计数相对 future 结算异步记账，测试改为有界轮询；
+      ②`shutdown(true)` 返回后 lifecycle/失败计数快照异步收敛，owner 在 1s 预算
+      内轮询至 `Stopped`，读不到即如实记录）。
+    - 断言覆盖（验收 ③）：正常关闭排空存量（五步证据 `fully_stopped`）；关闭后
+      提交明确失败（实测消息 "Async executor not initialized. Call initialize()
+      first."，不静默）；重复 shutdown 幂等（返回同一报告）；owner 不可重复
+      初始化、关闭后不可重建；blocking worker 注册 → `request_stop`+`wakeup`
+      解除阻塞（耗时远小于 10s 等待上限，`wakeup_count>=1`）→ join；DOD-02：
+      正常完成、任务异常（计数可见）、提交拒绝（关闭后）、执行中取消（阻塞
+      等待被解除）、超时（owner 30ms 预算耗尽如实记录 `timed_out` 且
+      `fully_stopped()==false`，`shutdown(true)` 仍完成）、shutdown（五步主体）。
+  - 限制：MinGW 默认生成器仍受 `M1-02` 记录限制 1 阻塞；ASAN/UBSAN 随本 PR 的
+    Linux CI 门禁提供；TSAN 沿用限制 2。
+  - 同步：设计第 8.2 节、本里程碑工作项、总计划当前状态、M1-02/03 测试注释。

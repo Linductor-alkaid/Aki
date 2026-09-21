@@ -81,3 +81,17 @@ target_link_libraries(test_heyaki_adapter PRIVATE
     aki_heyaki)
 add_test(NAME test_heyaki_adapter COMMAND test_heyaki_adapter)
 set_tests_properties(test_heyaki_adapter PROPERTIES LABELS "unit")
+
+# M1-04：Executor 生命周期 owner（EXEC-01 五步 + shutdown 证据）测试。
+# 被测对象即 owner，本目标不设进程级临时 Executor（设计第 8.2 节落点说明）。
+add_executable(test_executor_lifecycle unit/test_executor_lifecycle.cpp)
+target_compile_features(test_executor_lifecycle PRIVATE cxx_std_20)
+aki_apply_warnings(test_executor_lifecycle PRIVATE)
+target_link_libraries(test_executor_lifecycle PRIVATE
+    Catch2::Catch2
+    aki_app
+    aki_device
+    aki_conversation
+    aki_transfer)
+add_test(NAME test_executor_lifecycle COMMAND test_executor_lifecycle)
+set_tests_properties(test_executor_lifecycle PROPERTIES LABELS "unit")

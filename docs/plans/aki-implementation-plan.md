@@ -45,6 +45,14 @@
   `third_party/heyaki`（`DEC-003`，M3 才目标级集成）；设计第 8.1 节先行固化 SPI
   契约。本地 MSVC debug/release ctest 8/8 通过；MinGW 限制与 ASAN/UBSAN 补跑条件
   沿用 `M1-02` 记录。详见 [M1 里程碑文档](m1-domain-state.md)。
+- 2026-09-22：`M1-04` 完成：`app/lifecycle` 的 `ExecutorOwner` 生命周期 owner 落地
+  （设计第 8.2 节先行固化）——独立实例持有 pinned executor `Executor` facade，
+  `EXEC-01` 五步受控关闭逐一实现且可观察（`ShutdownResult::Completed` +
+  `lifecycle==Stopped` + `wait_timeout_count==0`），blocking worker 句柄由 owner
+  持有（M1-05/M2 预留）；shutdown 测试覆盖五类断言与 DOD-02 六项（含阻塞 worker
+  wakeup 解除阻塞契约与 owner 等待预算耗尽的如实记录）。本地 MSVC debug/release
+  ctest 9/9 通过；MinGW 限制与 sanitizer 补跑条件沿用 `M1-02` 记录。
+  详见 [M1 里程碑文档](m1-domain-state.md)。
 
 ## 交付边界
 
