@@ -25,8 +25,14 @@ add_subdirectory(third_party/executor executor.system EXCLUDE_FROM_ALL)
 
 # executor 公开头文件按 SYSTEM include 处理：其头文件告警（如 MSVC C4324 对齐填充）
 # 不进入第一方 -Werror 门禁，与“第三方依赖不继承告警级别”的约定一致。
-set_target_properties(executor PROPERTIES
-    INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/third_party/executor/include")
+# 门控说明：CMake 3.x 的 VS/Xcode IDE 生成器在 generate 阶段拒绝“源目录前缀路径”
+# 进入 INTERFACE_SYSTEM_INCLUDE_DIRECTORIES（CI Windows job 实测报错），而 MSVC 上
+# 该标注本就未落为 /external:I（见下方 /wd4324 注），故 IDE 生成器跳过此设置，
+# 行为不变；Makefile/Ninja 生成器（CI Linux 三档）保持 SYSTEM 标注。
+if(NOT CMAKE_GENERATOR MATCHES "Visual Studio|Xcode")
+    set_target_properties(executor PROPERTIES
+        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/third_party/executor/include")
+endif()
 
 # 警告级别只作用于第一方目标；第三方依赖（FetchContent 引入的测试框架等）不继承，
 # 避免上游告警被 -Werror 放大成构建失败。
