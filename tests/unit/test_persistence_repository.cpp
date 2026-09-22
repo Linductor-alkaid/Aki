@@ -19,12 +19,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <stdexcept>
 #include <string>
-#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -59,19 +58,6 @@ using aki::transfer::FileMetadata;
 using aki::transfer::Transfer;
 using aki::transfer::TransferId;
 using aki::transfer::TransferState;
-
-int g_counter = 0;
-
-std::string temp_db_path(const std::string& tag) {
-    auto path = std::filesystem::temp_directory_path()
-        / ("aki-repository-test-" + tag + "-"
-            + std::to_string(
-                std::chrono::steady_clock::now().time_since_epoch().count())
-            + "-" + std::to_string(++g_counter) + ".db3");
-    std::error_code ec;
-    std::filesystem::remove(path, ec);
-    return path.string();
-}
 
 Database migrated_memory_db() {
     Database db = Database::open(":memory:");

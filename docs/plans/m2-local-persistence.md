@@ -123,8 +123,8 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
   满时 LRU 逐出，`invalidate` 供错误语句逐出）；`persistence/repository/
   repositories.hpp/.cpp`（四仓储与 M1 领域类型双向转换，API 对齐设计第 11.1 节
   ①④：整行 upsert / 进度列更新 / 送达状态列更新 / 终态更新含回写位；未命中行
-  `runtime_error` 可见）。新增 `test_persistence_repository`（10 test case /
-  103 断言）。重要发现：SQLite 3.53.4 对“约束失败语句的 reset 复用”存在异常
+  `runtime_error` 可见）。新增 `test_persistence_repository`（11 test case /
+  108 断言；初稿误记 10/103，以合入前 debug/release 双配置实测为准）。重要发现：SQLite 3.53.4 对“约束失败语句的 reset 复用”存在异常
   终止缺陷（官方 DLL/MSVC/GCC 三路复现）——`run_cached` 统一在 SqliteError 时
   逐出缓存语句规避，详见验证记录。本项为同步封装，DOD-02 六项不适用。
   详见验证记录。）
@@ -375,7 +375,7 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
     sqlite.org 报告或评估版本升级（超出本项范围，已留档）。
   - 验证（生成器说明同 M1 记录）：
     - `ctest --preset debug -C Debug`（构建后）→ 15/15（原 13 + 新
-      `test_persistence_repository` 10 test case / 103 断言 +
+      `test_persistence_repository` 11 test case / 108 断言 +
       `test_persistence_public_surface` 扩展仓储公开面）。
     - `ctest --preset release -C Release` → 15/15。
     - 稳定性：`test_persistence_database` debug 连续 30 次全过。
