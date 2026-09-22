@@ -829,9 +829,32 @@ TEST_CASE("DOD-02 timeout: queued drain killed by soft timeout self-heals withou
 
     // 饱和唯一 worker：排空任务排队超过 task_timeout_ms → 被软超时击杀（永不
     // 运行，不会自复位单飞标志）。
-    auto saturate = executor.submit_auto([] {
-        std::this_thread::sleep_for(250ms);
-    });
+    // 排队软超时在出队时按 submit→dequeue 时长判定（运行中任务不中断），
+    // 冷启动 worker 在 CI 负载下领取首个任务可能超过 40ms，饱和任务自身会被
+    // 击杀（PR #11 Windows job 实测）。因此先等待饱和任务确认开跑再投递排空
+    // 任务：started 只可能在提交后 task_timeout_ms 内翻转，等待窗口取 100ms
+    // 即可区分"已被击杀"与"仍在排队"；被击杀则消费超时异常并重试（worker
+    // 热身后领取延迟趋近于零），至多 3 次。
+    std::atomic<bool> saturate_started{false};
+    auto submit_saturate = [&executor, &saturate_started] {
+        saturate_started.store(false, std::memory_order_release);
+        return executor.submit_auto([&saturate_started] {
+            saturate_started.store(true, std::memory_order_release);
+            std::this_thread::sleep_for(250ms);
+        });
+    };
+    auto saturate = submit_saturate();
+    for (int attempt = 0;
+         attempt < 3 && !wait_until([&] {
+             return saturate_started.load(std::memory_order_acquire);
+         }, 100ms); ++attempt) {
+        try {
+            saturate.get();  // 消费排队软超时的 TimedOutException 后重试。
+        } catch (const executor::TimedOutException&) {
+        }
+        saturate = submit_saturate();
+    }
+    REQUIRE(saturate_started.load());  // 饱和任务已开跑（worker 被占住）。
     REQUIRE(messages.send_text(DeviceId{"beta"}, MessageId{"m-1"}, "a"));
     saturate.get();
 
