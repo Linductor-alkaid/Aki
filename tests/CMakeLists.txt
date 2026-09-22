@@ -119,3 +119,10 @@ target_link_libraries(test_app_managers PRIVATE
     aki_heyaki)
 add_test(NAME test_app_managers COMMAND test_app_managers)
 set_tests_properties(test_app_managers PROPERTIES LABELS "unit")
+
+# M2-02：vendored SQLite sourceid 断言（DEC-004 建议项；Catch2 单测，DEC-007）。
+# 期望版本由 cmake/Dependencies.cmake 从 third_party/dependencies.lock.json 注入。
+aki_add_unit_test(test_sqlite_sourceid unit/test_sqlite_sourceid.cpp)
+target_compile_definitions(test_sqlite_sourceid PRIVATE
+    AKI_EXPECTED_SQLITE_VERSION="${AKI_SQLITE_LOCK_VERSION}")
+target_link_libraries(test_sqlite_sourceid PRIVATE aki_persistence)

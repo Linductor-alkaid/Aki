@@ -1,7 +1,10 @@
 # 依赖锁定校验（docs/decisions/DEC-003-dependency-locking.md，工程规范第 9.1 节）。
-# third_party/dependencies.lock.json 登记全部 pinned 依赖；configure 时校验每个
-# submodule 的 HEAD 与锁定 commit 一致，缺失或漂移即失败。目标级接入分别在
-# M1（executor）、M3（heyaki）、M5（EUI-NEO）的里程碑内实施，本文件只做校验。
+# third_party/dependencies.lock.json 登记全部依赖；configure 时按 class 校验：
+#   - pinned：校验每个 submodule 的 HEAD 与锁定 commit 一致，缺失或漂移即失败；
+#   - vendored（DEC-004，M2-02 起支持）：非 git 依赖，逐文件 file(SHA256) 比对
+#     锁定哈希，缺失或漂移即 FATAL_ERROR 并附修复提示。
+# 目标级接入分别在 M1（executor）、M2（sqlite）、M3（heyaki）、M5（EUI-NEO）的
+# 里程碑内实施，本文件只做校验。
 
 set(AKI_DEPENDENCIES_LOCK "${PROJECT_SOURCE_DIR}/third_party/dependencies.lock.json")
 
@@ -21,32 +24,76 @@ foreach(_i RANGE ${_aki_last})
     string(JSON _name GET "${_aki_lock}" "dependencies" "${_i}" "name")
     string(JSON _path GET "${_aki_lock}" "dependencies" "${_i}" "path")
     string(JSON _url GET "${_aki_lock}" "dependencies" "${_i}" "url")
-    string(JSON _commit GET "${_aki_lock}" "dependencies" "${_i}" "commit")
+    string(JSON _class GET "${_aki_lock}" "dependencies" "${_i}" "class")
 
     set(_abs "${PROJECT_SOURCE_DIR}/${_path}")
     if(NOT EXISTS "${_abs}")
         message(FATAL_ERROR
-            "Pinned dependency '${_name}' is missing at '${_path}'. "
-            "Run: git submodule update --init ${_path}")
+            "Dependency '${_name}' is missing at '${_path}'. "
+            "See third_party/dependencies.lock.json "
+            "(${_class} entry, url: ${_url}).")
     endif()
 
-    execute_process(
-        COMMAND "${GIT_EXECUTABLE}" -C "${_abs}" rev-parse HEAD
-        RESULT_VARIABLE _rev_result
-        OUTPUT_VARIABLE _head
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET)
-    if(NOT _rev_result EQUAL 0)
+    if(_class STREQUAL "pinned")
+        string(JSON _commit GET "${_aki_lock}" "dependencies" "${_i}" "commit")
+
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${_abs}" rev-parse HEAD
+            RESULT_VARIABLE _rev_result
+            OUTPUT_VARIABLE _head
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET)
+        if(NOT _rev_result EQUAL 0)
+            message(FATAL_ERROR
+                "Failed to read HEAD of pinned dependency '${_name}' (${_path}).")
+        endif()
+
+        if(NOT _head STREQUAL _commit)
+            message(FATAL_ERROR
+                "Pinned dependency '${_name}' is at ${_head}, but ${_commit} is required "
+                "by third_party/dependencies.lock.json. "
+                "Run: git -C ${_path} checkout ${_commit}")
+        endif()
+
+        message(STATUS "Dependency '${_name}' pinned at ${_commit}")
+    elseif(_class STREQUAL "vendored")
+        string(JSON _version GET "${_aki_lock}" "dependencies" "${_i}" "version")
+        string(JSON _file_count LENGTH "${_aki_lock}" "dependencies" "${_i}" "files")
+        math(EXPR _members_last "${_file_count} - 1")
+        foreach(_j RANGE ${_members_last})
+            # MEMBER 按索引取 files 对象的键名。
+            string(JSON _member MEMBER "${_aki_lock}" "dependencies" "${_i}" "files" "${_j}")
+            set(_file "${_abs}/${_member}")
+            if(NOT EXISTS "${_file}")
+                message(FATAL_ERROR
+                    "Vendored dependency '${_name}' (${_version}) is missing file "
+                    "'${_path}/${_member}'. Restore it from the official artifact "
+                    "recorded in third_party/dependencies.lock.json (source: ${_url}). "
+                    "See docs/decisions/DEC-004-local-persistence-sqlite.md.")
+            endif()
+            file(SHA256 "${_file}" _actual_sha256)
+            string(JSON _expected_sha256 GET "${_aki_lock}" "dependencies" "${_i}" "files" "${_member}")
+            if(NOT _actual_sha256 STREQUAL _expected_sha256)
+                message(FATAL_ERROR
+                    "Vendored dependency '${_name}' (${_version}): file "
+                    "'${_path}/${_member}' has SHA-256 ${_actual_sha256}, but "
+                    "${_expected_sha256} is required by "
+                    "third_party/dependencies.lock.json. Restore the official file "
+                    "(source: ${_url}); see docs/decisions/DEC-004-local-persistence-sqlite.md.")
+            endif()
+        endforeach()
+
+        # 暴露 vendored 版本供 sourceid 断言等消费（当前仅 sqlite 一个 vendored 条目）。
+        if(_name STREQUAL "sqlite")
+            set(AKI_SQLITE_LOCK_VERSION "${_version}")
+        endif()
+
+        message(STATUS
+            "Dependency '${_name}' vendored at ${_path} "
+            "(version ${_version}, ${_file_count} files verified)")
+    else()
         message(FATAL_ERROR
-            "Failed to read HEAD of pinned dependency '${_name}' (${_path}).")
+            "Dependency '${_name}' in third_party/dependencies.lock.json has unknown "
+            "class '${_class}' (expected 'pinned' or 'vendored').")
     endif()
-
-    if(NOT _head STREQUAL _commit)
-        message(FATAL_ERROR
-            "Pinned dependency '${_name}' is at ${_head}, but ${_commit} is required "
-            "by third_party/dependencies.lock.json. "
-            "Run: git -C ${_path} checkout ${_commit}")
-    endif()
-
-    message(STATUS "Dependency '${_name}' pinned at ${_commit}")
 endforeach()

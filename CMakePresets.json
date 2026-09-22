@@ -37,6 +37,7 @@
             "displayName": "Debug + AddressSanitizer (GCC/Clang)",
             "cacheVariables": {
                 "CMAKE_CXX_FLAGS": "-fsanitize=address -fno-omit-frame-pointer",
+                "CMAKE_C_FLAGS": "-fsanitize=address -fno-omit-frame-pointer",
                 "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address"
             }
         },
@@ -46,6 +47,7 @@
             "displayName": "Debug + UndefinedBehaviorSanitizer (GCC/Clang)",
             "cacheVariables": {
                 "CMAKE_CXX_FLAGS": "-fsanitize=undefined -fno-omit-frame-pointer",
+                "CMAKE_C_FLAGS": "-fsanitize=undefined -fno-omit-frame-pointer",
                 "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=undefined"
             }
         },
@@ -55,6 +57,7 @@
             "displayName": "Debug + ThreadSanitizer (GCC/Clang, Linux)",
             "cacheVariables": {
                 "CMAKE_CXX_FLAGS": "-fsanitize=thread",
+                "CMAKE_C_FLAGS": "-fsanitize=thread",
                 "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
             }
         }

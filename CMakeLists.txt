@@ -23,6 +23,11 @@ set(EXECUTOR_ENABLE_CUDA OFF)
 set(EXECUTOR_ENABLE_OPENCL OFF)
 add_subdirectory(third_party/executor executor.system EXCLUDE_FROM_ALL)
 
+# M2（sqlite）目标级接入（DEC-004、M2-02）：vendored amalgamation 编译为静态库，
+# 完整性由 cmake/Dependencies.cmake 在 configure 时按锁文件 SHA-256 校验；
+# 第三方 target 不继承第一方告警级别（DEC-007 纪律），见 third_party/sqlite/CMakeLists.txt。
+add_subdirectory(third_party/sqlite)
+
 # executor 公开头文件按 SYSTEM include 处理：其头文件告警（如 MSVC C4324 对齐填充）
 # 不进入第一方 -Werror 门禁，与“第三方依赖不继承告警级别”的约定一致。
 # 门控说明：CMake 3.x 的 VS/Xcode IDE 生成器在 generate 阶段拒绝“源目录前缀路径”
