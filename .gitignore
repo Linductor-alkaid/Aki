@@ -30,6 +30,9 @@ Testing/
 *.user
 *.suo
 
+# Agent 工作流本地元数据
+.zcode/
+
 # 日志与临时文件
 *.log
 /tmp/
