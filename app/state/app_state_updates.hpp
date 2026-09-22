@@ -5,6 +5,7 @@
 #pragma once
 
 #include "app/state/app_state.hpp"
+#include "conversation/message/message_types.hpp"
 #include "device/device/device_types.hpp"
 
 #include <cstdint>
@@ -42,11 +43,36 @@ struct SetConnectionPath {
     aki::device::ConnectionPath path = aki::device::ConnectionPath::Unknown;
 };
 
+// 设备在线状态部分更新（设计第 8.3 节，DeviceManager 依据 connected/disconnected
+// 事件维护）：仅改 presence 字段，不触发信任状态机；未知 id 拒绝并可观测。
+struct SetPresence {
+    aki::device::DeviceId device;
+    aki::device::PresenceState presence = aki::device::PresenceState::Offline;
+};
+
+// 送达回报部分更新（设计第 8.3 节，MessageManager）：经 DeliveryState 状态机
+// 校验；终态幂等，迟到的回报不得让已终结的消息回到活动状态（RULE-08）。
+struct SetDeliveryState {
+    aki::conversation::MessageId message;
+    aki::conversation::DeliveryState state = aki::conversation::DeliveryState::Queued;
+};
+
+// 传输终态宣告（设计第 8.3/10.1 节，TransferManager）：final_state 仅取
+// Completed / Failed / Cancelled；经 TransferState 状态机校验，非法转移
+// （如 Paused -> Completed）与终态复活拒绝并可观测（RULE-08）。
+struct CompleteTransfer {
+    aki::transfer::TransferId transfer;
+    aki::transfer::TransferState final_state = aki::transfer::TransferState::Completed;
+};
+
 using AppStateUpdate = std::variant<UpsertDevice,
     UpsertConversation,
     UpsertMessage,
     UpsertTransfer,
     UpdateTransferProgress,
-    SetConnectionPath>;
+    SetConnectionPath,
+    SetPresence,
+    SetDeliveryState,
+    CompleteTransfer>;
 
 }  // namespace aki::app

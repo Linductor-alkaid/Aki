@@ -76,8 +76,21 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
   worker 句柄由 owner 持有（M1-05/M2 预留）；设计第 8.2 节先行固化契约与唯一
   owner 纪律落点；单测 `test_executor_lifecycle`（8 test case / 58 断言）覆盖
   五类 shutdown 断言与 DOD-02 六项。）
-- [ ] `M1-05` 提供 Device / Conversation / Message / Transfer Manager 骨架，任务全部经
-  Executor 承载并具备协作式取消路径（`EXEC-04`、`EXEC-05`）。
+- [x] `M1-05` 提供 Device / Conversation / Message / Transfer Manager 骨架，任务全部经
+  Executor 承载并具备协作式取消路径（`EXEC-04`、`EXEC-05`）。（2026-09-22：
+  `app/application/`——`manager_runtime.hpp`（单飞有界排空泵：`MpscChannel` 收件箱 +
+  CAS 单飞 + `submit_auto` 排空任务，保留并消费 future，释放后复查收件箱防丢失
+  唤醒；排队软超时/提交即拒经消费 future 自愈重排）、四 Manager（各只写本域
+  Store，事件与宿主命令经收件箱在 Manager 执行上下文串行处理）、`router_sink.hpp`
+  （9 类事件按 `DEC-008` 路由表路由，connected/disconnected 双 Manager 扇出、主路径
+  事件各投递一次）、`transfer_manager.hpp` 会话任务 `submit_cancellable` + StopToken
+  （TaskHandle 按 TransferId 由 Manager 持有，取消经 `request_task_cancel`，M1 无
+  TimerHandle/周期任务）；`app/state/app_state_updates.hpp` 新增 `SetPresence`/
+  `SetDeliveryState`/`CompleteTransfer`（owner 状态机校验、终态幂等、未知 id 拒绝）；
+  设计第 8.3 节先行固化 Manager 契约 + 第 10.1 节更新指令清单 + 第 8.2 节 blocking
+  worker/TimerHandle 措辞修正；`DEC-008` 冻结 Accepted；单测 `test_app_managers`
+  （9 test case / 295 断言）覆盖 DOD-02 六项（Manager 任务路径）与迟到事件不复活
+  终态（RULE-08）。详见验证记录。）
 - [ ] `M1-06` 提供 console 冒烟宿主：两台假设备完成“发现 -> 信任 -> 文本消息 -> 断开 ->
   重连”演示，作为 v0.1.0 验收载体。
 - [x] `M1-07` 落地 `DEC-007` 测试框架与 `unit`/`integration` 标签，CI 可按标签选择
@@ -252,3 +265,75 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
   - 限制：MinGW 默认生成器仍受 `M1-02` 记录限制 1 阻塞；ASAN/UBSAN 随本 PR 的
     Linux CI 门禁提供；TSAN 沿用限制 2。
   - 同步：设计第 8.2 节、本里程碑工作项、总计划当前状态、M1-02/03 测试注释。
+
+- 2026-09-22（`M1-05`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 / CMake 4.1.0）：
+  - 范围：`app/application/manager_runtime.hpp`（`ManagerPump` 单飞有界排空泵）、
+    `device_manager.hpp` / `conversation_manager.hpp` / `message_manager.hpp` /
+    `transfer_manager.hpp` / `router_sink.hpp`、`app/state/app_state_updates.hpp`
+    （+`SetPresence`/`SetDeliveryState`/`CompleteTransfer`）、
+    `app/state/app_state_owner.hpp`（+3 个 apply 分支：SetPresence 仅改 presence 不
+    触发信任状态机、SetDeliveryState/CompleteTransfer 经状态机校验且未知 id 拒绝）、
+    `tests/unit/test_app_managers.cpp` 与 `tests/CMakeLists.txt` 接入；设计第 8.3 节
+    （先行固化 Manager 职责/路由/装配契约）、第 10.1 节（typed 更新指令清单）、
+    第 8.2 节（blocking worker 改为"M1 不启用，M2 起按负载启用"、TimerHandle 子句
+    标注 M1 为空操作）；[DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)
+    冻结 Accepted 并登记总计划决策表。`transfer/manager/` 目录按调研结论保留给
+    M4 传输引擎内部，TransferManager 落位 `app/application/`。
+  - 依据：[设计第 8/10/14 节](../design/aki_design.md)；[DEC-002](../decisions/DEC-002-layering-and-state-boundary.md)、
+    [DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)；总计划
+    `RULE-02`/`RULE-07`~`RULE-09`、`EXEC-02`~`EXEC-07`、`DOD-02`/`DOD-03`；
+    AGENTS.md Executor 规则 3/5/6/7/8；executor-integration 集成指南
+    tasks-and-lifecycle / communication / observability / scheduling 卡（本会话按
+    SKILL 路由加载）；pinned API 核对（executor.hpp `submit_cancellable`/
+    `request_task_cancel`/`get_cancellation_status`、task_cancellation.hpp
+    `TaskCancellationResponse`、types.hpp `TaskSubmission`/`TimedOutException`/
+    `CapacityExhaustedException`/`CancellationStatus`、config.hpp
+    `task_timeout_ms`/`max_in_flight_tasks`）。调研结论：取消/超时/句柄语义与
+    EXEC-04~07 逐条吻合，无 Executor 能力缺口，不进工程规范 9.4 台账（M1 不启用
+    blocking worker 与 TimerHandle 属延迟启用而非缺口）。
+  - 验证（生成器说明同 `M1-02` 记录：MinGW 默认生成器受限制 1 阻塞，以 MSVC
+    生成器等价执行）：
+    - `cmake --preset debug -G "Visual Studio 17 2022" -A x64 &&
+      cmake --build --preset debug --config Debug && ctest --preset debug -C Debug`
+      → 10/10 通过（新 `test_app_managers`：9 test case / 295 断言）。
+    - `cmake --preset release -G "Visual Studio 17 2022" -A x64 &&
+      cmake --build --preset release --config Release && ctest --preset release -C Release`
+      → 10/10 通过。
+    - 稳定性：`test_app_managers` debug/release 各连续 100 次运行全部通过（修复一处
+      偶发：flush 在"任务已释放单飞、promise 尚未结算"的窗口把已就绪 future 误判为
+      未静止而多派一个空转排空任务——改为退让等待结算后消费，不新增排空；
+      另修复用例自身两处缺陷：异常用例需先 flush 消费异常再解除注入标志；迟到送达
+      用例快照断言前需 drain owner）。
+    - GCC 语法检查（CI Linux 告警姿势）：
+      `g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -fsyntax-only`（含
+      Catch2/executor include）对 `tests/unit/test_app_managers.cpp`（包含全部新增
+      头文件）通过——过程中修正两处 GCC 特有问题：`ManagerPump` 成员初始化顺序
+      （-Werror=reorder，MSVC /W4 未报）；嵌套 Options 的默认实参 `= {}`（按仓库
+      既有纪律上提为命名空间作用域 `ConversationManagerOptions`/
+      `MessageManagerOptions`/`TransferManagerOptions`，类内保留 `using Options`
+      别名）。
+    - 覆盖映射（验收 ①，DOD-02 六项沿 Manager 任务路径）：正常完成（9 类事件路由
+      → 排空 → 快照/主路径 FIFO 且 `events_dropped==0`；4×25 并发 `send_text` +
+      主线程交错入队不丢、`rejected==0`）；任务异常（StubAdapter 抛出穿透排空任务 →
+      future + `task_exception_count` 可见，`drain_failures==1`，泵自愈重排
+      `spawn_count==2`、`processed==1`）；提交拒绝（`max_in_flight_tasks=1` 饱和 →
+      排空任务提交以 `CapacityExhaustedException` 即时就绪，`task_submit_rejections
+      ==1` + `capacity_exhausted_count>=1`，存量不丢；收件箱容量 1 → 第三次入队
+      明确拒绝并经 Manager/Sink 返回值可见）；执行中取消（`start_transfer` →
+      `submit_cancellable` 会话任务，`request_task_cancel` → StopToken 轮询退出，
+      `running_request_count==1`、`cancelled_session_count==1`，Adapter 侧取消命令
+      可见，重复取消幂等不重复计数）；超时（独立 owner：`max_threads=1` +
+      `task_timeout_ms=40` → 排空任务排队软超时击杀，`timeout_count+1`、
+      `drain_timeouts==1`，被击杀排空的存量经自愈重排全部完成）；shutdown（在飞
+      会话 + 未排空发送存量，经设计第 8.3 节钩子顺序：`request_cancel_all` →
+      flush → `set_sink(nullptr)`+`stop_discovery` → `AppStateOwner.close()` →
+      `fully_stopped()`，关闭后注入明确拒绝，末次快照可读）。
+      覆盖映射（验收 ②，RULE-08/退出-3）：`Cancelled` 传输的迟到进度与迟到
+      `Completed` 宣告、`Failed` 消息的迟到送达回报，均 Sink admission 成功、状态机
+      应用层拒绝（`updates_rejected==2` / `==1`），快照终态不变。
+  - 限制：MinGW 默认生成器仍受 `M1-02` 验证记录限制 1 阻塞（pinned executor 构建
+    缺陷），未变化；ASAN/UBSAN 证据随本 PR 的 Linux CI 门禁提供；TSAN 沿用
+    限制 2。MR 闭环（分支/PR/CI/Squash）由后续环节按仓库流程执行，本记录不含
+    commit/CI 证据。
+  - 同步：设计第 8.2/8.3/10.1 节、[DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)、
+    总计划决策表与当前状态、本里程碑工作项与验证记录。

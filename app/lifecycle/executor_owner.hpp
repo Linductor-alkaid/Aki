@@ -162,8 +162,9 @@ public:
         return last_report_;
     }
 
-    // M1-05/M2 预留：blocking worker 注册（EXEC-04/EXEC-07）。句柄归 owner，
-    // 关闭顺序中由 owner 统一 request_stop/stop；业务侧只经 spec.worker 轮询。
+    // M1 不启用，M2 起按负载启用（设计第 8.2/8.3 节）：blocking worker 注册
+    // （EXEC-04/EXEC-07）。句柄归 owner，关闭顺序中由 owner 统一
+    // request_stop/stop；业务侧只经 spec.worker 轮询。
     [[nodiscard]] bool start_blocking_worker(executor::BlockingWorkerSpec spec) {
         auto handle = executor_.start_worker(std::move(spec));
         if (!handle.started()) {

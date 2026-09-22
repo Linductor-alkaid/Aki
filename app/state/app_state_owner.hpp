@@ -379,6 +379,55 @@ private:
         return true;  // 生效于 LatestMailbox，不触发 Store 快照发布。
     }
 
+    // 仅改 presence（无转移约束，设计第 3 节）；不经过信任状态机。未知 id 拒绝。
+    bool apply_impl(const SetPresence& set_presence) {
+        for (auto& existing : current_.devices.devices) {
+            if (!(existing.id == set_presence.device)) {
+                continue;
+            }
+            existing.presence = set_presence.presence;
+            snapshot_dirty_ = true;
+            return true;
+        }
+        return false;
+    }
+
+    // 送达回报经 DeliveryState 状态机校验（终态幂等，RULE-08）；未知 id 拒绝。
+    bool apply_impl(const SetDeliveryState& set_delivery) {
+        for (auto& existing : current_.messages.messages) {
+            if (!(existing.id == set_delivery.message)) {
+                continue;
+            }
+            if (!state_machine_allows(existing.state, set_delivery.state)) {
+                return false;
+            }
+            existing.state = set_delivery.state;
+            snapshot_dirty_ = true;
+            return true;
+        }
+        return false;
+    }
+
+    // 传输终态宣告：final_state 仅取终态（设计第 10.1 节），非法载荷直接拒绝；
+    // 其余经 TransferState 状态机校验（Paused -> Completed 被拒，终态不复活）。
+    bool apply_impl(const CompleteTransfer& completion) {
+        if (!aki::transfer::is_terminal(completion.final_state)) {
+            return false;
+        }
+        for (auto& existing : current_.transfers.transfers) {
+            if (!(existing.id == completion.transfer)) {
+                continue;
+            }
+            if (!state_machine_allows(existing.state, completion.final_state)) {
+                return false;
+            }
+            existing.state = completion.final_state;
+            snapshot_dirty_ = true;
+            return true;
+        }
+        return false;
+    }
+
     // 状态机校验：目标与当前一致视为幂等 no-op（终态重复宣告合法）；
     // 其余转移必须落在对应状态机的合法边上（M1-01 领域状态机）。
     static bool trust_allows(aki::device::TrustState from, aki::device::TrustState to) {

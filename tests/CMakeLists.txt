@@ -95,3 +95,19 @@ target_link_libraries(test_executor_lifecycle PRIVATE
     aki_transfer)
 add_test(NAME test_executor_lifecycle COMMAND test_executor_lifecycle)
 set_tests_properties(test_executor_lifecycle PROPERTIES LABELS "unit")
+
+# M1-05：Device/Conversation/Message/Transfer Manager 骨架（DEC-008）测试。
+# 被测对象持有各自用例的 ExecutorOwner（独立实例，AGENTS 规则 7/8；被测对象即
+# 组合根的一部分，设计第 8.3 节装配顺序），不设进程级临时 Executor。
+add_executable(test_app_managers unit/test_app_managers.cpp)
+target_compile_features(test_app_managers PRIVATE cxx_std_20)
+aki_apply_warnings(test_app_managers PRIVATE)
+target_link_libraries(test_app_managers PRIVATE
+    Catch2::Catch2
+    aki_app
+    aki_device
+    aki_conversation
+    aki_transfer
+    aki_heyaki)
+add_test(NAME test_app_managers COMMAND test_app_managers)
+set_tests_properties(test_app_managers PROPERTIES LABELS "unit")

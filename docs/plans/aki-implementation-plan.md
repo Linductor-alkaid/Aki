@@ -53,6 +53,19 @@
   wakeup 解除阻塞契约与 owner 等待预算耗尽的如实记录）。本地 MSVC debug/release
   ctest 9/9 通过；MinGW 限制与 sanitizer 补跑条件沿用 `M1-02` 记录。
   详见 [M1 里程碑文档](m1-domain-state.md)。
+- 2026-09-22：`M1-05` 完成：`app/application/` 四 Manager 骨架（Device / Conversation
+  / Message / Transfer）与 `RouterSink` 落地（设计第 8.3 节先行固化）——9 类 Sink
+  事件按 [DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md) 路由表
+  投递各 Manager 私有有界收件箱（`EXEC-02`），Manager 以单飞有界排空泵
+  （`submit_auto` + 消费 future）在自身执行上下文串行处理，并经既有
+  `AppStateOwner` 的 `MpscChannel` 更新指令更新 Application State（只投递不直写
+  快照，`RULE-02`/`EXEC-03`）；传输会话长任务 `submit_cancellable` + StopToken，取消
+  经 `request_task_cancel`（`EXEC-05`/`EXEC-07`；M1 无 TimerHandle/周期任务，
+  blocking worker 不启用）；新增 `SetPresence`/`SetDeliveryState`/`CompleteTransfer`
+  三类 typed 更新（设计第 10.1 节先行固化）。本地 MSVC debug/release ctest 10/10
+  通过（新 `test_app_managers` 9 test case / 295 断言，含 DOD-02 六项与迟到事件
+  不复活终态）；MinGW 限制与 ASAN/UBSAN 补跑条件沿用 `M1-02` 记录。
+  详见 [M1 里程碑文档](m1-domain-state.md)。
 
 ## 交付边界
 
@@ -152,8 +165,10 @@ M3 引入真实 Heyaki；M5 整合 UI 并按设计第 15 节逐项验收 MVP。�
 
 `DEC-005`、`DEC-006` 在冻结时创建正式决策记录文件；已生效决策见
 [docs/decisions/](../decisions/)（含已冻结的 [DEC-003](../decisions/DEC-003-dependency-locking.md)、
-[DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)（2026-09-22 提前冻结）
-与 [DEC-007](../decisions/DEC-007-test-framework.md)）。
+[DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)（2026-09-22 提前冻结）、
+[DEC-007](../decisions/DEC-007-test-framework.md)
+与 [DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)
+（2026-09-22，Manager 职责切分、事件路由与 Executor 任务承载））。
 
 ## 跨里程碑通用完成定义
 
