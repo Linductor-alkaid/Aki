@@ -118,6 +118,17 @@
   的编译由本 PR Linux CI 门禁提供（本机无 sanitizer 运行时，限制沿用 M1-02
   记录）。详见 M2 里程碑文档 M2-02 验证记录。
 
+- 2026-09-23：`M2-04` 完成：v1 schema（设计第 11 节 ER 四表 + DEC-004 列补齐，
+  枚举 INTEGER+CHECK，transfer 含文件回写位）注册为迁移框架首个正式迁移；
+  仓储层（`persistence/repository/`）提供四表与 M1 领域类型双向转换，API 对齐
+  设计第 11.1 节 ①④（整行 upsert / 进度列更新 / 送达状态列更新 / 终态更新含
+  回写位）；prepared-statement LRU 缓存（容量 16 可配，满时逐出）；重要发现：
+  SQLite 3.53.4 对“约束失败语句 reset 复用”存在异常终止缺陷（官方 DLL 复现，
+  非本仓库构建问题），仓储以“错误语句逐出缓存”统一规避。本地 MSVC
+  debug/release ctest 15/15（+`test_persistence_repository` 10 test case /
+  103 断言）；ASAN/UBSAN 随本 PR Linux CI；MinGW 限制沿用 M1-02 记录。
+  详见 M2 里程碑文档 M2-04 验证记录。
+
 - 2026-09-23：`M2-03` 完成：persistence 薄 RAII 封装与迁移框架落地
   （`persistence/database`：`SqliteError`/`Database`/`Statement`/`Transaction`，
   open 期 pragma `journal_mode=WAL`、`synchronous=NORMAL`、`foreign_keys=ON`、
