@@ -1,6 +1,6 @@
 # M2：本地持久化
 
-> 状态：Planned
+> 状态：In Progress
 > 负责人：Linductor
 > 所属计划：[Aki 实施总计划](aki-implementation-plan.md)
 > 前置：M1（已关闭，`app/lifecycle`/`app/state`/`app/application` 骨架就绪；
@@ -66,10 +66,21 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
 
 ## 工作项
 
-- [ ] `M2-01` 补充设计第 11 节持久化集成契约小节：DB 写路径由哪些 Manager 动作
+- [x] `M2-01` 补充设计第 11 节持久化集成契约小节：DB 写路径由哪些 Manager 动作
   触发（对应第 10.1 节 typed 更新）、启动恢复流程与 Application State 的关系、
   `DatabaseWorker` 在 `EXEC-01` 关闭顺序中的落点；偏差先更新设计再合代码
-  （M1-08 纪律）。
+  （M1-08 纪律）。（2026-09-23：设计新增第 11.1 节「持久化集成契约（M2 契约）」
+  固化四类契约——① DB 写路径映射（typed 更新→表作业、owner 接受后单写者上下文
+  入队、串行保序、RULE-09 失败语义；SetPresence/SetConnectionPath 不持久化）；
+  ② 启动恢复流程（主线程同步：解析数据根→open→迁移→逐域加载→tmp 清扫→以
+  `AppStateOwner` 构造入参播种初始快照；恢复期无并发源、Adapter 事件未启动）；
+  ③ `DatabaseWorker` 排空位于第 8.3 节钩子序列末尾（`close()` 之后、EXEC-01
+  步骤 2/3 之前），run 有界超时等通道+语句间 StopToken、wakeup 解除阻塞；
+  ④ 文件本体终态作业（Completed→SHA-256+原子改名+hash 回写；Failed/Cancelled→
+  `.part` 幂等删除）全部在 blocking worker 内执行，数据根目录解析为 persistence
+  层平台条件编译单元、公开面仅 `std::string`（RULE-10）；第 8.3 节钩子序列补
+  「M2 起钩子末尾追加持久化作业排空」前向引用；纯文档变更，无产品代码。
+  详见验证记录。）
 - [ ] `M2-02` 落地 vendored SQLite 接入：官方 amalgamation 并入
   `third_party/sqlite`（仅 `sqlite3.c` / `sqlite3.h`），锁文件登记
   `class=vendored` + 版本 + SHA-256，`cmake/Dependencies.cmake` 增加
@@ -131,4 +142,41 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
 
 ## 验证记录
 
-（按日期追加；本里程碑尚未开工。）
+- 2026-09-23（`M2-01`，设计先行，纯文档变更）：
+  - 范围：[设计第 11.1 节](../design/aki_design.md)（新增「持久化集成契约（M2
+    契约，M2-01）」，四类契约：DB 写路径映射 / 启动恢复流程 / `DatabaseWorker`
+    在 `EXEC-01` 中的落点 / 文件本体生命周期触发点与数据根目录 Platform Adapter
+    最小落点）；[设计第 8.3 节](../design/aki_design.md)钩子序列补「M2 起钩子
+    末尾追加持久化作业排空」前向引用（避免与 11.1 ③ 的顺序定义矛盾）；
+    [DEC-004](../decisions/DEC-004-local-persistence-sqlite.md) 关联文档节的过时
+    括注修正（链接改指本文档并保留原标注历史）。
+  - 依据：本里程碑工作项 `M2-01`；[DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)
+    （引擎/worker/文件布局/迁移已冻结，本项细化集成契约）、
+    [DEC-002](../decisions/DEC-002-layering-and-state-boundary.md)（状态边界与
+    单写者）；设计第 8.2 节（`wait_for_completion_ex` 不覆盖 blocking worker、
+    M2 起启用）、第 8.3 节（宿主钩子顺序）、第 10.1 节（typed 更新清单、单写者
+    纪律、`AppStateOwner` 构造入参初始快照）、第 11/14 节；总计划 `RULE-02`/
+    `RULE-09`/`RULE-10`、`EXEC-01`/`EXEC-04`/`EXEC-06`、`DOD-04`；工程规范 6.2/8。
+    executor-integration 集成指南 blocking-io 卡（本项会话按 SKILL 路由加载：
+    `run(StopToken)` + `wakeup()` 可解除阻塞契约、`request_stop` 不 join、
+    `stop()` join、shutdown 后不得保留 worker 引用）。
+  - 契约与既有设计/决策的一致性自查（验收 ①）：写路径以 typed 更新为权威、事件
+    为通知面（§10.1 单写者与事件语义）；`SetPresence`/`SetConnectionPath` 不持久
+    化与第 11 节 ER 模型（DEVICE 无 presence 列）及 LatestMailbox 易失摘要语义
+    一致；恢复以 `AppStateOwner` 构造入参播种初始快照（该入参自 M1-02 即存在）
+    且恢复期无并发源，符合 RULE-02/DEC-002 单写者；排空位于钩子末尾由 §8.3 前向
+    引用衔接，与 §8.2 步骤 4 不覆盖 blocking worker 的既证结论一致；文件终态作业
+    在 blocking worker 内与 DEC-004「进入终态 Completed 时在 blocking worker 内
+    流式计算 SHA-256」一致；数据根目录最小落点（persistence 层平台条件编译单元、
+    公开面仅 `std::string`）未超出 DEC-004「Platform Adapter 解析，Core 不见平台
+    类型」原则，不新建议题。无冲突，无需补充决策。
+  - 验证：纯文档变更（验收 ②），无构建/测试行为改动——`git status` 确认改动仅
+    涉及设计/计划/决策四份文档（设计、DEC-004、总计划、本里程碑文档），无产品
+    代码；相对链接核对：`docs/plans/m2-local-persistence.md` 与
+    `docs/decisions/DEC-004-local-persistence-sqlite.md` 均存在，DEC-004 修正
+    后链接指向有效目标；第 11.1 节行文采用与既有小节一致的相对节引用（第 8.2/
+    8.3/10.1 节），无新增外链。
+  - 限制：本项为设计先行契约，`DatabaseWorker`/仓储/恢复的实现在 M2-03~07 落地；
+    实现若与本契约出现偏差，按 M1-08 纪律先更新第 11.1 节再合代码。
+  - 同步：设计第 8.3/11.1 节、DEC-004 关联文档节、本里程碑工作项与状态、
+    总计划当前状态与里程碑索引（M2 → In Progress）。

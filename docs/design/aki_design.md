@@ -421,7 +421,8 @@ M1 冒烟宿主（仓库根 `main.cpp`，M1-06）是该组合根的最小进程�
 受控关闭的 `EXEC-01` 步骤 1 钩子由宿主按序组合：请求取消各 Manager 在途可取消
 任务（`request_task_cancel`，句柄由 Manager 发起）→ flush 各 Manager 至泵静止并
 消费在途 future → 停 Adapter 投递（fake：`set_sink(nullptr)` + `stop_discovery`）→
-`AppStateOwner.close()`；其后才进入 `ExecutorOwner` 的步骤 2~5。M1-05 不启用
+`AppStateOwner.close()`（M2 起钩子末尾追加持久化作业排空，见第 11.1 节）；其后才
+进入 `ExecutorOwner` 的步骤 2~5。M1-05 不启用
 blocking worker：`ExecutorOwner::start_blocking_worker` 仍是唯一注册入口，首次启用
 预期为 M2（历史读写 I/O）；M3 托管第三方事件循环时按 pinned 指南
 event-loop-interop 模式评估，M4 承载文件 I/O。
@@ -579,10 +580,90 @@ erDiagram
     TRANSFER {
         string transfer_id
         string message_id
-        string path
+        string file_name
         int state
+        int transferred
+        int total
+        string path
+        string hash
+        int size_bytes
+        string mime_type
     }
 ```
+
+表列与 `DEC-004` 对齐，是 `M2-04` schema（4 张表起步版本）的权威来源：`path` 存
+POSIX 相对路径，`hash` 为终态流式 SHA-256，`size_bytes` / `mime_type` / `file_name`
+为文件本体 metadata（`file_name` 是远端原始文件名，仅供展示、禁止拼入路径）；
+`transferred` / `total` 承载传输进度，供 `UpdateTransferProgress` 部分更新与重启
+恢复。
+
+### 11.1 持久化集成契约（M2 契约，M2-01）
+
+本小节固化持久化与应用层的集成契约，供 M2-02~07 直接实现。引擎与访问方式、
+vendored 引入、连接参数、文件布局与迁移机制以 `DEC-004` 为准；本节只固化四类
+契约——何时写、如何恢复、如何关闭、文件本体何时动。
+
+**① DB 写路径映射**：DB 作业由第 10.1 节 typed 更新驱动（权威路径），不由 9 类
+事件驱动（事件是通知面）：`UpsertDevice` → DEVICE 行 upsert；`UpsertConversation`
+→ CONVERSATION；`UpsertMessage` → MESSAGE；`UpsertTransfer` → TRANSFER；
+`UpdateTransferProgress` → TRANSFER 进度字段（`transferred` / `total`）更新
+（不新建行）；`CompleteTransfer` → TRANSFER 终态更新；`SetDeliveryState` →
+MESSAGE 送达状态列更新（不新建行）——送达回报是消息历史的组成部分，持久化
+保证重启恢复后已发消息不丢失送达终态（`M2` 计划退出-1「消息历史逐域一致」）。
+`SetPresence` 与 `SetConnectionPath` 不持久化：presence 是易失在线状态（恢复后
+默认 `Offline`，由连接事件重建），连接路径是第 10.1 节 LatestMailbox 覆盖式
+单值摘要。写入时机：更新被状态 owner 接受（计入
+`updates_applied`）后，由 owner 单写者上下文按接受顺序入队对应 DB 作业——这是
+第 10.1 节硬约束 1 的延伸（入队不新增执行上下文），作业进入 `DatabaseWorker`
+的有界工作通道（`EXEC-04`）；同一实体的作业顺序即更新接受顺序，`DatabaseWorker`
+单一 worker 串行消费保持该顺序。接受包含幂等 no-op：对已终态传输重复
+`CompleteTransfer(Completed)`（第 10.1 节 from==to 视为接受并计入
+`updates_applied`）同样入队，由作业侧幂等语义吸收（见 ④ Completed 作业组的
+跳过条件），不在入队侧去重——owner 不新增簿记状态。失败语义（`RULE-09`）：作业入队拒绝（通道满或
+已关闭）与执行失败（`SqliteError`）均转化为明确结果与可观测事件/计数（
+`EXEC-06`），不静默重试、不回滚已接受的内存更新（第 10.1 节状态边界单向）；
+内存态与持久化的分歧经失败计数暴露，由上层策略处理。
+
+**② 启动恢复流程**：组合根在 `ExecutorOwner.initialize()` 之后、Manager/Adapter
+启动之前，于主线程同步执行恢复——此时尚无并发事件源，不经 blocking worker，
+`DatabaseWorker` 在播种完成后才注册：解析数据根目录 → `open`（DB 损坏即干净
+失败，不静默）→ `PRAGMA user_version` 迁移 → 逐域加载 DEVICE / CONVERSATION /
+MESSAGE / TRANSFER → 清扫无活动 Transfer 行的 `files/tmp/` 残留（依据加载到的
+活动行判定，`DEC-004` 崩溃恢复纪律）→ 以加载结果构造 `AppState` 作为初始快照
+播种状态 owner（`AppStateOwner` 构造入参；第 10.1 节单写者纪律在启动段的对应
+形式：恢复期 owner 尚未运行、无并发写者，恢复数据即首个权威快照）。恢复完成前
+不注册 `RouterSink`、不启动发现、不注入任何事件（`EXEC-02` 启动段纪律）；open、
+迁移或加载失败时组合根干净退出并输出原因。
+
+**③ `DatabaseWorker` 在 `EXEC-01` 关闭顺序中的落点**：`DatabaseWorker` 经
+`ExecutorOwner::start_blocking_worker` 注册（第 8.2 节，M2 首次启用）。其排空
+位于第 8.3 节宿主钩子序列的末尾：`… → AppStateOwner.close() → DatabaseWorker
+排空（有界预算）`——`close()` 的排空会让最后一批更新被接受并入队 DB 作业，因此
+DB 排空必须在 `close()` 之后；又因第 8.2 节步骤 4 的 `wait_for_completion_ex`
+不覆盖 blocking worker，排空必须完成于钩子内（`EXEC-01` 步骤 1），其后步骤 2
+`request_stop()`（非阻塞置位 + 唤醒）与步骤 3 `stop()`（request + wakeup +
+join）才能在不丢作业的前提下回收 worker。`run()` 以有界超时等待工作通道、在
+语句间检查 StopToken（取消粒度为语句间，执行中的语句不被打断）；`wakeup()`
+唤醒通道等待，满足第 8.2 节步骤 3 的可解除阻塞契约。排空完成后通道关闭，新
+作业入队明确拒绝（`RULE-09`）。
+
+**④ 文件本体生命周期触发点**：`.part` 写入属传输数据链路（M4 接入；M2 以测试
+内字节源驱动），写入期固定为 `files/tmp/<transfer_id>.part`。终态处理由 DB 作业
+承载、全部在 `DatabaseWorker`（blocking worker，`EXEC-04`）内执行：
+`CompleteTransfer(Completed)` 被接受后排队"TRANSFER 终态更新 + 流式 SHA-256 +
+原子改名到 `files/<transfer_id>/<净化文件名>` + `hash` / `size_bytes` 回写
+TRANSFER 行"的串行作业组。作业组自身幂等（与删除作业对称）：重复终态宣告是被
+接受的幂等 no-op（第 10.1 节）并重复入队，作业执行时若发现 TRANSFER 行已为
+`Completed` 且目标文件已存在（先前执行已完成），整组幂等跳过（计成功，不产生
+失败计数）；否则按序执行，此时 `.part` 缺失即流式 SHA-256 明确失败（`RULE-09`，
+不静默、不伪造成功）。`Failed` / `Cancelled` 被接受后排队 `.part` 幂等删除作业；
+启动清扫见 ②。Manager 不做文件 I/O——第 8.3 节职责切分不变：
+TransferManager 只写权威状态并经状态更新触发上述作业。数据根目录解析为
+Platform Adapter 职责的最小落点：persistence 层内平台条件编译单元（Windows `%APPDATA%` / Linux XDG）提供
+数据根目录解析，公开面仅 `std::string` 路径（`RULE-10`，平台相关编译单元保持
+可选）；组合根解析一次后经构造参数注入路径字符串，其余 Core/persistence 代码
+不见平台类型；平台能力增多时再按需升级为独立 Platform Adapter 小节（届时先
+更新本节）。
 
 ## 12. Capability 与权限
 
