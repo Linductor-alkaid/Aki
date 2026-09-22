@@ -2,7 +2,7 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-09-22
+> 更新日期：2026-09-23
 > 设计依据：[Aki 设计方案](../design/aki_design.md)
 > 协作约束：[AGENTS.md](../../AGENTS.md)、[项目管理与工程规范](../project/project-standards.md)
 
@@ -63,8 +63,8 @@
   经 `request_task_cancel`（`EXEC-05`/`EXEC-07`；M1 无 TimerHandle/周期任务，
   blocking worker 不启用）；新增 `SetPresence`/`SetDeliveryState`/`CompleteTransfer`
   三类 typed 更新（设计第 10.1 节先行固化）。本地 MSVC debug/release ctest 10/10
-  通过（新 `test_app_managers` 9 test case / 295 断言，含 DOD-02 六项与迟到事件
-  不复活终态）；MinGW 限制与 ASAN/UBSAN 补跑条件沿用 `M1-02` 记录。
+  通过（新 `test_app_managers` 含 DOD-02 六项与迟到事件
+  不复活终态；合入版 10 test case / 314 断言，M1-08 审计实测）；MinGW 限制与 ASAN/UBSAN 补跑条件沿用 `M1-02` 记录。
   详见 [M1 里程碑文档](m1-domain-state.md)。
 - 2026-09-22：`M1-06` 完成：根 `main.cpp` console 冒烟宿主落地（设计第 8.3 节
   组合根的进程内实现，进程内 owner 自本项起为正式 `ExecutorOwner`）——两台假设备
@@ -77,6 +77,19 @@
   debug/release ctest 11/11 通过；宿主 debug 连续 50 次输出逐字节一致、release
   50 次全 PASS（确定性可复现）；MinGW 限制与 ASAN/UBSAN 补跑条件沿用
   `M1-02` 记录。详见 [M1 里程碑文档](m1-domain-state.md)。
+- 2026-09-23：`M1-08` 完成，**M1 关闭（Done）**：收口审计逐项校对设计第
+  3~7/8.1/8.2/8.3/10/10.1/14 节对 `device/`、`conversation/`、`transfer/`、
+  `heyaki/adapter/`、`app/lifecycle/`、`app/application/`、`app/state/` 与根
+  `main.cpp`，结论全部一致；四项已知偏差均有设计/决策/工作项锚点，未记录偏差
+  数为 0；RULE-01/07/10 与 EXEC-04 M1 边界 grep 抽查通过。退出-2~5 证据归集：
+  六项并发基线沿四条路径（test_app_state/heyaki_adapter/executor_lifecycle/
+  app_managers 共 26 个 dod02 用例）映射并通过；四个状态机单测（193 断言）+
+  Manager 路径 RULE-08 用例通过；本地 MSVC debug/release 全量 ctest 11/11；
+  ASAN/UBSAN 由 PR #8/#9 的 Linux CI 四项检查 SUCCESS 覆盖全部 M1 代码（gh 核实）。
+  [M1 里程碑](m1-domain-state.md)状态置 `Completed`，里程碑索引置 `Done`；
+  v0.1.0 发布点就绪，tag 创建待用户授权。事实修正：`test_app_managers` 计数
+  以 PR #8 合入版为准（10 test case / 314 断言）。详见 [M1 里程碑文档](m1-domain-state.md)
+  M1-08 验证记录。
 
 ## 交付边界
 
@@ -157,7 +170,7 @@
 | 里程碑 | 名称 | 状态 | 前置 | 建议发布点 | 文档 |
 | --- | --- | --- | --- | --- | --- |
 | M0 | 工程骨架与协作基线 | Done | 无 | 无（仓库基线） | [m0-project-skeleton.md](m0-project-skeleton.md) |
-| M1 | 领域模型与状态边界 | In Progress | M0（依赖来源解锁） | v0.1.0 | [m1-domain-state.md](m1-domain-state.md) |
+| M1 | 领域模型与状态边界 | Done | M0（依赖来源解锁） | v0.1.0 | [m1-domain-state.md](m1-domain-state.md) |
 | M2 | 本地持久化 | Planned | M1 | v0.2.0 | 待创建 |
 | M3 | Heyaki 真实接入与文本消息 | Planned | M1、M2、DEC-006 | v0.3.0 | 待创建 |
 | M4 | 图片消息与文件传输 | Planned | M3 | v0.4.0 | 待创建 |
