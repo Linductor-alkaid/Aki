@@ -102,10 +102,6 @@ std::string enum_text(DeliveryState state) {
     return std::string(aki::conversation::to_string(state));
 }
 
-std::string enum_text(ConnectionPath path) {
-    return std::string(aki::device::to_string(path));
-}
-
 const char* event_type_name(const AppEvent& event) {
     if (std::holds_alternative<DeviceDiscoveredEvent>(event.payload)) {
         return "DeviceDiscovered";
