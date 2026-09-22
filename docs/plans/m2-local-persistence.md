@@ -111,10 +111,23 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
   81 断言）与 `test_persistence_public_surface`（边界锁定消费编译单元）。
   同步封装无并发路径，DOD-02 六项不适用（DatabaseWorker 六项随 M2-05）。
   详见验证记录。）
-- [ ] `M2-04` 提供第 11 节 ER 模型 4 张表 schema（迁移 M1 起步版本）与仓储层：
+- [x] `M2-04` 提供第 11 节 ER 模型 4 张表 schema（迁移 M1 起步版本）与仓储层：
   领域枚举（`TrustState` / `MessageType` / `DeliveryState` / `TransferState`）
   `INTEGER + CHECK` 映射，DEVICE / CONVERSATION / MESSAGE / TRANSFER 的 CRUD，
-  prepared-statement 缓存容量上限（`RULE-09`）。
+  prepared-statement 缓存容量上限（`RULE-09`）。（2026-09-23：
+  `persistence/migration/schema_v1.hpp/.cpp`（v1 单步原子迁移：ER 四表 + 关系
+  DEVICE 1-* CONVERSATION 1-* MESSAGE 0..1 TRANSFER + 四枚举 `INTEGER + CHECK`
+  显式合法值集 + `transfer` 的 `stored_relative_path`/`stored_sha256`/
+  `stored_size_bytes` 回写位与 `file_name` 仅展示列）；`persistence/repository/
+  statement_cache.hpp/.cpp`（prepared-statement LRU 缓存，容量上限 16 可配，
+  满时 LRU 逐出，`invalidate` 供错误语句逐出）；`persistence/repository/
+  repositories.hpp/.cpp`（四仓储与 M1 领域类型双向转换，API 对齐设计第 11.1 节
+  ①④：整行 upsert / 进度列更新 / 送达状态列更新 / 终态更新含回写位；未命中行
+  `runtime_error` 可见）。新增 `test_persistence_repository`（11 test case /
+  108 断言；初稿误记 10/103，以合入前 debug/release 双配置实测为准）。重要发现：SQLite 3.53.4 对“约束失败语句的 reset 复用”存在异常
+  终止缺陷（官方 DLL/MSVC/GCC 三路复现）——`run_cached` 统一在 SqliteError 时
+  逐出缓存语句规避，详见验证记录。本项为同步封装，DOD-02 六项不适用。
+  详见验证记录。）
 - [ ] `M2-05` 提供 `DatabaseWorker`：经 `ExecutorOwner` 注册 blocking worker
   （首次启用，设计第 8.2 节落点），单一连接 + 有界工作通道串行消费、StopToken
   在语句间协作取消、通道满与执行失败经 Executor 监控设施可见（`EXEC-04`/
@@ -335,3 +348,62 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
     C 编译面，M2-02 已补 `CMAKE_C_FLAGS`）；MinGW 完整构建沿用 M1-02 记录
     限制 1；MR 闭环由后续环节执行，本记录不含 commit/CI 证据。
   - 同步：本里程碑工作项 `M2-03`、总计划当前状态。
+
+- 2026-09-23（`M2-04`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0 / w64devkit GCC 15.2.0（语法检查））：
+  - 范围：`persistence/migration/schema_v1.hpp/.cpp`（v1 迁移注册）、
+    `persistence/repository/statement_cache.hpp/.cpp`（LRU 缓存 +
+    `invalidate`）、`persistence/repository/repositories.hpp/.cpp`（四仓储）、
+    `persistence/CMakeLists.txt`（源文件接入）、
+    `tests/unit/test_persistence_repository.cpp` + `tests/CMakeLists.txt`、
+    `tests/unit/test_persistence_public_surface.cpp`（扩展覆盖仓储公开面）。
+  - 依据：[设计第 11 节](../design/aki_design.md)（ER 模型）、
+    [设计第 11.1 节 ①④](../design/aki_design.md)（写路径映射、终态回写位）、
+    [DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)（schema 对应 ER、
+    枚举 INTEGER+CHECK、DB 存相对路径/hash/size/MIME、原始文件名仅存 DB）、
+    M2-03 迁移框架与 RAII 封装；总计划 `RULE-09`/`RULE-10`、`DOD-05`。本项为
+    同步封装，无新增并发路径（DOD-02 六项随 M2-05）。
+  - 重要发现（上游缺陷，已规避并记录）：SQLite 3.53.4 中，语句 step 因外键
+    约束失败（SQLITE_CONSTRAINT）后对其 `sqlite3_reset` 会异常终止——
+    `:memory:` 库、多外键子表（conversation 含 2 外键）下经官方预编译 DLL、
+    MSVC 本地编译、w64devkit GCC 本地编译三路复现（纯 C API 复现脚本
+    `build/scratch/repro_raw2.cpp`；单外键无 CHECK 的表不复现）。规避：
+    仓储全部语句经 `run_cached` 执行，SqliteError 时 `StatementCache::
+    invalidate` 逐出该语句（确定性 finalize），调用方重试总是 fresh prepare
+    （fresh 语句行为正确）。影响面：仅“约束失败后复用同一 prepared 语句”
+    路径；正常恢复/写入路径（父行先于子行）不受影响。建议后续向上游
+    sqlite.org 报告或评估版本升级（超出本项范围，已留档）。
+  - 验证（生成器说明同 M1 记录）：
+    - `ctest --preset debug -C Debug`（构建后）→ 15/15（原 13 + 新
+      `test_persistence_repository` 11 test case / 108 断言 +
+      `test_persistence_public_surface` 扩展仓储公开面）。
+    - `ctest --preset release -C Release` → 15/15。
+    - 稳定性：`test_persistence_database` debug 连续 30 次全过。
+    - GCC 语法检查（CI Linux 告警姿势）：
+      `g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -fsyntax-only -I.
+      -Ithird_party/sqlite` 对五个实现/迁移/仓储编译单元与三个测试编译单元
+      全部通过。
+    - RULE-10 证据（验收 ④）：`grep -rn "#include <sqlite3.h>" persistence/`
+      仅命中 `database.cpp:4`；公开头 grep `sqlite3_` 仅注释行命中；
+      `test_persistence_public_surface`（不链接 sqlite3、无 include 路径传播）
+      编译并运行通过，覆盖数据库 + 迁移 + 仓储公开面真实使用。
+    - 覆盖映射（验收 ①②③）：v1 迁移空库应用（四表存在、user_version=1）、
+      重复应用幂等（返回 0）；device 往返（capabilities 位、5 个 trust 值
+      逐一映射、presence 不持久化恢复为 Offline、upsert 更新不新增行）；
+      conversation 外键（孤儿行被 foreign_keys=ON 拒绝 → SqliteError、
+      就位后成功、Disconnected 往返）；message 五类 payload 往返 + 时间戳
+      无损 + 未知会话 FK 拒绝；transfer 进度列更新不新建行、终态 + 回写位
+      列（stored_relative_path/stored_sha256/stored_size_bytes）、未知 id
+      与非终态 complete 拒绝；schema CHECK 拒绝非法枚举（trust/class/
+      conversation/message/delivery/transfer 六处原始 SQL 注入验证）；
+      语句缓存容量 2 时 LRU 逐出 + 逐出后复用正确 + 零容量构造拒绝。
+  - 过程修正：测试联调发现并修正三处用例/实现问题——① `Statement::step()`
+    对 UPDATE 永远返回 DONE，“未命中即抛”只能以 `changes()==0` 判定
+    （set_delivery_state/update_progress/complete 三处修正）；② 缓存测试的
+    DDL/INSERT 语句未 step 即断言表存在（补 step）；③ 公开面用例的迁移仅建
+    probe 表导致 DeviceRepository 抛“no such table”（未捕获 → WER 挂起），
+    改为 v1 schema + 两步迁移。
+  - 限制：ASAN/UBSAN 随本 PR Linux CI 门禁提供（sqlite3.c 已在 asan preset
+    C 编译面）；MinGW 完整构建沿用 M1-02 记录限制 1；MR 闭环由后续环节
+    执行，本记录不含 commit/CI 证据。
+  - 同步：本里程碑工作项 `M2-04`、总计划当前状态。

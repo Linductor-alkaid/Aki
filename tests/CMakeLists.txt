@@ -148,3 +148,13 @@ aki_apply_warnings(test_persistence_public_surface PRIVATE)
 target_link_libraries(test_persistence_public_surface PRIVATE aki_persistence)
 add_test(NAME test_persistence_public_surface COMMAND test_persistence_public_surface)
 set_tests_properties(test_persistence_public_surface PROPERTIES LABELS "unit")
+
+# M2-04：v1 schema（ER 四表）与仓储层测试（DEC-004；设计第 11 节/11.1 节 ①④）。
+add_executable(test_persistence_repository unit/test_persistence_repository.cpp)
+target_compile_features(test_persistence_repository PRIVATE cxx_std_20)
+aki_apply_warnings(test_persistence_repository PRIVATE)
+target_link_libraries(test_persistence_repository PRIVATE
+    Catch2::Catch2WithMain
+    aki_persistence)
+add_test(NAME test_persistence_repository COMMAND test_persistence_repository)
+set_tests_properties(test_persistence_repository PROPERTIES LABELS "unit")

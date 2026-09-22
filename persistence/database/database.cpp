@@ -59,6 +59,11 @@ void Statement::require_valid() const {
     }
 }
 
+void Statement::bind(int index, int value) {
+    require_valid();
+    check_rc(sqlite3_bind_int64(impl_->stmt, index, value), impl_->db);
+}
+
 void Statement::bind(int index, std::int64_t value) {
     require_valid();
     check_rc(sqlite3_bind_int64(impl_->stmt, index, value), impl_->db);
@@ -245,6 +250,11 @@ void Database::execute(const std::string& sql) {
 std::int64_t Database::last_insert_rowid() const {
     require_open();
     return sqlite3_last_insert_rowid(impl_->db);
+}
+
+int Database::changes() const {
+    require_open();
+    return sqlite3_changes(impl_->db);
 }
 
 // ---- Transaction ----

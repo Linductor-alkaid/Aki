@@ -48,6 +48,7 @@ public:
 
     explicit operator bool() const noexcept;
 
+    void bind(int index, int value);  // 代理到 int64，避免 int64/double 二义
     void bind(int index, std::int64_t value);
     void bind(int index, double value);
     void bind(int index, const std::string& value);           // TEXT
@@ -110,6 +111,8 @@ public:
     void execute(const std::string& sql);
 
     [[nodiscard]] std::int64_t last_insert_rowid() const;
+    // 最近一条语句改变的行数（UPDATE ... WHERE 未命中检测，RULE-09）。
+    [[nodiscard]] int changes() const;
 
     struct Impl;
 

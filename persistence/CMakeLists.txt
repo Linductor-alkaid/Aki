@@ -4,7 +4,10 @@
 # 消费者（Manager/宿主/测试）拿不到 sqlite include 路径，公开头只含 std 类型。
 add_library(aki_persistence STATIC
     database/database.cpp
-    migration/migration.cpp)
+    migration/migration.cpp
+    migration/schema_v1.cpp
+    repository/repositories.cpp
+    repository/statement_cache.cpp)
 target_compile_features(aki_persistence PUBLIC cxx_std_20)
 aki_apply_warnings(aki_persistence PRIVATE)
 target_include_directories(aki_persistence PUBLIC ${PROJECT_SOURCE_DIR})
