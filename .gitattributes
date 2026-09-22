@@ -1,0 +1,6 @@
+# Vendored 依赖的字节级完整性纪律（DEC-003/DEC-004）：锁文件按官方工件字节
+# 登记 SHA-256，configure 期漂移即失败。任何平台/配置下的行尾转换都会破坏
+# 字节比对（CI Windows runner autocrlf=true 实测），故标记为 binary：
+# 不做行尾转换、不做文本 diff、不做三方合并（上游工件按整体替换维护）。
+third_party/sqlite/sqlite3.c binary
+third_party/sqlite/sqlite3.h binary

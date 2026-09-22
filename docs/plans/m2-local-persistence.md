@@ -81,12 +81,19 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
   层平台条件编译单元、公开面仅 `std::string`（RULE-10）；第 8.3 节钩子序列补
   「M2 起钩子末尾追加持久化作业排空」前向引用；纯文档变更，无产品代码。
   详见验证记录。）
-- [ ] `M2-02` 落地 vendored SQLite 接入：官方 amalgamation 并入
+- [x] `M2-02` 落地 vendored SQLite 接入：官方 amalgamation 并入
   `third_party/sqlite`（仅 `sqlite3.c` / `sqlite3.h`），锁文件登记
   `class=vendored` + 版本 + SHA-256，`cmake/Dependencies.cmake` 增加
   `file(SHA256)` 校验分支（不匹配即 `FATAL_ERROR` + 修复提示），编译宏
   `SQLITE_DQS=0` / `SQLITE_OMIT_LOAD_EXTENSION=1`，debug 构建断言
-  `sqlite3_sourceid` 与锁文件版本一致。
+  `sqlite3_sourceid` 与锁文件版本一致。（2026-09-23：下载前先校验 zip SHA3-256
+  与 DEC-004 记录及 sqlite.org 下载页标注一致，解包仅取两文件；锁文件新增
+  vendored 条目（版本 + 双文件 SHA-256 + zip 来源）；`Dependencies.cmake` 按
+  `class` 分支（pinned 行为不变，vendored 逐文件校验，未知 class 报错）；
+  `third_party/sqlite/CMakeLists.txt` 静态库 target（不继承第一方告警级别）；
+  asan/ubsan/tsan 预设补 `CMAKE_C_FLAGS`（sqlite3.c 为 C 编译单元，否则不被
+  插桩）；`test_sqlite_sourceid` 三方一致断言（header 宏 / libversion /
+  锁文件注入版本）。详见验证记录。）
 - [ ] `M2-03` 提供 persistence 薄 RAII 封装与迁移框架：`Database` / `Statement` /
   `Transaction` 守卫 + `SqliteError`；open 处统一设置 `journal_mode=WAL`、
   `synchronous=NORMAL`、`foreign_keys=ON`、`busy_timeout`；`persistence/migration`
@@ -180,3 +187,75 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
     实现若与本契约出现偏差，按 M1-08 纪律先更新第 11.1 节再合代码。
   - 同步：设计第 8.3/11.1 节、DEC-004 关联文档节、本里程碑工作项与状态、
     总计划当前状态与里程碑索引（M2 → In Progress）。
+
+- 2026-09-23（`M2-02`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0 / w64devkit GCC 15.2.0（MinGW configure-only 与 GCC 语法检查））：
+  - 范围：`third_party/sqlite/sqlite3.c` + `sqlite3.h`（官方 amalgamation vendored，
+    仅两文件）、`third_party/sqlite/CMakeLists.txt`（`sqlite3` 静态库 target：
+    `SQLITE_DQS=0`、`SQLITE_OMIT_LOAD_EXTENSION=1`，不调用 `aki_apply_warnings`——
+    第三方 target 不继承第一方告警级别，DEC-007 纪律）、
+    `third_party/dependencies.lock.json`（新增 vendored 条目：version 3.53.4、
+    license public domain、`class=vendored`、`submodule=false`、双文件 SHA-256、
+    `source_artifact`（zip URL + SHA3-256）溯源）、`cmake/Dependencies.cmake`
+    （按 `class` 分支：pinned 路径行为与 STATUS 输出不变；vendored 逐文件
+    `file(SHA256)` 校验，缺失/漂移即 `FATAL_ERROR` + 修复提示；未知 class 报错）、
+    `persistence/CMakeLists.txt`（`aki_persistence` 链接 `sqlite3`，M2-03 起薄
+    封装消费）、`CMakePresets.json`（asan/ubsan/tsan 预设补 `CMAKE_C_FLAGS`——
+    sqlite3.c 是 C 编译单元，不加则不进 sanitizer 插桩）、
+    `tests/unit/test_sqlite_sourceid.cpp` + `tests/CMakeLists.txt`（sourceid
+    断言 Catch2 用例，`DEC-007`；期望版本由 CMake 从锁文件注入
+    `AKI_EXPECTED_SQLITE_VERSION`）。
+  - 依据：[DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)（版本
+    3.53.4、zip SHA3-256、仅两文件、锁文件格式、`file(SHA256)` 校验、编译宏、
+    sourceid 断言、asan 纳入与豁免策略）、[DEC-003](../decisions/DEC-003-dependency-locking.md)
+    （锁定 + configure 校验、漂移即失败纪律）、[DEC-007](../decisions/DEC-007-test-framework.md)
+    （第三方不继承告警级别）、工程规范 10.7；总计划 `RULE-09`/`RULE-10`、
+    `DOD-03`/`DOD-05`。本项无新增并发路径（DOD-02 六项不适用；`DatabaseWorker`
+    六项随 M2-05）。
+  - 获取与校验（先校验后解包）：sqlite.org/download.html 页面标注
+    `sqlite-amalgamation-3530400.zip`（version 3.53.4，SHA3-256
+    `628a44cf…934e`）与 DEC-004 记录一致 → `curl` 下载
+    `https://sqlite.org/2026/sqlite-amalgamation-3530400.zip` →
+    `python hashlib.sha3_256` 校验 MATCH → 解包仅取 `sqlite3.c`（9,515,341 B）与
+    `sqlite3.h`（690,838 B）入 `third_party/sqlite/`（zip 内 shell.c/sqlite3ext.h
+    未纳入）；双文件 SHA-256（`b1dd5d74…8189` / `919e7f2e…0e1d`）登记锁文件。
+  - 验证（生成器说明同 M1 记录：本地 MinGW 默认生成器受限制 1 阻塞，构建以
+    MSVC 生成器执行；MinGW 仅 configure 校验）：
+    - MSVC debug configure：4 条 Dependency STATUS——executor/EUI-NEO/heyaki
+      pinned 三条与 M1 时期完全一致（验收 ① 前半），新增
+      `Dependency 'sqlite' vendored at third_party/sqlite (version 3.53.4,
+      2 files verified)`。
+    - `cmake --build --preset debug --config Debug && ctest --preset debug -C Debug`
+      → 12/12（原 11 + 新 `test_sqlite_sourceid`）；release 同构 → 12/12
+      （验收 ②）。
+    - sourceid 断言实测输出：`expected (lock): 3.53.4`、`SQLITE_VERSION: 3.53.4`、
+      `libversion: 3.53.4`、`sqlite3_sourceid: 2026-07-24 19:02:57 bf7c7f30…`，
+      三方一致且 header/lib 配对（验收 ⑤；release 构建同样运行该断言，严格于
+      "仅 debug" 的建议项）。
+    - 负向验证（对齐 DEC-003 验证方式，验收 ① 后半）：篡改锁文件中
+      `sqlite3.c` 的 SHA-256 → `cmake --preset debug` 以 FATAL_ERROR 失败，消息
+      含 actual/required 两个哈希、官方 artifact 来源 URL 与 DEC-004 指引；还原
+      后 configure 通过（`2 files verified`），锁文件 diff 恢复为仅 vendored
+      条目（+18 行）。
+    - MinGW configure-only（scratch 目录 `build/mingw-cfg-check`，-G "MinGW
+      Makefiles"）：4 条 Dependency 校验通过、`Configuring done`（构建仍受
+      `M1-02` 记录限制 1 阻塞，未变化）。
+    - GCC 语法检查（CI Linux 告警姿势；Catch2 头来自 FetchContent 构建树，
+      src 与 generated-includes 两个包含目录）：
+      `g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -fsyntax-only -I.
+      -Ithird_party/sqlite -Ibuild/debug/_deps/catch2-src/src
+      -Ibuild/debug/_deps/catch2-build/generated-includes
+      -DAKI_EXPECTED_SQLITE_VERSION=\"3.53.4\"
+      tests/unit/test_sqlite_sourceid.cpp` 通过（Catch2 化后重跑）。
+  - 过程修正：configure 联调中修正两处 CMake JSON 迭代问题——`files` 对象的
+    键名迭代须用 `string(JSON ... MEMBER <json> <ptr> <index>)`（本机 CMake 4.1
+    无 `MEMBERS` 模式，对象不支持数字索引 GET），最终实现按 `LENGTH`+`MEMBER`
+    遍历。
+  - 限制：本机无 sanitizer 运行时——`sqlite3.c` 随 asan/ubsan 的编译与运行由本
+    PR 的 Linux CI 门禁提供（预设已补 `CMAKE_C_FLAGS`，CI 复跑核验）；UBSan 若
+    对 SQLite 内部报点，仅在 sqlite3 target 上做旗标豁免并记录（里程碑风险节
+    预留，本项未预置豁免、不放松全局）；供应链审计结论（zip SHA3-256 + 文件
+    SHA-256 + public domain 结论入 `docs/supply-chain/`）按计划留 M2-08 归档，
+    溯源字段已先行登记于锁文件。MR 闭环由后续环节执行，本记录不含 commit/CI
+    证据。
+  - 同步：本里程碑工作项 `M2-02`、总计划当前状态。

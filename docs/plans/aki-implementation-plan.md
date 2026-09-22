@@ -103,6 +103,21 @@
   [M2 里程碑](m2-local-persistence.md)状态置 `In Progress`。详见 M2 里程碑文档
   M2-01 验证记录。
 
+- 2026-09-23：`M2-02` 完成：vendored SQLite 接入——官方 amalgamation
+  （`2026/sqlite-amalgamation-3530400.zip`，下载前校验 SHA3-256
+  `628a44cf…934e` 与 DEC-004/sqlite.org 下载页一致）仅取 `sqlite3.c`/`sqlite3.h`
+  入 `third_party/sqlite/`；锁文件新增 `class=vendored` 条目（版本 3.53.4、双文件
+  SHA-256、zip 溯源字段）；`cmake/Dependencies.cmake` 按 `class` 分支（pinned 三条
+  校验行为与 STATUS 输出不变，vendored 逐文件 `file(SHA256)`，缺失/漂移即
+  `FATAL_ERROR` + 修复提示）；`sqlite3` 静态库 target（`SQLITE_DQS=0`/
+  `SQLITE_OMIT_LOAD_EXTENSION=1`，不继承第一方告警级别）；asan/ubsan/tsan 预设补
+  `CMAKE_C_FLAGS`（sqlite3.c 为 C 编译单元）；新增 `test_sqlite_sourceid`
+  （header/libversion/锁文件版本三方一致断言）。验证：MSVC debug/release
+  ctest 12/12；负向篡改锁文件哈希 → configure FATAL_ERROR 含修复提示，还原通过；
+  MinGW configure-only 通过；GCC -Werror 语法检查通过。sqlite3.c 随 asan/ubsan
+  的编译由本 PR Linux CI 门禁提供（本机无 sanitizer 运行时，限制沿用 M1-02
+  记录）。详见 M2 里程碑文档 M2-02 验证记录。
+
 ## 交付边界
 
 ### 包含（第一阶段 / MVP，对应设计第 15 节）
