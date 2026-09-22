@@ -314,7 +314,8 @@ Executor 的初始化与关闭由 `app/lifecycle` 的唯一 owner（`ExecutorOwn
 `Executor` facade（非单例，每个 executor 生命周期有且仅有一个 owner），经
 `initialize_ex(config)` 显式初始化；`ExecutorConfig::enable_monitoring` 默认开启并随
 config 传入，运行期切换（如有）归 owner，Manager/Adapter 不得私调。blocking I/O
-worker 的 `WorkerHandle` 由 owner 注册并持有（M1-05 / M2 预留），依赖经构造参数或
+worker 的 `WorkerHandle` 由 owner 注册并持有（M1 不启用——无长期阻塞 I/O 负载，M2
+起按负载启用，见第 8.3 节），依赖经构造参数或
 明确 context 传递，不设隐藏全局实例；`executor()` 访问器的前置条件是已初始化
 （facade 对未初始化实例的首次提交会以默认配置懒初始化，绕过 owner 纪律，禁止）。
 
@@ -325,7 +326,8 @@ worker 的 `WorkerHandle` 由 owner 注册并持有（M1-05 / M2 预留），依
 1. **停止任务生产者**：owner 调用应用注入的停止钩子——停 Heyaki 投递 → drain/close
    `executor::comm` 通道 → 停快照发布（第 10.1 节硬约束 3；comm 与 Executor shutdown
    零耦合，不参与 Executor 关闭）。
-2. **发出取消/停止请求**：定时任务经 `TimerHandle` 取消、运行中任务经
+2. **发出取消/停止请求**：定时任务经 `TimerHandle` 取消（M1 无定时任务，此子句为
+   空操作）、运行中任务经
    `request_task_cancel`（句柄由各 Manager 持有并发起，`EXEC-07`），blocking worker
    经 `WorkerHandle::request_stop()`（noexcept 非阻塞）置位停止标志并唤醒。
 3. **回收 blocking worker**：`WorkerHandle::stop()`（stop request + wakeup + join），
@@ -345,6 +347,78 @@ owner 落点说明：M1-02 / M1-03 的单测 `main` 持有临时 `executor::Exec
 该测试进程的 owner（AGENTS 规则 7 的测试形态，生命周期同样显式：非 worker 线程
 `shutdown(true)`），正式 owner 即本节 `ExecutorOwner`；自 M1-06 冒烟宿主起进程内
 改用 `ExecutorOwner`。
+
+### 8.3 Manager 职责、事件路由与装配（M1 契约，M1-05）
+
+四个 Manager 是 Application 层类，落位 `app/application/`（`DEC-008`）。职责切分与
+Store 所有权：
+
+- 每个 Manager 恰好只写自己领域的 Store：DeviceManager → devices、
+  ConversationManager → conversations、MessageManager → messages、TransferManager →
+  transfers；写入一律以第 10.1 节的类型化更新指令经 `MpscChannel` 汇聚到状态 owner
+  （`RULE-02` / `EXEC-03`），Manager 不直写快照。
+- 出站操作按域切分：发现启停（`start_discovery` / `stop_discovery`）归
+  DeviceManager；`send_text_message` 归 MessageManager；传输四接口
+  （`start_file_transfer` / `pause_transfer` / `resume_transfer` / `cancel_transfer`）
+  归 TransferManager。ConversationManager 显式提供
+  `ensure_conversation(local, remote)`，由宿主 / 用户流程调用，不从事件隐式建会话；
+  其自建会话的 id/端点记录仅用于 connected/disconnected 事件的状态推导（创建记录，
+  不复制 owner 权威状态），消息或连接事件先于 `ensure_conversation` 到达时，会话
+  推导为幂等空操作。
+
+9 类 Sink 事件由 `app/application` 内单一 `RouterSink`（实现 `HeyakiAdapterSink`）
+路由：回调线程只做有界校验并投递到各 Manager 的私有有界 `MpscChannel` 收件箱
+（`EXEC-02`），业务处理一律在 Manager 的执行上下文；Sink 返回值为各路 admission
+的合取，部分拒绝必须可见，下游 owner 的状态机拒绝经 `updates_rejected` 可观测。
+
+| Sink 事件 | 路由与状态更新 | 主路径事件 |
+| --- | --- | --- |
+| `on_device_discovered` | DM：`UpsertDevice` | DeviceDiscovered |
+| `on_device_connected` | DM：`SetPresence(Online)`；CM 扇出：已建会话则 `UpsertConversation → Active` | DeviceConnected（仅 DM 投递一次） |
+| `on_device_disconnected` | DM：`SetPresence(Offline)`；CM 扇出：已建会话则 `UpsertConversation → Disconnected` | DeviceDisconnected（仅 DM 投递一次） |
+| `on_message_received` | MM：`UpsertMessage`（收到的消息本地记录为 `Delivered`，第 6 节） | MessageReceived |
+| `on_message_delivered` | MM：`SetDeliveryState(Delivered)` | MessageDelivered |
+| `on_transfer_started` | TM：`UpsertTransfer` | TransferStarted |
+| `on_transfer_progress` | TM：`UpdateTransferProgress` | TransferProgress |
+| `on_transfer_completed` | TM：`CompleteTransfer(final_state)` | TransferCompleted |
+| `on_connection_path_changed` | DM：`SetConnectionPath(to)` | ConnectionPathChanged |
+
+执行上下文与任务承载（`EXEC-04` / `EXEC-05` / `EXEC-07`）：
+
+- 每个 Manager 采用“单飞有界排空”泵：工作项入收件箱 → CAS 抢占单飞标志 →
+  `submit_auto` 一个排空任务（有界批量，保留并消费 `TaskSubmission.future`；释放
+  单飞标志后复查收件箱，防止丢失唤醒）。事件与宿主命令（发送、传输控制、
+  `ensure_conversation`）共用同一收件箱串行处理，Manager 内部状态（如传输会话
+  句柄表）只在排空上下文访问。
+- 长任务（传输会话类）用 `submit_cancellable` + `StopToken`：Manager 按业务稳定 ID
+  持有 `TaskHandle` + future 作为成员；取消一律经
+  `executor().request_task_cancel(handle)` 发起——运行期任务协作轮询
+  `stop_requested()` 自行退出，排队期取消由 Executor 以
+  `TaskCancelled(Explicit)` 结算且不产生 failure 事件；不经 StopSource 直发，业务
+  代码不得主动抛 `TaskCancelled` 做控制流（无取消请求时按任务异常计入 failure）。
+- 取消断言经 `get_cancellation_status()` / `ExecutorSnapshot.cancellation`（独立
+  计数，不入 failure）；超时断言经 failure 体系 `timeout_count`——`task_timeout_ms`
+  是排队软超时（config 级），不打断运行中任务。M1 不引入 `TimerHandle` /
+  周期任务：presence 与传输进度均以事件到达，Manager 无自驱周期负载；首个真实
+  周期负载（presence 刷新 / 进度采样）出现时再按 `EXEC-04` 启用。
+- Manager 必须先于其任务终结：宿主关闭钩子（下文装配顺序）保证先取消并消费在途
+  任务 future，再进入 `ExecutorOwner` 的 `EXEC-01` 步骤 4/5。
+
+装配与所有权（`EXEC-07`；宿主组合根顺序，自 M1-06 console 起进程内使用）：
+
+1. `ExecutorOwner.initialize()`；
+2. `AppStateOwner`；
+3. 四个 Manager 构造注入 `executor::Executor&`、`AppStateOwner&`、各自所需的
+   `HeyakiAdapter&` 与容量预算；
+4. `RouterSink` 经 `FakeHeyakiAdapter::set_sink` 注册。
+
+受控关闭的 `EXEC-01` 步骤 1 钩子由宿主按序组合：请求取消各 Manager 在途可取消
+任务（`request_task_cancel`，句柄由 Manager 发起）→ flush 各 Manager 至泵静止并
+消费在途 future → 停 Adapter 投递（fake：`set_sink(nullptr)` + `stop_discovery`）→
+`AppStateOwner.close()`；其后才进入 `ExecutorOwner` 的步骤 2~5。M1-05 不启用
+blocking worker：`ExecutorOwner::start_blocking_worker` 仍是唯一注册入口，首次启用
+预期为 M2（历史读写 I/O）；M3 托管第三方事件循环时按 pinned 指南
+event-loop-interop 模式评估，M4 承载文件 I/O。
 
 ## 9. GUI
 
@@ -435,6 +509,15 @@ Manager 的状态更新与事件经 `MpscChannel` 汇聚到单一状态 owner（
 `DEC-002` / `RULE-02`），由 owner 在其执行上下文内合成新 `AppState` 后发布；任何其他
 上下文不得直接写快照。事件进入投递主路径时由 owner 统一分配单调递增序列号，消费侧
 据此排序与去重。
+
+Manager → owner 的状态更新为类型化指令（`AppStateUpdate`，与 9 类事件配套，路由见
+第 8.3 节）：`UpsertDevice` / `UpsertConversation` / `UpsertMessage` / `UpsertTransfer`
+（整体 upsert）、`UpdateTransferProgress`（进度部分更新）、`SetPresence`（设备在线
+状态，仅 presence 字段，不触发信任状态机）、`SetDeliveryState`（送达回报部分更新）、
+`CompleteTransfer`（传输终态宣告，`final_state` 仅取 `Completed` / `Failed` /
+`Cancelled`）与 `SetConnectionPath`（覆盖式单值摘要，落 `LatestMailbox`）。owner
+逐条校验：目标与当前一致为幂等 no-op；非法转移、终态复活与未知 id 一律拒绝并经
+`updates_rejected` 可观测（`RULE-08` / `RULE-09`）。
 
 三条硬约束：
 
