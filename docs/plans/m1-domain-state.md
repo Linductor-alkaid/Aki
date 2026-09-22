@@ -91,8 +91,19 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
   worker/TimerHandle 措辞修正；`DEC-008` 冻结 Accepted；单测 `test_app_managers`
   （9 test case / 295 断言）覆盖 DOD-02 六项（Manager 任务路径）与迟到事件不复活
   终态（RULE-08）。详见验证记录。）
-- [ ] `M1-06` 提供 console 冒烟宿主：两台假设备完成“发现 -> 信任 -> 文本消息 -> 断开 ->
-  重连”演示，作为 v0.1.0 验收载体。
+- [x] `M1-06` 提供 console 冒烟宿主：两台假设备完成“发现 -> 信任 -> 文本消息 -> 断开 ->
+  重连”演示，作为 v0.1.0 验收载体。（2026-09-22：根 `main.cpp` 按设计第 8.3 节
+  装配顺序实现组合根——`ExecutorOwner.initialize()` → `AppStateOwner` → 四
+  Manager（构造注入 executor/owner/adapter 与容量预算）→ `RouterSink` 经
+  `FakeHeyakiAdapter::set_sink` 注册；进程内 owner 自本项起为正式
+  `ExecutorOwner`；设备信任确认为用户流程（设计第 4 节），M1 无 Trust Manager/UI，
+  由宿主经 `UpsertDevice` 更新指令模拟（第 8.3 节先行补充该语义，M1-08 纪律）；
+  每步 flush + owner drain 推进到静止后经 DoubleBuffer 快照与序列号排序的主路径
+  事件逐步断言；受控关闭按 §8.3 钩子顺序（request_cancel_all → flush →
+  set_sink(nullptr)+stop_discovery → close()）以 `fully_stopped` 证据收尾；
+  ctest 注册 `smoke.device_lifecycle`（`integration` 标签自本项启用，覆盖
+  退出-1），`skeleton.app_runs` 断言保持兼容（宿主保留 `aki 0.1.0` 横幅）。
+  详见验证记录。）
 - [x] `M1-07` 落地 `DEC-007` 测试框架与 `unit`/`integration` 标签，CI 可按标签选择
   执行集。（2026-09-21：[DEC-007](../decisions/DEC-007-test-framework.md) 冻结为
   Accepted，Catch2 v3.9.1 经 FetchContent 锁 commit 接入；`unit`/`smoke` 标签生效，
@@ -115,8 +126,9 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
 
 ## 测试与退出条件
 
-- [ ] 退出-1：`integration` 冒烟——两台假设备经 FakeHeyakiAdapter 完成发现、信任、文本
-  消息收发、断开与重连，断言消息顺序与状态转换。
+- [x] 退出-1：`integration` 冒烟——两台假设备经 FakeHeyakiAdapter 完成发现、信任、文本
+  消息收发、断开与重连，断言消息顺序与状态转换。（2026-09-22：`M1-06`
+  `smoke.device_lifecycle` 通过，验证记录含覆盖映射与可复现命令。）
 - [ ] 退出-2：并发基线六项测试通过——正常完成、任务异常、提交拒绝、执行中取消、超时、
   shutdown（AGENTS.md 工程约束）。
 - [ ] 退出-3：状态机单测覆盖合法/非法转换与终态幂等；迟到事件不得复活已取消任务。
@@ -337,3 +349,58 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
     commit/CI 证据。
   - 同步：设计第 8.2/8.3/10.1 节、[DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)、
     总计划决策表与当前状态、本里程碑工作项与验证记录。
+
+- 2026-09-22（`M1-06`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 / CMake 4.1.0）：
+  - 范围：根 `main.cpp`（M0 骨架打印替换为 M1 console 冒烟宿主：设计第 8.3 节
+    组合根 + 六步演示脚本 + 受控关闭；输出以 `aki 0.1.0` 横幅开头、以
+    `smoke: PASS` / `smoke: FAIL (N check(s) failed)` 收尾供 ctest 正则断言）、
+    `tests/CMakeLists.txt`（新增 `smoke.device_lifecycle`，`integration` 标签自本项
+    启用；`skeleton.app_runs` 断言保持兼容）、设计第 8.3 节（补冒烟宿主信任流
+    语义：宿主经 `UpsertDevice` 模拟用户信任确认，UI 于 M5 接入——M1-08 纪律，
+    先改设计再合代码）。
+  - 依据：[设计第 8.1/8.2/8.3/10/10.1/14 节](../design/aki_design.md)；
+    [DEC-002](../decisions/DEC-002-layering-and-state-boundary.md)（验证方式即该
+    闭环）、[DEC-007](../decisions/DEC-007-test-framework.md)（integration 标签）、
+    [DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)（Manager
+    路由与任务承载）；总计划 `RULE-01`/`RULE-02`/`RULE-06`~`RULE-09`、
+    `EXEC-01`~`EXEC-07`、`DOD-01`~`DOD-06`；AGENTS.md Executor 规则 1/7/8；
+    executor-integration 集成指南 tasks-and-lifecycle / communication /
+    observability / scheduling 卡（本会话已加载）。
+  - 验证（生成器说明同 `M1-02` 记录：MinGW 默认生成器受限制 1 阻塞，以 MSVC
+    生成器等价执行）：
+    - `cmake --preset debug -G "Visual Studio 17 2022" -A x64 &&
+      cmake --build --preset debug --config Debug && ctest --preset debug -C Debug`
+      → 11/11 通过（既有 10 + 新 `smoke.device_lifecycle`，标签
+      integration=1 / smoke=1 / unit=9）。
+    - `cmake --build --preset release --config Release && ctest --preset release
+      -C Release` → 11/11 通过。
+    - 确定性（验收 ③）：`aki.exe` debug 连续 50 次运行输出逐字节一致
+      （`cmp` 比对基准输出，无任何差异）且退出码全 0；release 连续 50 次全部
+      `smoke: PASS`。
+    - GCC 语法检查（CI Linux 告警姿势）：
+      `g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -fsyntax-only -I.
+      -Ithird_party/executor/include main.cpp` 通过。
+    - 覆盖映射（验收 ①，退出-1 全链路）：发现（start_discovery →
+      inject_device_discovered/connected → 设备入 Store、presence Online、主路径
+      事件 1~2）→ 信任（宿主经 UpsertDevice 模拟用户确认：Unknown -> Pending ->
+      Trusted 均为信任状态机合法边，快照终值 Trusted）→ 会话与文本消息
+      （ensure_conversation → Active；send_text(m-1) 经 Manager 排空任务出站 →
+      本地 Sent；inject_message_delivered → SetDeliveryState Sent -> Delivered；
+      inject_message_received(m-2) 收到即记录 Delivered；主路径序列号 1~6 严格
+      FIFO，delivered 先于 received）→ 断开（presence Offline、会话
+      Disconnected、消息历史保持）→ 重连（P2P，同一会话 id 回到 Active、不新建
+      会话、历史不变，RULE-06）。
+      覆盖映射（验收 ②③）：进程内 owner 为正式 `ExecutorOwner`（设计第 8.2 节
+      落点说明自本项生效），演示中全部任务（四 Manager 排空泵）均经其 executor
+      承载，无 `std::thread`/`std::async`/自建线程（RULE-07）；受控关闭按第 8.3
+      节钩子顺序（request_cancel_all → flush 四 Manager 至泵静止并消费 future →
+      `set_sink(nullptr)`+`stop_discovery` → `AppStateOwner.close()`）进入
+      EXEC-01 步骤 2~5，以 `fully_stopped()`（Completed + lifecycle Stopped +
+      wait_timeout_count==0）收尾，close 后注入明确拒绝——DOD-02 shutdown 项在
+      集成层可见。
+  - 限制：MinGW 默认生成器仍受 `M1-02` 验证记录限制 1 阻塞（pinned executor
+    构建缺陷），未变化；ASAN/UBSAN 证据随本 PR 的 Linux CI 门禁提供；TSAN
+    沿用限制 2。MR 闭环（分支/PR/CI/Squash）由后续环节按仓库流程执行，本记录
+    不含 commit/CI 证据。
+  - 同步：设计第 8.3 节、本里程碑工作项与退出-1、总计划当前状态、
+    `tests/CMakeLists.txt` integration 标签。

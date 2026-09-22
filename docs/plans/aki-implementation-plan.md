@@ -66,6 +66,17 @@
   通过（新 `test_app_managers` 9 test case / 295 断言，含 DOD-02 六项与迟到事件
   不复活终态）；MinGW 限制与 ASAN/UBSAN 补跑条件沿用 `M1-02` 记录。
   详见 [M1 里程碑文档](m1-domain-state.md)。
+- 2026-09-22：`M1-06` 完成：根 `main.cpp` console 冒烟宿主落地（设计第 8.3 节
+  组合根的进程内实现，进程内 owner 自本项起为正式 `ExecutorOwner`）——两台假设备
+  （local-1 / alpha-01）经 FakeHeyakiAdapter 完成"发现 → 信任（Pending→Trusted，
+  宿主经 `UpsertDevice` 模拟用户确认，设计第 8.3 节先行补充该语义）→ 文本消息
+  （send_text + delivered/received，主路径序列号 1~6 FIFO 断言）→ 断开 → 重连
+  （同一会话回到 Active、历史保持，`RULE-06`）"，按 §8.3 钩子顺序受控关闭并以
+  `fully_stopped` 证据收尾；ctest 注册 `smoke.device_lifecycle` 为 `integration`
+  标签（自本项启用，M1 退出-1 通过），`skeleton.app_runs` 保持兼容。本地 MSVC
+  debug/release ctest 11/11 通过；宿主 debug 连续 50 次输出逐字节一致、release
+  50 次全 PASS（确定性可复现）；MinGW 限制与 ASAN/UBSAN 补跑条件沿用
+  `M1-02` 记录。详见 [M1 里程碑文档](m1-domain-state.md)。
 
 ## 交付边界
 

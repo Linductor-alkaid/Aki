@@ -46,6 +46,14 @@ set_tests_properties(skeleton.app_runs PROPERTIES
     LABELS "smoke"
     PASS_REGULAR_EXPRESSION "aki 0\\.1\\.0")
 
+# M1-06：console 冒烟宿主（v0.1.0 验收载体，覆盖 M1 退出-1）。integration 标签
+# 自本项启用（DEC-007）；宿主即进程内组合根（正式 ExecutorOwner，设计第 8.2/8.3
+# 节），输出以 "smoke: PASS"/"smoke: FAIL" 收尾供正则断言。
+add_test(NAME smoke.device_lifecycle COMMAND aki)
+set_tests_properties(smoke.device_lifecycle PROPERTIES
+    LABELS "integration"
+    PASS_REGULAR_EXPRESSION "smoke: PASS")
+
 aki_add_unit_test(test_trust_state unit/test_trust_state.cpp)
 aki_add_unit_test(test_delivery_state unit/test_delivery_state.cpp)
 aki_add_unit_test(test_conversation_state unit/test_conversation_state.cpp)

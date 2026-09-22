@@ -412,6 +412,12 @@ Store 所有权：
    `HeyakiAdapter&` 与容量预算；
 4. `RouterSink` 经 `FakeHeyakiAdapter::set_sink` 注册。
 
+M1 冒烟宿主（仓库根 `main.cpp`，M1-06）是该组合根的最小进程内实现，进程内 owner
+自本项起改用正式 `ExecutorOwner`（见第 8.2 节落点说明）。设备信任确认属用户流程
+（第 4 节）：M1 无 Trust Manager 与 UI，由宿主经 `AppStateOwner` 的 `UpsertDevice`
+更新指令模拟用户确认（owner 侧按信任状态机合法边校验），UI 于 M5 接入；会话建立
+经 `ConversationManager::ensure_conversation`（宿主/用户流程调用）。
+
 受控关闭的 `EXEC-01` 步骤 1 钩子由宿主按序组合：请求取消各 Manager 在途可取消
 任务（`request_task_cancel`，句柄由 Manager 发起）→ flush 各 Manager 至泵静止并
 消费在途 future → 停 Adapter 投递（fake：`set_sink(nullptr)` + `stop_discovery`）→
