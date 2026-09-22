@@ -171,7 +171,7 @@
 | --- | --- | --- | --- | --- | --- |
 | M0 | 工程骨架与协作基线 | Done | 无 | 无（仓库基线） | [m0-project-skeleton.md](m0-project-skeleton.md) |
 | M1 | 领域模型与状态边界 | Done | M0（依赖来源解锁） | v0.1.0 | [m1-domain-state.md](m1-domain-state.md) |
-| M2 | 本地持久化 | Planned | M1 | v0.2.0 | 待创建 |
+| M2 | 本地持久化 | Planned | M1 | v0.2.0 | [m2-local-persistence.md](m2-local-persistence.md) |
 | M3 | Heyaki 真实接入与文本消息 | Planned | M1、M2、DEC-006 | v0.3.0 | 待创建 |
 | M4 | 图片消息与文件传输 | Planned | M3 | v0.4.0 | 待创建 |
 | M5 | EUI-NEO UI 与 MVP 验收 | Planned | M2、M3、M4、DEC-005 | v0.5.0（MVP） | 待创建 |
