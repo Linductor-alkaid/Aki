@@ -29,6 +29,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <future>
 #include <stdexcept>
 #include <thread>
@@ -57,6 +58,19 @@ void use_executor(executor::Executor& executor) {
 namespace {
 
 using namespace std::chrono_literals;
+
+// 失败计数相对 future 结算是异步记账（executor 包装器先满足 future 再记失败）：
+// 断言计数前以有界轮询等待可见，与 test_executor_lifecycle 的处理一致。
+bool wait_until(const std::function<bool()>& predicate, std::chrono::milliseconds budget) {
+    const auto deadline = std::chrono::steady_clock::now() + budget;
+    while (!predicate()) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return false;
+        }
+        std::this_thread::yield();
+    }
+    return true;
+}
 
 using aki::app::AppEvent;
 using aki::app::AppEventPayload;
@@ -456,7 +470,9 @@ TEST_CASE("DOD-02 task exception: visible to caller, injected work survives",
         return false;
     });
     REQUIRE_THROWS_AS(failing.get(), std::runtime_error);
-    REQUIRE(executor.get_failure_status().task_exception_count >= before + 1);
+    REQUIRE(wait_until([&] {
+        return executor.get_failure_status().task_exception_count >= before + 1;
+    }, 2s));
 
     owner.drain();
     AppEvent event;

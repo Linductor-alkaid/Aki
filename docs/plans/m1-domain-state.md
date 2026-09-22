@@ -1,12 +1,13 @@
 # M1：领域模型与状态边界
 
-> 状态：In Progress
+> 状态：Completed（2026-09-23 收口审计通过，见 M1-08 验证记录；v0.1.0 发布点就绪，
+> tag 创建待用户授权）
 > 负责人：Linductor
 > 所属计划：[Aki 实施总计划](aki-implementation-plan.md)
 > 前置：M0（依赖已就绪：executor 已 pin 并通过校验，见
 > [DEC-003](../decisions/DEC-003-dependency-locking.md)；M0 关闭后启动本里程碑）
 > 建议发布点：v0.1.0
-> 更新日期：2026-09-22
+> 更新日期：2026-09-23
 
 ## 目标
 
@@ -90,7 +91,9 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
   设计第 8.3 节先行固化 Manager 契约 + 第 10.1 节更新指令清单 + 第 8.2 节 blocking
   worker/TimerHandle 措辞修正；`DEC-008` 冻结 Accepted；单测 `test_app_managers`
   （9 test case / 295 断言）覆盖 DOD-02 六项（Manager 任务路径）与迟到事件不复活
-  终态（RULE-08）。详见验证记录。）
+  终态（RULE-08）；计数以 PR #8 合入版为准：10 test case / 314 断言（评审中
+  补充重复 TransferId 防线用例，原记录 9/295，M1-08 审计按工程规范 6.1 修正）。
+  详见验证记录。）
 - [x] `M1-06` 提供 console 冒烟宿主：两台假设备完成“发现 -> 信任 -> 文本消息 -> 断开 ->
   重连”演示，作为 v0.1.0 验收载体。（2026-09-22：根 `main.cpp` 按设计第 8.3 节
   装配顺序实现组合根——`ExecutorOwner.initialize()` → `AppStateOwner` → 四
@@ -109,8 +112,16 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
   Accepted，Catch2 v3.9.1 经 FetchContent 锁 commit 接入；`unit`/`smoke` 标签生效，
   `integration` 标签随 `M1-06` 冒烟宿主启用。CI 已于 2026-09-22 建立（PR #1），全量
   ctest 进入门禁。）
-- [ ] `M1-08` 校对实现与设计偏差：SPI、事件命名或状态集若与设计不一致，先更新设计或
-  新增决策，再合入代码。
+- [x] `M1-08` 校对实现与设计偏差：SPI、事件命名或状态集若与设计不一致，先更新设计或
+  新增决策，再合入代码。（2026-09-23：M1 收口审计完成——逐项校对矩阵覆盖设计
+  第 3~7/8.1/8.2/8.3/10/10.1/14 节对 `device/`、`conversation/`、`transfer/`、
+  `heyaki/adapter/`、`app/lifecycle/`、`app/application/`、`app/state/` 与根
+  `main.cpp`，结论全部一致；四项已知偏差（设计 3~6 节枚举补充、`heyaki/events`
+  延至 M3、`transfer/manager/` 留 M4 与 blocking worker/TimerHandle 措辞、冒烟
+  宿主信任流经 `UpsertDevice` 模拟）均有设计小节/工作项/决策记录锚点，未记录
+  偏差数为 0；RULE-01/07/10 边界抽查 grep 证据通过；一项事实修正：PR #8 合入
+  版本在评审中补充了重复 TransferId 防线用例，`test_app_managers` 实为
+  10 test case / 314 断言（记录原为 9/295，按工程规范 6.1 修正）。详见验证记录。）
 
 ## 风险与阻塞
 
@@ -129,12 +140,28 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
 - [x] 退出-1：`integration` 冒烟——两台假设备经 FakeHeyakiAdapter 完成发现、信任、文本
   消息收发、断开与重连，断言消息顺序与状态转换。（2026-09-22：`M1-06`
   `smoke.device_lifecycle` 通过，验证记录含覆盖映射与可复现命令。）
-- [ ] 退出-2：并发基线六项测试通过——正常完成、任务异常、提交拒绝、执行中取消、超时、
-  shutdown（AGENTS.md 工程约束）。
-- [ ] 退出-3：状态机单测覆盖合法/非法转换与终态幂等；迟到事件不得复活已取消任务。
-- [ ] 退出-4：debug 构建与全量测试通过；ASAN/UBSAN 通过（声明支持的平台），不适用的
-  工具链记录限制与补跑条件。
-- [ ] 退出-5：设计、决策与总计划状态同步；验证记录含可复现命令与结果。
+- [x] 退出-2：并发基线六项测试通过——正常完成、任务异常、提交拒绝、执行中取消、超时、
+  shutdown（AGENTS.md 工程约束）。（2026-09-23：六项沿四条并发路径覆盖——comm 通道
+  （`test_app_state`，7 个 dod02 用例）、Adapter 注入管线（`test_heyaki_adapter`，6）、
+  owner 生命周期（`test_executor_lifecycle`，5）、Manager 任务路径（
+  `test_app_managers`，8）；四个可执行文件 debug 全部通过，命令与映射见 M1-08
+  验证记录。）
+- [x] 退出-3：状态机单测覆盖合法/非法转换与终态幂等；迟到事件不得复活已取消任务。
+  （2026-09-23：四个状态机单测通过（trust 64 / delivery 38 / conversation 18 /
+  transfer 73 断言，含非法转移表、终态幂等与迟到事件用例）；Manager 路径的迟到
+  事件拒绝见 `test_app_managers` 两条 RULE-08 用例与 `test_app_state` /
+  `test_heyaki_adapter` 的 late-events 用例。）
+- [x] 退出-4：debug 构建与全量测试通过；ASAN/UBSAN 通过（声明支持的平台），不适用的
+  工具链记录限制与补跑条件。（2026-09-23：本地 MSVC debug/release 全量 ctest
+  11/11 通过（本审计执行）；ASAN/UBSAN 由 Linux CI 提供——PR #8 与 PR #9 的
+  `Linux / asan`、`Linux / ubsan`、`Linux / debug`、`Windows / debug (MSVC)`
+  四项检查均 SUCCESS（gh 核实），覆盖合入 master 的全部 M1 代码；MinGW 默认
+  生成器限制沿用 `M1-02` 验证记录限制 1。M1-08 本 PR 的 CI 复跑同一矩阵作为
+  收口门禁。）
+- [x] 退出-5：设计、决策与总计划状态同步；验证记录含可复现命令与结果。（2026-09-23：
+  M1-08 审计矩阵逐项复核设计第 3~14 节与实现的同步；生效决策 DEC-001~004、
+  DEC-007、DEC-008 与设计/计划交叉引用一致；各里程碑工作项验证记录均含可复现
+  命令与结果。）
 
 ## 验证记录
 
@@ -307,7 +334,9 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
     生成器等价执行）：
     - `cmake --preset debug -G "Visual Studio 17 2022" -A x64 &&
       cmake --build --preset debug --config Debug && ctest --preset debug -C Debug`
-      → 10/10 通过（新 `test_app_managers`：9 test case / 295 断言）。
+      → 10/10 通过（新 `test_app_managers`：本项交付时为 9 test case / 295 断言；
+      PR #8 评审中补充重复 TransferId 防线用例，合入版为 10 test case / 314 断言，
+      M1-08 审计实测）。
     - `cmake --preset release -G "Visual Studio 17 2022" -A x64 &&
       cmake --build --preset release --config Release && ctest --preset release -C Release`
       → 10/10 通过。
@@ -404,3 +433,105 @@ FakeHeyakiAdapter 打通“发现 -> 信任 -> 文本消息 -> 断开 -> 重连�
     不含 commit/CI 证据。
   - 同步：设计第 8.3 节、本里程碑工作项与退出-1、总计划当前状态、
     `tests/CMakeLists.txt` integration 标签。
+
+- 2026-09-23（`M1-08` 收口审计，Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0 / GCC 15.2.0（语法检查与边界 grep）；基线 `master`@`129dd0d`
+  （PR #9 合入）+ 本审计文档改动）：
+  - 范围：纯审计与文档同步，无代码变更。逐项校对矩阵结论、边界抽查证据、
+    退出-2~5 证据归集如下；一项事实修正（`test_app_managers` 计数 9/295 →
+    合入版 10/314，工程规范 6.1）。
+  - 依据：本里程碑工作项 `M1-08` 与退出条件；设计第 3~10.1/14 节；
+    [DEC-002](../decisions/DEC-002-layering-and-state-boundary.md)（验证方式复核）、
+    [DEC-007](../decisions/DEC-007-test-framework.md)、
+    [DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)；
+    总计划 `DOD-01`~`DOD-06`、`RULE-01`/`RULE-02`/`RULE-10`、`EXEC-01`~`EXEC-07`；
+    工程规范第 4 节（状态与勾选规则）与 4.5（里程碑关闭）。executor-integration
+    集成指南 tasks-and-lifecycle / communication / observability / scheduling 卡
+    （本会话已加载）；审计无新增并发代码。
+  - 校对矩阵（逐项结论，全部为"一致"；任何"偏差"均已按先文档后代码处置，见下节）：
+    - 第 3 节设备身份 vs `device/device/device_types.hpp`：一致——
+      DeviceIdentity/PresenceState/ConnectionPath/DeviceCapabilities 字段与枚举
+      逐一对应（PresenceState 两值 :38-41）。
+    - 第 4 节信任 vs `device/trust/trust_state.hpp`：一致——五态与合法边
+      （:11-48）同 §4 转移规则，终态幂等语义同 §4 终态约束。
+    - 第 5 节会话 vs `conversation/conversation/conversation_types.hpp`：一致——
+      三态 + Active<->Disconnected + Archived 终态（:42-52），RULE-06 路径无关。
+    - 第 6 节消息 vs `conversation/message/message_types.hpp`：一致——五类 typed
+      payload（:29-35）、DeliveryState 正向链（:71-84）、收到即 Delivered 语义落
+      MessageManager（第 8.3 节路由）。
+    - 第 7 节传输 vs `transfer/transfer/transfer_types.hpp`：一致——七态（:34-42）、
+      终态幂等（:57-82）、文件 metadata 与数据分离（RULE-05）。
+    - 第 8.1 节 SPI vs `heyaki/adapter/heyaki_adapter.hpp` + fake：一致——出站
+      2+1+4 方法、9 个 Sink 方法与 9 类事件一一对应、bool admission、
+      final_state 仅终态；`grep -rln "executor/" heyaki/adapter/` 无输出（RULE-10）。
+    - 第 8.2 节 owner vs `app/lifecycle/executor_owner.hpp`：一致——EXEC-01 五步
+      逐一注释映射（shutdown :101-163）且经 test_executor_lifecycle 断言；唯一
+      owner 纪律；blocking worker 由 owner 注册（:168）且 M1 不启用（§8.2:317 措辞）。
+    - 第 8.3 节 Manager vs `app/application/` 五个头文件 + 根 `main.cpp`：一致——
+      Store 所有权按 Manager 切分、9 类事件路由表与 router_sink.hpp 逐一对应、
+      单飞有界排空泵（manager_runtime.hpp：消费 future/释放后复查收件箱/软超时
+      自愈）、传输会话 submit_cancellable + request_task_cancel、装配与关闭钩子
+      顺序与 main.cpp 六步一致；重复 TransferId 防线（transfer_manager.hpp:251-258，
+      PR #8 评审补充）符合 §8.1 TransferId 语义与 RULE-09。
+    - 第 10/10.1 节状态边界 vs `app/state/` 四个头文件：一致——9 类类型化事件 +
+      owner 单写者序列号（app_events.hpp）、comm 四组件映射与三条硬约束
+      （app_state_owner.hpp）、typed 更新清单与 §10.1 罗列完全一致（9 项变体）、
+      owner 校验纪律（幂等 no-op/非法转移/未知 id 拒绝）与容量预算（RULE-09）。
+    - 第 14 节目录 vs 实际布局：一致——蓝图目录全部存在，未启用子目录以 .gitkeep
+      占位且延后项均有记录（heyaki/events→M3 DEC-006；transfer/manager、
+      transfer/storage→M4；persistence→M2；ui→M5）；各域 skeleton.hpp 为 M0 构建
+      脚手架，仍被 skeleton.includes 用例使用。
+  - 已知偏差复核：四项均有锚点——①设计 3~6 节枚举补充（本文件 M1-01 工作项，
+    :50）；②`heyaki/events` 延至 M3（M1-03 工作项 :68/:209 + 总计划 DEC-006 行）；
+    ③`transfer/manager/` 留 M4 与 blocking worker/TimerHandle 措辞（M1-05 记录
+    :292、设计 §8.2:317/§8.3、DEC-008「边界」节）；④冒烟宿主信任流经
+    `UpsertDevice`（设计 §8.3:417、M1-06 记录）。扫描未发现其他漂移：
+    未记录偏差数为 0。
+  - 边界抽查（grep 证据，全部通过）：
+    - RULE-10：`grep -rn "#include" device/ conversation/ transfer/ heyaki/` 仅
+      领域头 + `<cstdint>/<string>/<string_view>/<vector>/<set>/<utility>/
+      <variant>/<chrono>`；`grep -rin "executor|heyaki|sqlite|eui|windows|android"`
+      在 Core 命中 2 处均为注释（device_types.hpp:13、discovery_types.hpp:31，
+      说明取值来源，无类型暴露）。
+    - RULE-01：`grep -rn "app/|ui/" heyaki/` 无输出（Adapter 无反向依赖）。
+    - RULE-07：`grep -rn "std::thread|std::jthread|std::async|detach()"`（排除
+      this_thread）仅命中 main.cpp 注释行；并发一律经 Executor 提交面。
+    - EXEC-04 M1 边界：`grep -rn "submit_periodic|submit_delayed|TimerHandle|
+      submit_realtime"` 在 app/ 与 main.cpp 无调用（仅 transfer_manager.hpp 注释与
+      owner 的 start_blocking_worker 注册口，后者调用点仅 test_executor_lifecycle:200）。
+    - executor 依赖限定：`grep -rln "executor" app/ main.cpp` 仅 app 层与宿主，
+      领域层与 heyaki 层零引用。
+  - 退出条件证据（可复现命令与结果）：
+    - 退出-2（六项映射 + 命令）：
+      `ctest --preset debug -C Debug -R "test_app_state|test_heyaki_adapter|
+      test_executor_lifecycle|test_app_managers"` → 4/4 通过。六项 × 四条路径：
+      comm 通道（test_app_state，7 个 dod02 用例）、Adapter 注入管线
+      （test_heyaki_adapter，6）、owner 生命周期（test_executor_lifecycle，5）、
+      Manager 任务路径（test_app_managers，8）——`grep -c "dod02"` 计数如前；
+      正常完成/任务异常/提交拒绝/执行中取消/超时/shutdown 均有名点用例
+      （test_app_state.cpp:283-436 六个 DOD-02 TEST_CASE）。
+    - 退出-3（命令）：
+      `ctest --preset debug -C Debug -R "test_trust_state|test_delivery_state|
+      test_conversation_state|test_transfer_state"` → 4/4 通过；实测断言：
+      trust 64（含 10 条非法转移表与终态幂等/迟到事件 3 个 SECTION）、
+      delivery 38、conversation 18、transfer 73（含 late progress 不复活）；
+      Manager 路径 RULE-08 用例 test_app_managers:929/:966 与
+      test_app_state:437、test_heyaki_adapter late-events 用例。
+    - 退出-4：本地 `ctest --preset debug -C Debug` → 11/11、
+      `ctest --preset release -C Release` → 11/11（本审计执行）；ASAN/UBSAN：
+      `gh pr view 8/9 --json statusCheckRollup` 核实两 PR 的
+      `Linux / debug`、`Linux / asan`、`Linux / ubsan`、`Windows / debug (MSVC)`
+      均 SUCCESS（覆盖合入 master 的全部 M1 代码，含 asan/ubsan 对
+      test_app_managers 等 11 个可执行文件的常规运行）；MinGW 限制沿用
+      `M1-02` 记录限制 1；TSAN 沿用限制 2（预设已存在，CI 矩阵未含 tsan）。
+      本收口 PR 的 CI 复跑同一矩阵作为最终门禁（标准闭环合并前置条件）。
+    - 退出-5：设计第 3~14 节与实现同步（校对矩阵）；生效决策
+      DEC-001~004、DEC-007、DEC-008 与设计/计划交叉引用一致；
+      总计划里程碑索引与当前状态随本审计更新。
+  - 结论与状态：M1 全部 8 个工作项完成、退出-1~5 全部通过——按工程规范 4.5 将
+    M1 置为 `Completed`；总计划里程碑索引置为 `Done`。v0.1.0 发布点就绪：
+    建议于收口 PR 合入后由用户授权创建 tag `v0.1.0`（tag 创建不在本项范围）。
+  - 限制：MinGW 默认生成器仍受 `M1-02` 记录限制 1 阻塞；TSAN 证据仍待 CI 矩阵
+    扩展（限制 2）；本收口 PR 的 CI 结果由标准闭环核验（本记录不含其证据）。
+  - 同步：本里程碑工作项 `M1-08` 与退出-2~5、里程碑状态 Completed、总计划
+    里程碑索引与当前状态、M1-05 计数事实修正（9/295 → 合入版 10/314）。
