@@ -118,6 +118,19 @@
   的编译由本 PR Linux CI 门禁提供（本机无 sanitizer 运行时，限制沿用 M1-02
   记录）。详见 M2 里程碑文档 M2-02 验证记录。
 
+- 2026-09-23：`M2-03` 完成：persistence 薄 RAII 封装与迁移框架落地
+  （`persistence/database`：`SqliteError`/`Database`/`Statement`/`Transaction`，
+  open 期 pragma `journal_mode=WAL`、`synchronous=NORMAL`、`foreign_keys=ON`、
+  `busy_timeout`（默认 5000ms）；`persistence/migration`：`user_version`
+  版本化迁移——每步独立事务、失败回滚不前进、幂等 no-op、连续性构造期校验、
+  库新于已知步骤干净失败）。`aki_persistence` 转实体静态库且 sqlite3 改
+  PRIVATE 链接（`<sqlite3.h>` 仅在 database.cpp 一处，消费者无 sqlite include
+  路径——RULE-10 编译级边界由 `test_persistence_public_surface` 锁定）。
+  本地 MSVC debug/release ctest 14/14（+`test_persistence_database` 11 test
+  case / 81 断言、`test_persistence_public_surface`）；同步封装无并发路径
+  （DOD-02 六项随 M2-05 DatabaseWorker）。ASAN/UBSAN 随本 PR Linux CI；
+  MinGW 限制沿用 M1-02 记录。详见 M2 里程碑文档 M2-03 验证记录。
+
 ## 交付边界
 
 ### 包含（第一阶段 / MVP，对应设计第 15 节）

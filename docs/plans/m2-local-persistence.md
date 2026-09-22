@@ -94,11 +94,23 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
   asan/ubsan/tsan 预设补 `CMAKE_C_FLAGS`（sqlite3.c 为 C 编译单元，否则不被
   插桩）；`test_sqlite_sourceid` 三方一致断言（header 宏 / libversion /
   锁文件注入版本）。详见验证记录。）
-- [ ] `M2-03` 提供 persistence 薄 RAII 封装与迁移框架：`Database` / `Statement` /
+- [x] `M2-03` 提供 persistence 薄 RAII 封装与迁移框架：`Database` / `Statement` /
   `Transaction` 守卫 + `SqliteError`；open 处统一设置 `journal_mode=WAL`、
   `synchronous=NORMAL`、`foreign_keys=ON`、`busy_timeout`；`persistence/migration`
   按 `PRAGMA user_version` 版本化迁移（前进成功与失败回滚路径）；`sqlite3*` 不出
-  现在 persistence 层外公开头文件的编译级验证（`RULE-10`）。
+  现在 persistence 层外公开头文件的编译级验证（`RULE-10`）。（2026-09-23：
+  `persistence/database/database.hpp/.cpp`（`SqliteError`（主错误码 + errmsg 语义）、
+  `Database`（open/close RAII + open 期 pragma：busy_timeout 默认 5000ms 为本项
+  确定、严格 close 对在飞语句抛 `std::logic_error`、close 幂等）、`Statement`
+  （1-based bind/step/列提取、析构确定性 finalize）、`Transaction`（异常路径
+  析构自动 ROLLBACK））、`persistence/migration/migration.hpp/.cpp`（版本连续
+  递增构造期校验、每步独立事务含 user_version 前进、失败回滚不前进、幂等
+  no-op、库版本新于已知步骤干净失败）；`aki_persistence` 转实体静态库且
+  sqlite3 改 PRIVATE 链接（RULE-10：`<sqlite3.h>` 仅在 database.cpp:4，消费者
+  无 sqlite include 路径）；新增 `test_persistence_database`（11 test case /
+  81 断言）与 `test_persistence_public_surface`（边界锁定消费编译单元）。
+  同步封装无并发路径，DOD-02 六项不适用（DatabaseWorker 六项随 M2-05）。
+  详见验证记录。）
 - [ ] `M2-04` 提供第 11 节 ER 模型 4 张表 schema（迁移 M1 起步版本）与仓储层：
   领域枚举（`TrustState` / `MessageType` / `DeliveryState` / `TransferState`）
   `INTEGER + CHECK` 映射，DEVICE / CONVERSATION / MESSAGE / TRANSFER 的 CRUD，
@@ -259,3 +271,67 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
     溯源字段已先行登记于锁文件。MR 闭环由后续环节执行，本记录不含 commit/CI
     证据。
   - 同步：本里程碑工作项 `M2-02`、总计划当前状态。
+
+- 2026-09-23（`M2-03`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0 / w64devkit GCC 15.2.0（语法检查））：
+  - 范围：`persistence/database/database.hpp/.cpp`、
+    `persistence/migration/migration.hpp/.cpp`、`persistence/CMakeLists.txt`
+    （INTERFACE 骨架转实体静态库，sqlite3 改 PRIVATE 链接）、
+    `tests/unit/test_persistence_database.cpp`、
+    `tests/unit/test_persistence_public_surface.cpp`、`tests/CMakeLists.txt`
+    （两个新 target；`test_sqlite_sourceid` 改为直连 `sqlite3` target——
+    aki_persistence 不再向消费者传播 sqlite include/库，sourceid 用例测的是
+    vendored sqlite3 本体）。
+  - 依据：[DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)（RAII 四件套、
+    open pragma 清单、user_version 迁移、sqlite3* 封死 persistence、损坏 DB 干净
+    失败）；[设计第 11.1 节 ②](../design/aki_design.md)（启动段 open→迁移→加载
+    顺序、干净失败）、第 11/14 节；总计划 `RULE-07`/`RULE-09`/`RULE-10`、
+    `DOD-03`/`DOD-05`；[DEC-001](../decisions/DEC-001-cpp-baseline.md)（预设矩阵
+    与标签）；executor-integration 集成指南卡片本会话已加载（本项无新增并发
+    路径，DOD-02 六项不适用——同步封装不建线程、不引 executor 依赖，运行期
+    承载归 M2-05 `DatabaseWorker`）。
+  - 关键落点：busy_timeout 默认 5000ms（DEC-004 只定清单，默认值本项确定，覆盖
+    "用户以 sqlite3 CLI 进程外同时打开" 的预期竞争场景，可经 `DatabaseOptions`
+    覆盖）；严格 close（在飞语句 → `std::logic_error`，生命周期契约显式暴露）
+    + 析构兜底 `sqlite3_close_v2`（不产生 UB）；`Database::execute` 走
+    sqlite3_exec 支持多语句脚本（迁移 DDL 需要），`Statement` 走 prepare_v2。
+  - 验证（生成器说明同 M1 记录；本机 MinGW 限制 1 未变化）：
+    - `cmake --preset debug -G "Visual Studio 17 2022" -A x64 && cmake --build
+      --preset debug --config Debug && ctest --preset debug -C Debug` → 14/14
+      （原 12 + 新 `test_persistence_database` 11 test case / 81 断言 +
+      `test_persistence_public_surface`）。
+    - `cmake --build --preset release --config Release && ctest --preset release
+      -C Release` → 14/14。
+    - 稳定性：`test_persistence_database` debug 连续 30 次运行全部通过。
+    - GCC 语法检查（CI Linux 告警姿势）：
+      `g++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -fsyntax-only -I.
+      -Ithird_party/sqlite persistence/database/database.cpp
+      persistence/migration/migration.cpp` 与对
+      `tests/unit/test_persistence_database.cpp`（含 Catch2 include）通过
+      ——过程中按 GCC 限制将 `Database::Options` 上提为命名空间作用域
+      `DatabaseOptions`（类内保留 `using Options` 别名，同仓库既有处理）。
+    - RULE-10 证据（验收 ③）：`grep -rn "#include <sqlite3.h>" persistence/`
+      仅命中 `persistence/database/database.cpp:4`（唯一编译单元）；
+      `test_persistence_public_surface` 只链接 `aki_persistence`（sqlite3
+      PRIVATE，无 sqlite include 路径传播）即完成公开头编译 + :memory: 库
+      迁移/写读真实使用——任一公开头引入 `<sqlite3.h>` 该目标即编译失败
+      （编译级边界锁定，沿 M1-03 grep 模式另加公开头注释级复查）。
+    - 覆盖映射（验收 ①②）：迁移前进成功（2 步应用、user_version=2、种子行
+      同事务提交）、失败回滚（v2 非法 SQL → user_version 保持 1、t1 在/t2 不在）、
+      幂等重跑（返回 0）、乱序/缺步/重复/零版本/空名/空 SQL 构造期
+      `std::invalid_argument`、部分前进（v1 库 + {1,2} 迁移只应用 v2）、库新于
+      已知步骤 → `std::runtime_error` 干净失败；open 损坏 DB（600 字节垃圾文件）
+      → `SqliteError` 干净失败（code≠0 + "not a database" 语义可见）；pragma
+      回读（journal_mode=wal / synchronous=1 / foreign_keys=1 /
+      busy_timeout=自定义 1234）；prepare 期语法/缺表错误、step 期主键冲突
+      （UNIQUE 语义可见）；事务提交/显式回滚/异常自动回滚；blob/text/null
+      往返；移动语义与空壳拒绝；close 在飞语句暴露 + 幂等。
+  - 过程修正：测试联调中修正三处用例自身缺陷——① pragma 用例 close 前未结束
+    全部语句作用域（触发严格 close 的预期契约，改为内层作用域）；② "缺表"
+    错误实际发生在 prepare 期（prepare_v2 即时解析），step 期错误改用主键冲突
+    承载；③ close 幂等语义与实现不一致（实现补齐：已关闭时 no-op，与头文件
+    契约对齐）。
+  - 限制：ASAN/UBSAN 随本 PR 的 Linux CI 门禁提供（sqlite3.c 已在 asan preset
+    C 编译面，M2-02 已补 `CMAKE_C_FLAGS`）；MinGW 完整构建沿用 M1-02 记录
+    限制 1；MR 闭环由后续环节执行，本记录不含 commit/CI 证据。
+  - 同步：本里程碑工作项 `M2-03`、总计划当前状态。

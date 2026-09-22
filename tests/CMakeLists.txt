@@ -125,4 +125,26 @@ set_tests_properties(test_app_managers PROPERTIES LABELS "unit")
 aki_add_unit_test(test_sqlite_sourceid unit/test_sqlite_sourceid.cpp)
 target_compile_definitions(test_sqlite_sourceid PRIVATE
     AKI_EXPECTED_SQLITE_VERSION="${AKI_SQLITE_LOCK_VERSION}")
-target_link_libraries(test_sqlite_sourceid PRIVATE aki_persistence)
+# 直连 sqlite3 target：M2-03 起 aki_persistence 以 PRIVATE 链接 sqlite3（RULE-10，
+# 不向消费者传播 include/库），本用例测的就是 vendored sqlite3 本体。
+target_link_libraries(test_sqlite_sourceid PRIVATE sqlite3)
+
+# M2-03：persistence 薄 RAII 封装与迁移框架测试（DEC-004；设计第 11.1 节 ②）。
+add_executable(test_persistence_database unit/test_persistence_database.cpp)
+target_compile_features(test_persistence_database PRIVATE cxx_std_20)
+aki_apply_warnings(test_persistence_database PRIVATE)
+target_link_libraries(test_persistence_database PRIVATE
+    Catch2::Catch2WithMain
+    aki_persistence)
+add_test(NAME test_persistence_database COMMAND test_persistence_database)
+set_tests_properties(test_persistence_database PROPERTIES LABELS "unit")
+
+# RULE-10 公开边界锁定用例：消费编译单元只链接 aki_persistence（sqlite3 PRIVATE，
+# 无 sqlite include 路径传播）即可编译公开头并完成一次真实使用；任一公开头
+# 引入 <sqlite3.h> 本目标即编译失败。
+add_executable(test_persistence_public_surface unit/test_persistence_public_surface.cpp)
+target_compile_features(test_persistence_public_surface PRIVATE cxx_std_20)
+aki_apply_warnings(test_persistence_public_surface PRIVATE)
+target_link_libraries(test_persistence_public_surface PRIVATE aki_persistence)
+add_test(NAME test_persistence_public_surface COMMAND test_persistence_public_surface)
+set_tests_properties(test_persistence_public_surface PROPERTIES LABELS "unit")
