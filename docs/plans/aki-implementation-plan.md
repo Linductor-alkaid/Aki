@@ -90,6 +90,18 @@
   v0.1.0 发布点就绪，tag 创建待用户授权。事实修正：`test_app_managers` 计数
   以 PR #8 合入版为准（10 test case / 314 断言）。详见 [M1 里程碑文档](m1-domain-state.md)
   M1-08 验证记录。
+- 2026-09-23：M2 启动，`M2-01` 完成（设计先行，纯文档变更）：设计新增第 11.1 节
+  「持久化集成契约（M2 契约）」固化四类契约——DB 写路径映射（typed 更新→表作业、
+  owner 接受后单写者上下文入队、`DatabaseWorker` 串行保序、失败可见不静默，
+  `RULE-09`/`EXEC-06`）、启动恢复流程（主线程同步 open→迁移→逐域加载→tmp 清扫→
+  以 `AppStateOwner` 构造入参播种初始快照，恢复期 Adapter 事件未启动）、
+  `DatabaseWorker` 排空位于第 8.3 节钩子序列末尾（`close()` 之后、`EXEC-01`
+  步骤 2/3 之前）、文件本体终态作业（SHA-256+原子改名/`.part` 幂等删除）全部在
+  blocking worker 内执行；数据根目录解析为 persistence 层平台条件编译单元最小
+  落点（公开面仅 `std::string`，`RULE-10`）。第 8.3 节补钩子序列前向引用；
+  [DEC-004](../decisions/DEC-004-local-persistence-sqlite.md) 过时括注修正。
+  [M2 里程碑](m2-local-persistence.md)状态置 `In Progress`。详见 M2 里程碑文档
+  M2-01 验证记录。
 
 ## 交付边界
 
@@ -171,7 +183,7 @@
 | --- | --- | --- | --- | --- | --- |
 | M0 | 工程骨架与协作基线 | Done | 无 | 无（仓库基线） | [m0-project-skeleton.md](m0-project-skeleton.md) |
 | M1 | 领域模型与状态边界 | Done | M0（依赖来源解锁） | v0.1.0 | [m1-domain-state.md](m1-domain-state.md) |
-| M2 | 本地持久化 | Planned | M1 | v0.2.0 | [m2-local-persistence.md](m2-local-persistence.md) |
+| M2 | 本地持久化 | In Progress | M1 | v0.2.0 | [m2-local-persistence.md](m2-local-persistence.md) |
 | M3 | Heyaki 真实接入与文本消息 | Planned | M1、M2、DEC-006 | v0.3.0 | 待创建 |
 | M4 | 图片消息与文件传输 | Planned | M3 | v0.4.0 | 待创建 |
 | M5 | EUI-NEO UI 与 MVP 验收 | Planned | M2、M3、M4、DEC-005 | v0.5.0（MVP） | 待创建 |

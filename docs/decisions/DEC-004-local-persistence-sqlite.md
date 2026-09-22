@@ -88,7 +88,9 @@ MSVC）全绿。
 - [Aki 设计方案](../design/aki_design.md)第 11 节
 - [Aki 实施总计划](../plans/aki-implementation-plan.md)（`SCOPE-09`、`RULE-09`、`RULE-10`、`EXEC-04`，M2）
 - [DEC-003：依赖锁定](DEC-003-dependency-locking.md)
-- [M2：本地持久化](../plans/aki-implementation-plan.md)（里程碑文档待 M2 启动时创建）
+- [M2：本地持久化](../plans/m2-local-persistence.md)（2026-09-22 冻结时标注
+  "里程碑文档待 M2 启动时创建"；该文档现已创建，持久化集成契约见
+  [Aki 设计方案](../design/aki_design.md)第 11.1 节）
 
 ## 调研依据
 
