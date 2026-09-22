@@ -554,8 +554,14 @@ TEST_CASE("Concurrent producers converge through the single writer without loss"
         bool size_bounded = true;
     };
     std::atomic<bool> stop_readers{false};
+    std::atomic<bool> reader_started{false};
 
-    auto reader = executor.submit_auto([&owner, &stop_readers] {
+    // 先等 reader 确认开跑再放行生产者：快照 store 构造即播种发布
+    // （SnapshotStore(T initial)），reader 首次自旋即可读到；若不同步启动，
+    // ASAN 等重负载下任务启动延迟可能让 160 个微小生产者任务在 reader 首次
+    // 被调度前全部完成、stop_readers 已置位，loads==0 误报（CI 实测）。
+    auto reader = executor.submit_auto([&owner, &stop_readers, &reader_started] {
+        reader_started.store(true, std::memory_order_release);
         ReaderResult result;
         executor::comm::Snapshot<AppState> snapshot;
         while (!stop_readers.load() && result.loads < 100000) {
@@ -578,6 +584,9 @@ TEST_CASE("Concurrent producers converge through the single writer without loss"
         }
         return result;
     });
+
+    REQUIRE(wait_until(
+        [&] { return reader_started.load(std::memory_order_acquire); }, 2s));
 
     std::vector<std::future<bool>> producers;
     for (std::size_t p = 0; p < kProducers; ++p) {
