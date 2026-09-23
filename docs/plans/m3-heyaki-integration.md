@@ -608,4 +608,15 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
   - 限制：CI Linux 四档（debug/asan/ubsan/tsan）随本 PR 门禁——CI runner 的
     回环配对可能同样受防火墙/接口限制而走 [skip] 路径（证据输出保留）；
     MR 闭环由后续环节执行，本记录不含 commit/CI 证据。
+  - CI 闭环补记（MR 闭环环节，如实）：CI 第 1 轮（run 35922249364）asan 档
+    暴露 `NodeSession::create` 第一方接线缺陷——`NodeConfig.runtime` 非拥有
+    指针指向本函数栈上临时 Runtime 对象，ASan `stack-use-after-return` 实测；
+    修复为 Runtime 以 `unique_ptr` 堆置（地址跨 NodeSession 移动稳定，成员
+    声明序保证 Node 先于 Runtime 析构）。修复前其余四档的配对链路"通过"
+    建立在悬垂指针 UB 之上（Node 经该指针的 dispatch 全部以
+    `runtime_not_running` 静默失败）；修复后（run 35923993698）配对握手在
+    五档全部停滞（发现/提交/停止/关闭断言全过）——`[skip]` 降级路径已扩展
+    覆盖"已提交配对但握手未完成"并捕获两侧会话状态与观察器失败详情作为
+    补跑证据。补跑条件更新：LAN 双端真机环境 + heyaki 侧对 dispatch 生效后
+    握手停滞的排查（疑似上游缺陷，按规范报告不擅自改 third_party）。
   - 同步：本里程碑（M3-04 勾选、本记录）、总计划当前状态。
