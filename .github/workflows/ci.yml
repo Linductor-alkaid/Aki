@@ -37,7 +37,10 @@ jobs:
           path: third_party/heyaki/third_party
           key: heyaki-deps-linux-${{ hashFiles('third_party/heyaki/third_party/dependencies.lock') }}
       - name: Fetch heyaki dependencies (ref+commit verified)
-        run: bash third_party/heyaki/scripts/fetch_third_party.sh
+        # --all：runtime + test + optional 全组拉取——heyaki 许可证清单校验
+        # 无条件覆盖全部 lock 条目（缺 googletest/zstd 许可证文件即 FATAL，
+        # CI run 35893280000 实测），与 BUILD_TESTING 开关无关。
+        run: bash third_party/heyaki/scripts/fetch_third_party.sh --all
       - name: Configure (${{ matrix.preset }})
         run: cmake --preset ${{ matrix.preset }}
       - name: Build
@@ -60,7 +63,8 @@ jobs:
           path: third_party/heyaki/third_party
           key: heyaki-deps-windows-${{ hashFiles('third_party/heyaki/third_party/dependencies.lock') }}
       - name: Fetch heyaki dependencies (ref+commit verified)
-        run: bash third_party/heyaki/scripts/fetch_third_party.sh
+        # --all：与 Linux job 同因（heyaki 许可证清单无条件全组校验）。
+        run: bash third_party/heyaki/scripts/fetch_third_party.sh --all
         shell: bash
       - name: Configure
         run: cmake --preset debug
