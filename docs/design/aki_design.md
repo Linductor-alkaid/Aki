@@ -315,8 +315,29 @@ M3 以 pinned heyaki（v1.0.1-38，wire 协议 `{1,3}`）实现本 SPI。消息�
 `on_connection_path_changed`）由 Adapter 在 Aki executor 上周期轮询
 `endpoints()` / `peer_sessions()` 做 diff 合成（Node 无目录/会话变更推送回调，
 LAN 广播/监听随 Node 常驻）。因此 `start_discovery` / `stop_discovery` 的真实
-语义是启停观察管道而非启停网络扫描；记录型来源（已知设备记录、邀请链接、手动
-输入）的接入与触发语义由 `M3-02` 在本节细化。`DeviceIdentity` 的
+语义是启停观察管道而非启停网络扫描。记录型来源的接入与「发现 → 进入信任确认」
+触发语义（M3-02 细化；API 映射权威为 DEC-006）：
+
+- 扫描型 LAN 发现：`start_discovery` / `stop_discovery` 即启停观察管道（周期
+  轮询 `endpoints()` diff）；diff 中新出现的端点合成 `on_device_discovered`
+  （`DiscoveredDevice`，trust 取 `Unknown`）。停止发现不移除已入 Store 的设备
+  （已发现设备的信任确认不因观察管道停止而失效）。
+- 「发现 → 进入信任确认」触发：`on_device_discovered` 被 Sink 接受且
+  `UpsertDevice` 被 owner 接受后，设备以 `Unknown` 进入 `DeviceStore` 并发布
+  `DeviceDiscovered` 主路径事件——该事件即信任确认入口（宿主/UI 据此发起
+  `Unknown -> Pending`；确认动作经 `UpsertDevice` 沿第 4 节合法边推进，M1
+  契约不变）。同一设备重复出现在 diff 中为幂等 no-op 接受，宿主按
+  `trust_state == Unknown` 过滤确认入口，不重复发起。
+- 已知设备记录（ProfileStore 持久化的 TrustGrant/端点记录，DEC-006）：随启动
+  恢复直接进入 `DeviceStore`（trust 取记录值，`Trusted` / `Revoked` 等按记录
+  恢复，presence 恢复为 `Offline`），不重放 `on_device_discovered`（已知设备
+  不是新发现）；其再连接经 `peer_sessions()` diff 合成 `on_device_connected`
+  （DEC-006 映射）。
+- 邀请链接与手动输入：M3 分期（范围与补做条件见里程碑范围条款）；接入时经
+  同一 `on_device_discovered` 入口以对应 `DiscoveryMethod` 合成，触发语义与
+  本节一致。
+
+`DeviceIdentity` 的
 display_name / device_class / os_name / capabilities 在 M3 为占位值（LanPresence
 不携带元数据，DEC-006 已记录缺口）。ID 编码冻结常量与 heyaki API 逐项映射见
 DEC-006「决策」节。
@@ -430,13 +451,22 @@ Store 所有权：
 - Manager 必须先于其任务终结：宿主关闭钩子（下文装配顺序）保证先取消并消费在途
   任务 future，再进入 `ExecutorOwner` 的 `EXEC-01` 步骤 4/5。
 
-装配与所有权（`EXEC-07`；宿主组合根顺序，自 M1-06 console 起进程内使用）：
+装配与所有权（`EXEC-07`；宿主组合根顺序，M3-02 起固化为下列序（[DEC-009](../decisions/DEC-009-appstate-write-path.md)）；
+M1-06/M2-07 console 的「`AppStateOwner` 先于 control」为过渡形态，随 M3-03+
+按本序切换）：
 
 1. `ExecutorOwner.initialize()`；
-2. `AppStateOwner`；
-3. 四个 Manager 构造注入 `executor::Executor&`、`AppStateOwner&`、各自所需的
+2. 启动恢复（第 11.1 节 ②：主线程同步，产出单一连接 Repositories、FileStore
+   与播种数据）；
+3. `DatabaseWorkerControl`（锚定恢复移交的单一连接；先于 `AppStateOwner`
+   存在，供接受后处理器捕获，第 11.1 节 ②）；
+4. `AppStateOwner`（构造入参：初始快照 + 接受后处理器（第 10.1 节，捕获
+   control））；
+5. 四个 Manager 构造注入 `executor::Executor&`、`AppStateOwner&`、各自所需的
    `HeyakiAdapter&` 与容量预算；
-4. `RouterSink` 经 `FakeHeyakiAdapter::set_sink` 注册。
+6. `start_blocking_worker` 注册 DatabaseWorker 并 `mark_registered()`（第 11.1
+   节 ②③）；
+7. `RouterSink` 经 Adapter `set_sink` 注册（接通事件源）。
 
 M1 冒烟宿主（仓库根 `main.cpp`，M1-06）是该组合根的最小进程内实现，进程内 owner
 自本项起改用正式 `ExecutorOwner`（见第 8.2 节落点说明）。设备信任确认属用户流程
@@ -552,6 +582,18 @@ Manager → owner 的状态更新为类型化指令（`AppStateUpdate`，与 9 �
 逐条校验：目标与当前一致为幂等 no-op；非法转移、终态复活与未知 id 一律拒绝并经
 `updates_rejected` 可观测（`RULE-08` / `RULE-09`）。
 
+接受后处理器（M3-02 契约，[DEC-009](../decisions/DEC-009-appstate-write-path.md)）：
+`AppStateOwner` 构造注入可选的接受后处理器（`PostAcceptHandler =
+std::function<void(const AppStateUpdate&)>`，构造入参、默认空——M1/M2 形态兼容；
+对齐 `ManagerPump` 的 Handler 先例，`DEC-008`）。`drain_updates` 在 `apply()` 返回
+true（更新被接受，含幂等 no-op）后，于 owner 单写者上下文按接受顺序同步调用处理器
+恰好一次；被拒绝的更新不调用。处理器供组合根把第 11.1 节 ① 的 DB 作业按接受顺序
+入队 `DatabaseWorker`（control 的存在时序见第 11.1 节 ②）。处理器契约：**不得抛出
+异常**——owner 侧全捕获并计入 `post_accept_failures`（可观测计数，`RULE-09`），
+异常不上浮、不中断本批 drain 的后续更新与事件处理；入队拒绝（通道满/已关闭/未
+注册）由处理器侧计数与 `DatabaseWorkerControl` 的 rejected 计数双重暴露，不回滚
+已接受的内存更新（状态边界单向）。
+
 三条硬约束：
 
 1. **单写者强制**：`AppState` 快照发布、事件序列号分配与观察者扇出只发生在状态
@@ -623,11 +665,14 @@ POSIX 相对路径，`hash` 为终态流式 SHA-256，`size_bytes` / `mime_type`
 `transferred` / `total` 承载传输进度，供 `UpdateTransferProgress` 部分更新与重启
 恢复。
 
-### 11.1 持久化集成契约（M2 契约，M2-01）
+### 11.1 持久化集成契约（M2 契约，M2-01；M3-02/DEC-009 修订）
 
-本小节固化持久化与应用层的集成契约，供 M2-02~07 直接实现。引擎与访问方式、
-vendored 引入、连接参数、文件布局与迁移机制以 `DEC-004` 为准；本节只固化四类
-契约——何时写、如何恢复、如何关闭、文件本体何时动。
+本小节固化持久化与应用层的集成契约。引擎与访问方式、vendored 引入、连接参数、
+文件布局与迁移机制以 `DEC-004` 为准；本节固化四类契约——何时写、如何恢复、如何
+关闭、文件本体何时动。① 的写入时机经 `M3-02`/[DEC-009](../decisions/DEC-009-appstate-write-path.md)
+修订为「接受后处理器」正式落点（第 10.1 节）：M2-07 console 宿主的「快照权威值
+镜像」为过渡形态（见其验证记录偏差段，M2 历史记录保持原样），实现自 M3-03+
+按本节跟进。
 
 **① DB 写路径映射**：DB 作业由第 10.1 节 typed 更新驱动（权威路径），不由 9 类
 事件驱动（事件是通知面）：`UpsertDevice` → DEVICE 行 upsert；`UpsertConversation`
@@ -638,11 +683,17 @@ MESSAGE 送达状态列更新（不新建行）——送达回报是消息历史
 保证重启恢复后已发消息不丢失送达终态（`M2` 计划退出-1「消息历史逐域一致」）。
 `SetPresence` 与 `SetConnectionPath` 不持久化：presence 是易失在线状态（恢复后
 默认 `Offline`，由连接事件重建），连接路径是第 10.1 节 LatestMailbox 覆盖式
-单值摘要。写入时机：更新被状态 owner 接受（计入
-`updates_applied`）后，由 owner 单写者上下文按接受顺序入队对应 DB 作业——这是
-第 10.1 节硬约束 1 的延伸（入队不新增执行上下文），作业进入 `DatabaseWorker`
-的有界工作通道（`EXEC-04`）；同一实体的作业顺序即更新接受顺序，`DatabaseWorker`
-单一 worker 串行消费保持该顺序。接受包含幂等 no-op：对已终态传输重复
+单值摘要。写入时机（M3-02 正式落点，[DEC-009](../decisions/DEC-009-appstate-write-path.md)）：
+更新被状态 owner 接受（计入 `updates_applied`）后，owner 在 `drain_updates` 内调用
+其构造注入的接受后处理器（第 10.1 节；对齐 `ManagerPump` Handler 先例，`DEC-008`），
+处理器于 owner 单写者上下文按接受顺序同步入队对应 DB 作业——入队不新增执行上下文
+（第 10.1 节硬约束 1 的延伸），作业进入 `DatabaseWorker` 的有界工作通道（`EXEC-04`）；
+同一实体的作业顺序即更新接受顺序，`DatabaseWorker` 单一 worker 串行消费保持该顺序。
+容量预算（`RULE-09`）：owner drain 批 64 × 每接受更新至多 2 个作业（`CompleteTransfer`
+的 `Failed` / `Cancelled` 分支产生终态更新 + `.part` 删除两个作业，见 ④）= 128 ≤
+通道容量 256；通道满/已关闭/未注册的入队拒绝经处理器侧计数与 `DatabaseWorkerControl`
+的 rejected 计数双可见，不静默、不回滚已接受的内存更新；处理器异常策略见第 10.1 节
+（不抛出，owner 全捕获并计数）。接受包含幂等 no-op：对已终态传输重复
 `CompleteTransfer(Completed)`（第 10.1 节 from==to 视为接受并计入
 `updates_applied`）同样入队，由作业侧幂等语义吸收（见 ④ Completed 作业组的
 跳过条件），不在入队侧去重——owner 不新增簿记状态。失败语义（`RULE-09`）：作业入队拒绝（通道满或
@@ -657,7 +708,14 @@ MESSAGE 送达状态列更新（不新建行）——送达回报是消息历史
 MESSAGE / TRANSFER → 清扫无活动 Transfer 行的 `files/tmp/` 残留（依据加载到的
 活动行判定，`DEC-004` 崩溃恢复纪律）→ 以加载结果构造 `AppState` 作为初始快照
 播种状态 owner（`AppStateOwner` 构造入参；第 10.1 节单写者纪律在启动段的对应
-形式：恢复期 owner 尚未运行、无并发写者，恢复数据即首个权威快照）。恢复完成前
+形式：恢复期 owner 尚未运行、无并发写者，恢复数据即首个权威快照）。时序对齐
+（M3-02，[DEC-009](../decisions/DEC-009-appstate-write-path.md)）：接受后处理器
+捕获的 `DatabaseWorkerControl` 必须先于 `AppStateOwner` 构造存在（组合根在播种前
+以恢复移交的单一连接创建 control）；「`DatabaseWorker` 在播种完成后才注册」指
+`start_blocking_worker` + `mark_registered()` 的时点，不要求 control 对象晚于
+owner 构造。未注册窗口内处理器入队被明确拒绝且 rejected 计数可见（`RULE-09`）——
+标准装配序（第 8.3 节）中该窗口无任何更新流（恢复期 owner 未 drain、无事件源），
+预期计数为 0，非零即为装配缺陷信号。恢复完成前
 不注册 `RouterSink`、不启动发现、不注入任何事件（`EXEC-02` 启动段纪律）；open、
 迁移或加载失败时组合根干净退出并输出原因。
 
