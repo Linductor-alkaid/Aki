@@ -26,6 +26,15 @@ RecoveryResult perform_startup_recovery(const std::string& data_root,
         throw std::runtime_error("startup recovery: cannot create '" + db_dir
             + "': " + ec.message());
     }
+    // db/ 收敛为 owner-only（M3-03）：同一目录承载 profile.sqlite（heyaki
+    // 身份密钥，ProfileStore 拒绝过宽目录权限——CI Linux
+    // profile_directory_permissions_too_wide 实测）。POSIX 为 0700；Windows
+    // 无 POSIX 权限面，调用无害（仅读写位语义）。失败不静默（RULE-09）。
+    std::filesystem::permissions(db_dir, std::filesystem::perms::owner_all, ec);
+    if (ec) {
+        throw std::runtime_error("startup recovery: cannot restrict '" + db_dir
+            + "': " + ec.message());
+    }
     // FileStore 创建 files/ 与 files/tmp（失败抛 runtime_error，不静默）。
     auto store = std::make_shared<FileStore>(data_root);
 
