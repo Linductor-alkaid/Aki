@@ -144,13 +144,22 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
   （仓储持 Database& 回引，不可移动）+ control 共享。DOD-02 六项沿 worker
   路径全覆盖（`test_database_worker` 8 test case / 102 断言，debug 60 次/
   release 30 次稳定性通过；初稿误记 7/87，以合入前双配置实测为准）。详见验证记录。）
-- [ ] `M2-06` 落实文件本体存储布局与生命周期：数据根目录（Platform Adapter 解析，
+- [x] `M2-06` 落实文件本体存储布局与生命周期：数据根目录（Platform Adapter 解析，
   Windows `%APPDATA%` / Linux XDG，Core 不见平台类型）下 `db/aki.db3` 与 `files/`
   并置；`files/tmp/<transfer_id>.part` 写入、`Completed` 终态流式 SHA-256 后原子
   改名到 `files/<transfer_id>/<净化文件名>`、`Failed` / `Cancelled` 幂等删除
   `.part`、启动清扫无活动 Transfer 行的残留；`TransferId` 字符集约束
   `[A-Za-z0-9_-]{1,64}` 固化于生成处，远端原始文件名只存 DB 不拼路径
-  （`DEC-004`；本项以测试内字节源驱动，真实链路 M4）。
+  （`DEC-004`；本项以测试内字节源驱动，真实链路 M4）。（2026-09-23：
+  `persistence/storage/` 落地——`data_root.hpp/.cpp`（平台条件编译单元：
+  Windows %APPDATA% / POSIX XDG，公开面仅 std::string，getenv 的 MSVC C4996
+  作用域内豁免）、`sha256.hpp/.cpp`（自包含流式 SHA-256，FIPS 180-4 已知
+  向量验证）、`file_store.hpp/.cpp`（FileStore：布局创建、.part 覆盖/追加
+  分块写入、Completed 作业组（幂等跳过/恢复收敛/.part 缺失明确失败）、
+  discard 幂等删除、启动清扫、TransferId 校验与磁盘名净化）、
+  `file_jobs.hpp/.cpp`（DbJob 工厂，shared_ptr<FileStore> 捕获生命周期安全）；
+  单测 `test_file_store`（8 test case / 68 断言）经 DatabaseWorker 路径覆盖
+  验收 ①②③。详见验证记录。）
 - [ ] `M2-07` 实现重启恢复并写入宿主/测试路径：设备、信任状态、会话、消息与
   传输历史写入 → 受控关闭 → 重新 open 后逐域断言一致（`SCOPE-09` 验收）；
   DB 文件损坏时 open 干净失败不静默。
@@ -499,3 +508,54 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
     matrix 增补 `tsan`，运行证据随 MR CI 产出）；MR 闭环由后续环节执行，
     本记录不含 commit/CI 证据。
   - 同步：本里程碑工作项 `M2-05`、总计划当前状态。
+
+- 2026-09-23（`M2-06`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0 / w64devkit GCC 15.2.0（语法检查））：
+  - 范围：`persistence/storage/data_root.hpp/.cpp`（数据根解析：Windows
+    %APPDATA%ki / POSIX $XDG_DATA_HOME 或 $HOME/.local/shareki，公开面仅
+    std::string；getenv 的 MSVC C4996 以作用域内 pragma 豁免，不放松全局）、
+    `persistence/storage/sha256.hpp/.cpp`（自包含流式 SHA-256）、
+    `persistence/storage/file_store.hpp/.cpp`（FileStore：布局创建 files/+
+    files/tmp、.part 分块写入（覆盖/追加）、`valid_transfer_id`
+    `[A-Za-z0-9_-]{1,64}`、`sanitize_disk_name`（末段分量+非法字节换 '_'+
+    空名回退 file+128 截断）、Completed 作业组 `complete_transfer`（幂等
+    跳过/恢复收敛/.part 缺失明确失败）、`discard_part`（幂等删除）、
+    `sweep_tmp_orphans`（活动保留/终态与无行与非法名清理，返回删除数））、
+    `persistence/storage/file_jobs.hpp/.cpp`（DbJob 工厂：complete/discard，
+    shared_ptr<FileStore> 捕获生命周期安全）、`tests/unit/test_file_store.cpp`
+    + `tests/CMakeLists.txt`（含数据根解析公开面锁定用例「Data root
+    resolution exposes a std::string path」；此前误记为
+    `test_persistence_public_surface` 扩展——该文件本变更加动，特此更正）。
+  - 依据：[设计第 11.1 节 ④/②](../design/aki_design.md)、第 11/7 节（RULE-05）、
+    [DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)（目录布局、.part
+    生命周期、SHA-256 流式+原子改名、TransferId 字符集、原始文件名仅存 DB）、
+    M2-05 DatabaseWorker（作业承载）；总计划 `RULE-05`/`RULE-09`/`RULE-10`、
+    `EXEC-04`/`EXEC-06`、`DOD-02`/`DOD-03`/`DOD-05`。
+  - 验证（生成器说明同 M1 记录）：
+    - `ctest --preset debug -C Debug --timeout 60` → 17/17（原 16 + 新
+      `test_file_store` 8 test case / 68 断言，其中 3 个用例经
+      DatabaseWorker 路径）。
+    - `ctest --preset release -C Release --timeout 60` → 17/17。
+    - 稳定性：`test_file_store` debug 连续 40 次全过；worker 路径 30 次全过。
+    - GCC 语法检查（CI Linux 告警姿势）：`g++ -std=c++20 -Wall -Wextra
+      -Wpedantic -Werror -fsyntax-only` 对五个 storage 编译单元与
+      `test_file_store.cpp` 全部通过（修正一处 adapter 成员初始化顺序
+      -Werror=reorder）。
+    - 覆盖映射（验收 ①②③）：Completed 作业组（.part 写入 → 经 worker 的
+      complete job → 改名 + 回写位 SQL 断言（stored_relative_path=
+      files/t-1/_____________.bin（净化的中文名）、stored_sha256=内容摘要、
+      stored_size_bytes）+ .part 清理）；幂等重跑（行 Completed + 文件存在 →
+      跳过）；.part 缺失 → runtime_error 明确失败 + 状态不伪造 + worker 存活
+      （恢复作业继续）；discard 幂等删除 + 重跑；启动清扫（活动保留/终态行
+      清理/无行清理/非法名清理，removed==3）；路径安全（TransferId 空长字符
+      集合非法字符拒绝、穿越载荷净化后落盘名无分隔符无穿越）。
+    - 全部文件作业经 DatabaseWorker 串行执行（验收 ⑤）：complete/discard
+      作业以 DbJob 入队、drain 后断言；wakeup/延迟上界在 M2-05 已实测。
+  - 过程修正：联调修正两处用例缺陷——① 中文文件名净化预期按字节计（每非
+    [A-Za-z0-9._-] 字节 → '_'，非按字符）；② missing 用例的 future 须在
+    enqueue（move）前获取（move 后 done 为空 → SIGSEGV）。
+  - 限制：ASAN/UBSAN 随本 PR Linux CI 门禁（sqlite3.c 已在 asan preset C
+    编译面）；POSIX 分支（data_root XDG 路径、文件操作）随 CI Linux 编译
+    执行，本机（Windows）不宣称已验证 POSIX 行为；MinGW 完整构建沿用
+    M1-02 记录限制 1；MR 闭环由后续环节执行，本记录不含 commit/CI 证据。
+  - 同步：本里程碑工作项 `M2-06`、总计划当前状态。

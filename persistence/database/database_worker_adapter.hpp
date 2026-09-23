@@ -6,15 +6,18 @@
 // 均不含 executor/sqlite 类型）。
 //
 // 宿主组合（EXEC-07，设计第 11.1 节 ③）：
-//   auto control = std::make_shared<DatabaseWorkerControl>(options);
-//   auto runnable = std::make_unique<DatabaseWorkerRunnable>(
-//       std::move(repos), control);
+//   auto repositories = std::make_unique<Repositories>(
+//       Database::open(db_path), options.repository_cache_capacity);
+//   auto control = std::make_shared<DatabaseWorkerControl>(
+//       std::move(repositories), options);
+//   auto runnable = std::make_unique<DatabaseWorkerRunnable>(control);
 //   executor::BlockingWorkerSpec spec;
 //   spec.name = "aki.db-worker";
 //   spec.config.thread_name = "aki-db-worker";   // 库校验必填
 //   spec.worker = std::move(runnable);
 //   owner.start_blocking_worker(std::move(spec));
-// 之后宿主仅经 control 入队/排空/观测（线程安全，生命周期覆盖全程）。
+// 之后宿主仅经 control 入队/排空/观测（线程安全，生命周期覆盖全程）；仓储
+// 经 control->repositories() 同步访问（启动恢复/播种/关闭后读取）。
 #pragma once
 
 #include "persistence/database/database_worker.hpp"
@@ -32,15 +35,18 @@ namespace aki::persistence {
 
 // 控制面共享状态：通道 + 原子旗标 + 计数（宿主与 runnable 两端共享）。
 struct DatabaseWorkerControl::Impl {
-    explicit Impl(DatabaseWorkerOptions worker_options)
+    Impl(DatabaseWorkerOptions worker_options,
+        std::unique_ptr<Repositories> worker_repositories)
         : options(worker_options),
           channel(executor::comm::ChannelOptions{
               .capacity = worker_options.channel_capacity,
               .enable_stats = true,
-              .name = "aki.db-worker.jobs"}) {}
+              .name = "aki.db-worker.jobs"}),
+          repos(std::move(worker_repositories)) {}
 
     DatabaseWorkerOptions options;
     executor::comm::MpscChannel<DbJob> channel;
+    std::unique_ptr<Repositories> repos;
     std::atomic<bool> registered{false};
     std::atomic<bool> drain_requested{false};
     std::atomic<bool> exit_requested{false};
@@ -57,10 +63,9 @@ struct DatabaseWorkerControl::Impl {
 class DatabaseWorkerRunnable final : public executor::IBlockingIoWorker {
 public:
     explicit DatabaseWorkerRunnable(
-        std::unique_ptr<Repositories> repositories,
         std::shared_ptr<DatabaseWorkerControl> control)
-        : repos_(std::move(repositories)),
-          control_(control, control->impl_.get()) {}  // 别名构造：生命周期随 control
+        : control_(control, control->impl_.get()),  // 别名构造：生命周期随 control
+          repos_(control->impl_->repos.get()) {}
 
     DatabaseWorkerRunnable(const DatabaseWorkerRunnable&) = delete;
     DatabaseWorkerRunnable& operator=(const DatabaseWorkerRunnable&) = delete;
@@ -161,8 +166,8 @@ private:
         }
     }
 
-    std::unique_ptr<Repositories> repos_;
     std::shared_ptr<DatabaseWorkerControl::Impl> control_;
+    Repositories* repos_;
 };
 
 }  // namespace aki::persistence

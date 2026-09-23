@@ -157,6 +157,19 @@
   （DOD-02 六项随 M2-05 DatabaseWorker）。ASAN/UBSAN 随本 PR Linux CI；
   MinGW 限制沿用 M1-02 记录。详见 M2 里程碑文档 M2-03 验证记录。
 
+- 2026-09-23：`M2-06` 完成：文件本体存储布局与生命周期落地
+  （`persistence/storage/`）——数据根目录解析（平台条件编译单元：
+  Windows %APPDATA% / POSIX XDG，公开面仅 std::string，RULE-10）；
+  `FileStore`：DEC-004 布局（files/ + files/tmp/）、.part 分块流式写入、
+  Completed 终态作业组（流式 SHA-256 + 原子改名 + hash/size/relative_path
+  回写 TRANSFER 行）、Failed/Cancelled 幂等删除、启动清扫（活动保留/
+  残留清理）；TransferId `[A-Za-z0-9_-]{1,64}` 入口校验与磁盘名净化
+  （穿越载荷不落盘）。作业经 DatabaseWorker 串行执行（DbJob 工厂）。新增
+  `test_file_store`（8 test case / 68 断言）。本地 MSVC debug/release
+  ctest 17/17；file_store debug 40 次稳定；ASAN/UBSAN 随本 PR Linux CI；
+  POSIX 分支随 CI Linux 编译执行（本机 Windows 不宣称已验证）；MinGW
+  限制沿用 M1-02 记录。详见 M2 里程碑文档 M2-06 验证记录。
+
 ## 交付边界
 
 ### 包含（第一阶段 / MVP，对应设计第 15 节）

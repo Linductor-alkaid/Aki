@@ -172,3 +172,14 @@ target_link_libraries(test_database_worker PRIVATE
     aki_app)
 add_test(NAME test_database_worker COMMAND test_database_worker)
 set_tests_properties(test_database_worker PROPERTIES LABELS "unit")
+
+# M2-06：文件本体存储布局与生命周期测试（DEC-004；设计第 11.1 节 ④/②）。
+add_executable(test_file_store unit/test_file_store.cpp)
+target_compile_features(test_file_store PRIVATE cxx_std_20)
+aki_apply_warnings(test_file_store PRIVATE)
+target_link_libraries(test_file_store PRIVATE
+    Catch2::Catch2WithMain
+    aki_persistence
+    aki_app)
+add_test(NAME test_file_store COMMAND test_file_store)
+set_tests_properties(test_file_store PROPERTIES LABELS "unit")

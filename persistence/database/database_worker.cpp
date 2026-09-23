@@ -9,8 +9,13 @@
 
 namespace aki::persistence {
 
-DatabaseWorkerControl::DatabaseWorkerControl(DatabaseWorkerOptions options)
-    : impl_(std::make_unique<Impl>(std::move(options))) {}
+DatabaseWorkerControl::DatabaseWorkerControl(
+    std::unique_ptr<Repositories> repositories, DatabaseWorkerOptions options)
+    : impl_(std::make_unique<Impl>(std::move(options), std::move(repositories))) {}
+
+Repositories& DatabaseWorkerControl::repositories() const noexcept {
+    return *impl_->repos;
+}
 
 DatabaseWorkerControl::~DatabaseWorkerControl() = default;
 
