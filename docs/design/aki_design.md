@@ -307,6 +307,20 @@ executor 类型（`RULE-10`）；heyaki 层仅依赖第 3~7 节领域类型，�
 `FakeHeyakiAdapter`：以 `inject_*` 编程式注入上述入站事件，注入路径即 `EXEC-02`
 回调路径（有界校验 + 投递），不做任何真实 I/O。
 
+真实接入映射（M3 契约，权威为 [DEC-006](../decisions/DEC-006-heyaki-api-contract.md)）：
+M3 以 pinned heyaki（v1.0.1-38，wire 协议 `{1,3}`）实现本 SPI。消息类入站事件
+（`on_message_received` / `on_message_delivered`）走 heyaki 推送回调
+（`set_message_inbound_handler` / 送达回报）；发现、Presence 与路径类事件
+（`on_device_discovered` / `on_device_connected` / `on_device_disconnected` /
+`on_connection_path_changed`）由 Adapter 在 Aki executor 上周期轮询
+`endpoints()` / `peer_sessions()` 做 diff 合成（Node 无目录/会话变更推送回调，
+LAN 广播/监听随 Node 常驻）。因此 `start_discovery` / `stop_discovery` 的真实
+语义是启停观察管道而非启停网络扫描；记录型来源（已知设备记录、邀请链接、手动
+输入）的接入与触发语义由 `M3-02` 在本节细化。`DeviceIdentity` 的
+display_name / device_class / os_name / capabilities 在 M3 为占位值（LanPresence
+不携带元数据，DEC-006 已记录缺口）。ID 编码冻结常量与 heyaki API 逐项映射见
+DEC-006「决策」节。
+
 ### 8.2 Executor 生命周期 owner（app/lifecycle）
 
 Executor 的初始化与关闭由 `app/lifecycle` 的唯一 owner（`ExecutorOwner`）承担
@@ -342,6 +356,18 @@ worker 的 `WorkerHandle` 由 owner 注册并持有（M1 不启用——无长�
 关闭后同一 Executor 不可二次初始化（`initialize_ex` 返回 `AlreadyShutdown`）；
 进程内需要新一轮生命周期时重建 owner。关闭后的新提交以明确异常结算（如
 "Executor is stopped"），不静默。
+
+与 heyaki Runtime 的协调（M3 契约，[DEC-006](../decisions/DEC-006-heyaki-api-contract.md)）：
+M3 起 heyaki 并发经借用注入并入本 owner——宿主以
+`heyaki::Runtime::create_borrowed(executor_owner.executor(), cfg)` 创建借用型
+Runtime 并经 `NodeConfig.runtime` 注入 `Node::create`；borrowed Runtime 的
+AsioWorker/FileIoWorker 以 blocking worker 挂在同一 executor 上（worker 名
+`heyaki-asio` / `heyaki-asio-file-io`），对 Executor 监控完全可见；Runtime 关闭
+不触碰宿主 executor 生命周期（禁止 `create_owned` / `runtime=nullptr`——进程内
+第二 executor 实例违反本节唯一 owner 纪律）。关闭顺序：`Node::shutdown()` +
+`Runtime::shutdown()` 编入第 8.3 节钩子序列的停止生产者段（`EXEC-01` 步骤 1，
+早于 owner 步骤 2/3/5），并以 `RuntimeShutdownReport.executor_shutdown_performed
+== false` + owner `fully_stopped()` 为关闭证据。
 
 owner 落点说明：M1-02 / M1-03 的单测 `main` 持有临时 `executor::Executor` 实例作为
 该测试进程的 owner（AGENTS 规则 7 的测试形态，生命周期同样显式：非 worker 线程

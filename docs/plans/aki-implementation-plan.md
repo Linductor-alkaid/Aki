@@ -188,6 +188,29 @@
   路径（DOD-02 六项已随 M2-05 覆盖）；ASAN/UBSAN 随本 PR Linux CI；MinGW
   限制沿用 M1-02 记录。详见 M2 里程碑文档 M2-07 验证记录。
 - 2026-09-23：`M2-08` 完成，M2 关闭（Done）：收口审计与退出证据归集——设计-实现审计矩阵逐项一致（§11/11.1/14 与 §8.2/8.3/10.1 对 persistence/ 五子目录与根 main.cpp 宿主组合；两项已知偏差（M2-05 轮询环、M2-07 快照权威值镜像）锚点核实，未记录偏差数 0）；RULE-07/RULE-10 边界 grep 通过（sqlite3* 封死 persistence 唯一编译单元、executor 类型仅接线层、第一方无自建线程）。退出证据：本地 MSVC debug/release 全量 ctest 复跑 19/19；gh 逐 PR 核实 #13~#18 CI 全绿（Linux debug/asan/ubsan + Windows MSVC，#16~#18 含 Linux tsan 覆盖 DOD-03）。`docs/supply-chain/` 创建并登记 SQLite vendored 审计（zip SHA3-256 + 双文件 SHA-256 本地复算一致、public domain 结论）与上游缺陷处置（3.53.4 仍为最新无可升级修复；建议负责人向 sqlite.org 报告，触发条件已登记）；DEC-004 验证方式逐项回填（测试 + PR 映射表）；M2 文档状态 Completed、里程碑索引 M2 → Done。详见 M2 里程碑文档 M2-08 验证记录。
+- 2026-09-23：[M3 里程碑文档](m3-heyaki-integration.md) 创建（Planned，`M3-01`~`M3-09`，
+  里程碑索引 M3 文档链接更新）。范围：pinned heyaki 真实接入与文本消息
+  （`SCOPE-01/02/03/05/06/10/11`）。开工前必须完成：`DEC-006`（Heyaki API 契约
+  版本，`M3-01` 冻结）；两项调研——`ExecutorOwner` 与 heyaki 库内 executor 的
+  生命周期协调（EXEC-01 唯一 owner 纪律，缺口走 9.4 台账）、第 11.1 节 ① 写路径
+  正式落点（接受后回调或 owner 侧 tap，替代 M2-07 宿主快照镜像，`M3-02` 固化）。
+- 2026-09-23：三项 M3 开工前调研完成，[DEC-006](../decisions/DEC-006-heyaki-api-contract.md)
+  冻结为 `Accepted`（Heyaki API 契约版本与目标级集成方式）：pinned v1.0.1-38
+  （`e114508a`）公开头文件 + api.md/client-library.md 为契约基线（wire {1,3}）；
+  单一构建图 `add_subdirectory(third_party/heyaki)` 只链 `heyaki::client`，executor
+  target 由 heyaki 子目录提供（双侧同 pin `74a94198`，Aki 移除自己的 executor
+  add，DEC-003 executor 接入条款显式修订）；运行期
+  `Runtime::create_borrowed(ExecutorOwner.executor())` 注入，EXEC-01 唯一 owner
+  保持（非能力缺口，不进 9.4 台账）；§8.1 SPI 九事件映射（消息类走推送回调、
+  发现/Presence/路径类由 Adapter 轮询 `endpoints()`/`peer_sessions()` diff 合成）
+  与冻结常量（`application_id="org.aki.app"`、`"aki.text"`、`message.send` scope、
+  ID hex 双射）落档；LanPresence 元数据缺口如实记录（M3 占位）。两项
+  kind=research 结论已写入 M3 里程碑文档：executor 协调采 borrowed 注入
+  （`Node::shutdown`+`Runtime::shutdown` 编入 EXEC-01 步骤 1 钩子，断言
+  `executor_shutdown_performed==false`）；写路径正式落点选「AppStateOwner 接受后
+  回调」（对齐 ManagerPump Handler 先例，M3-02 先更新 §10.1/§11.1① 再动代码，
+  阻塞子决策——UpsertMessage 的 conversation_id 归属缺口——须同批固化）。设计
+  第 8.1/8.2 节已补 DEC-006 映射与协调锚点。M3 可开工（`M3-01`）。
 
 ## 交付边界
 
@@ -270,7 +293,7 @@
 | M0 | 工程骨架与协作基线 | Done | 无 | 无（仓库基线） | [m0-project-skeleton.md](m0-project-skeleton.md) |
 | M1 | 领域模型与状态边界 | Done | M0（依赖来源解锁） | v0.1.0 | [m1-domain-state.md](m1-domain-state.md) |
 | M2 | 本地持久化 | Done | M1 | v0.2.0 | [m2-local-persistence.md](m2-local-persistence.md) |
-| M3 | Heyaki 真实接入与文本消息 | Planned | M1、M2、DEC-006 | v0.3.0 | 待创建 |
+| M3 | Heyaki 真实接入与文本消息 | Planned | M1、M2、DEC-006 | v0.3.0 | [m3-heyaki-integration.md](m3-heyaki-integration.md) |
 | M4 | 图片消息与文件传输 | Planned | M3 | v0.4.0 | 待创建 |
 | M5 | EUI-NEO UI 与 MVP 验收 | Planned | M2、M3、M4、DEC-005 | v0.5.0（MVP） | 待创建 |
 
@@ -283,11 +306,14 @@ M3 引入真实 Heyaki；M5 整合 UI 并按设计第 15 节逐项验收 MVP。�
 | 编号 | 主题 | 暂定默认值 | 负责人 | 最迟冻结里程碑 |
 | --- | --- | --- | --- | --- |
 | `DEC-005` | EUI-NEO 集成方式 | 源码/子模块引入 + CMake target，不用 WebView | Linductor | M5 开始前 |
-| `DEC-006` | Heyaki API 契约版本 | 以 M3 启动时 pinned 版本公开 API 为准 | Linductor | M3 开始前 |
 
-`DEC-005`、`DEC-006` 在冻结时创建正式决策记录文件；已生效决策见
+`DEC-005` 在冻结时创建正式决策记录文件；已生效决策见
 [docs/decisions/](../decisions/)（含已冻结的 [DEC-003](../decisions/DEC-003-dependency-locking.md)、
 [DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)（2026-09-22 提前冻结）、
+[DEC-006](../decisions/DEC-006-heyaki-api-contract.md)（2026-09-23，Heyaki API 契约
+版本与目标级集成方式——pinned v1.0.1-38 公开面为契约基线、单一构建图接入
+heyaki::client、executor 由 heyaki 子目录提供同 pin、borrowed Runtime 注入保持
+EXEC-01 唯一 owner、SPI↔API 映射与冻结常量；含 DEC-003 executor 接入条款修订）、
 [DEC-007](../decisions/DEC-007-test-framework.md)
 与 [DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)
 （2026-09-22，Manager 职责切分、事件路由与 Executor 任务承载））。
