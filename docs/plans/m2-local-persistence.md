@@ -1,6 +1,6 @@
 # M2：本地持久化
 
-> 状态：In Progress
+> 状态：Completed
 > 负责人：Linductor
 > 所属计划：[Aki 实施总计划](aki-implementation-plan.md)
 > 前置：M1（已关闭，`app/lifecycle`/`app/state`/`app/application` 骨架就绪；
@@ -176,10 +176,21 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
   标签，4 用例 / 158 断言）+ 损坏 DB 宿主级 ctest（`--exact` 模式直用损坏根，
   FATAL 输出 + 非零退出）。同步设计 §14 目录树（补记 M2-06 `storage/` 并新增
   `recovery/`）。详见验证记录。）
-- [ ] `M2-08` 收口审计与退出证据归集（沿用 M1-08 纪律）：实现与设计第 11 节/
+- [x] `M2-08` 收口审计与退出证据归集（沿用 M1-08 纪律）：实现与设计第 11 节/
   `DEC-004` 逐项校对，退出-1~5 证据与可复现命令归档，供应链登记
   （zip SHA3-256 + 文件 SHA-256、public domain 许可证结论入
-  `docs/supply-chain/`）。
+  `docs/supply-chain/`）。（2026-09-23：设计-实现审计矩阵逐项一致——§11 ER
+  四表与列补齐、§11.1 ①~④、§14 目录树、§8.2/8.3/10.1 关联节对
+  `persistence/` 五子目录与根 `main.cpp` 宿主组合全部核对通过；两项已知偏差
+  （M2-05 轮询环替代 `receive_for`、M2-07 快照权威值镜像替代接受后回调）锚点
+  核实于本文件验证记录，未记录偏差数为 0；RULE-07/RULE-10 边界 grep 通过
+  （sqlite3* 封死 persistence 唯一编译单元、公开头仅注释命中、executor 类型
+  仅接线层、第一方无自建线程）；退出-2~5 证据归档（本地 MSVC debug/release
+  全量 ctest 19/19 复跑 + gh 逐 PR 核实 #13~#18 CI 全绿含 asan/ubsan、#16~#18
+  含 tsan 覆盖 DOD-03）；`docs/supply-chain/` 创建并登记 SQLite vendored 审计
+  （哈希本地复算一致、public domain 结论、上游缺陷处置：3.53.4 仍为最新无
+  可升级修复、建议由负责人向 sqlite.org 报告并登记触发条件）；DEC-004 验证
+  方式逐项回填。M2 关闭（Completed）。详见验证记录。）
 
 ## 风险与阻塞
 
@@ -196,16 +207,30 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
 - [x] 退出-1：重启恢复——写入 → 关闭 → 重开，设备/信任/会话/消息/传输历史逐域
   一致；损坏 DB open 干净失败。（`M2-07`，2026-09-23：宿主 `smoke.device_
   lifecycle` 与 `test_restart_recovery` 双证据，见验证记录）
-- [ ] 退出-2：并发基线六项沿 `DatabaseWorker` 路径通过——正常完成、任务异常、
+- [x] 退出-2：并发基线六项沿 `DatabaseWorker` 路径通过——正常完成、任务异常、
   提交拒绝（通道满/关闭后）、执行中取消（语句间 StopToken）、超时、shutdown
-  （drain 后 join）。
-- [ ] 退出-3：迁移与约束测试通过——`user_version` 前进成功、失败路径不破坏既有
-  数据；枚举 `CHECK` 拒绝非法值；重复迁移幂等。
-- [ ] 退出-4：debug/release 构建与全量测试通过；ASAN/UBSAN 通过（随 CI 门禁），
+  （drain 后 join）。（`M2-05` `test_database_worker` 8 test case 覆盖映射见
+  其验证记录；M2-08 复跑 `ctest --preset debug -C Debug -R "test_database_worker"
+  --timeout 120` → Passed；宿主组合复验见 `test_restart_recovery` 排空零丢失
+  用例与宿主 smoke 断言）
+- [x] 退出-3：迁移与约束测试通过——`user_version` 前进成功、失败路径不破坏既有
+  数据；枚举 `CHECK` 拒绝非法值；重复迁移幂等。（`test_persistence_database`
+  前进/回滚/幂等/乱序构造拒绝 + `test_persistence_repository` 六处 CHECK 拒绝
+  非法枚举（原始 SQL 注入验证）；M2-08 复跑 `ctest --preset debug -C Debug -R
+  "test_database_worker|test_persistence_database|test_persistence_repository"
+  --timeout 120` → 3/3 Passed；重开迁移幂等另证于 `test_restart_recovery`）
+- [x] 退出-4：debug/release 构建与全量测试通过；ASAN/UBSAN 通过（随 CI 门禁），
   不适用工具链记录限制与补跑条件；DB worker 与 Manager 跨上下文交互按 `DOD-03`
-  评估 TSAN/故障注入。
-- [ ] 退出-5：设计（第 11 节集成契约）、决策（`DEC-004` 验证方式回填）、总计划
-  状态同步；验证记录含可复现命令与结果；供应链文档已登记。
+  评估 TSAN/故障注入。（M2-08 复跑 `ctest --preset debug -C Debug --timeout
+  120` → 19/19、`ctest --preset release -C Release --timeout 120` → 19/19；
+  gh 逐 PR 核实 #13~#18 CI 全绿——Linux debug/asan/ubsan + Windows MSVC 全部
+  SUCCESS，#16~#18 另含 Linux tsan（DB worker 跨上下文 DOD-03 证据），run
+  链接见 M2-08 验证记录；MinGW 完整构建限制沿用 M1-02 记录 1）
+- [x] 退出-5：设计（第 11 节集成契约）、决策（`DEC-004` 验证方式回填）、总计划
+  状态同步；验证记录含可复现命令与结果；供应链文档已登记。（`DEC-004` 验证
+  方式逐项回填含测试与 PR 映射表；`docs/supply-chain/`（README + sqlite
+  3.53.4 审计与上游缺陷处置）登记；总计划当前状态与里程碑索引 M2 → Done
+  同步；M2 文档状态 → Completed）
 
 ## 验证记录
 
@@ -660,3 +685,89 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
     完整构建沿用 M1-02 记录限制 1；MR 闭环由后续环节执行，本记录不含
     commit/CI 证据。
   - 同步：设计第 14 节、本里程碑工作项 `M2-07` 与退出-1、总计划当前状态。
+
+- 2026-09-23（`M2-08`，收口审计与退出证据归集，Windows 11 / MSVC 2022
+  BuildTools 14.44.35207 / CMake 4.1.0 / gh 2.x（CI 核实）；纯文档与证据
+  归档变更，无产品代码改动）：
+  - 范围：本里程碑文档（M2-08 勾选、退出-2~5 勾选与证据、状态 Completed）、
+    [DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)（验证方式逐项
+    回填）、`docs/supply-chain/`（新建：README 依赖审计索引 + sqlite-3.53.4
+    vendored 审计与上游缺陷处置）、总计划（当前状态条目 + 里程碑索引 M2 →
+    Done）。
+  - ① 设计-实现审计矩阵（逐项校对，结论全部一致）：
+    - §11（ER 四表/列）：`schema_v1.cpp` 四表 + FK（DEVICE 1-* CONVERSATION
+      1-* MESSAGE 0..1 TRANSFER）与 DEC-004 列补齐（stored_relative_path/
+      stored_sha256/stored_size_bytes、file_name 仅展示）一致；§11 ER 块的
+      path/hash/size_bytes 为概念名，具体列名以 §11.1 ④ 与 M2-04 记录的
+      stored_* 为锚，无未记录偏差。
+    - §11.1 ①（写路径映射）：update_jobs 五工厂 + file_jobs 终态作业组对
+      UpsertDevice/Conversation/Message/Transfer/UpdateTransferProgress/
+      SetDeliveryState/CompleteTransfer 映射一致；SetPresence/
+      SetConnectionPath 无作业（DEVICE 无 presence 列佐证）；FIFO 串行保序
+      （M2-05 测试）；「owner 单写者上下文按接受顺序入队」的宿主形态偏差见
+      已知偏差 ②。
+    - §11.1 ②（启动恢复）：main.cpp:350 initialize → :358 恢复 → :372 播种
+      → :380 Manager 构造 → :410 注册 worker → :419 RouterSink（恢复完成前
+      无事件源）；startup_recovery.cpp 顺序 open→迁移→逐域加载→清扫与契约
+      一致；损坏 DB 干净失败（FATAL + 退出码 2，ctest 正则断言）。
+    - §11.1 ③（关闭排空落点）：main.cpp 关闭钩子 close() → request_drain →
+      有界等待（3s > drain_budget 2s）→ EXEC-01 步骤 2/3；「有界等待通道」
+      的实现形态偏差见已知偏差 ①。
+    - §11.1 ④（文件本体）：FileStore 布局/.part/Completed 作业组/
+      Failed-Cancelled 幂等删除/启动清扫一致；Manager 无文件 I/O
+      （grep app/ 无 filesystem/fstream 命中）；数据根解析公开面仅
+      std::string（data_root 平台条件编译单元）。
+    - §14（目录）：persistence/{database,repository,migration,storage,
+      recovery} 与实际一致（M2-07 已同步，含 M2-06 storage/ 补记）。
+    - §8.2/8.3/10.1（关联节）：blocking worker 首次启用落点、宿主钩子序列
+      （M2-01 前向引用的排空末尾）、恢复期单写者播种（owner 尚未运行）均与
+      实现一致；§8.2「进程内需要新一轮生命周期时重建 owner」与 M2-07
+      session B（恢复不经 executor，无第二轮 owner）无冲突。
+    - 已知偏差锚点核实：① M2-05 轮询环替代 receive_for——本文件 M2-05 记录
+      「实现与调研/设计的偏差」段（行 503 起）+ database_worker_adapter.hpp
+      实现注记；② M2-07 快照权威值镜像替代接受后回调——本文件 M2-07 记录
+      「实现与设计的偏差」段（行 644 起）。**未记录偏差数：0**。
+    - RULE-07/RULE-10 grep 抽查（2026-09-23 复跑）：`grep -rn "#include
+      <sqlite3.h>" persistence/` 仅 database.cpp:4；公开头 `sqlite3_` 仅
+      database.hpp:15/:31 注释行；persistence 公开头无 `executor/` include
+      （executor 类型仅在 database_worker_adapter.hpp 接线层与
+      database_worker.cpp 实现）；`grep -rnE "std::jthread|std::async|
+      std::thread\s*[({]|CreateThread|_beginthread"` 第一方代码（app/device/
+      conversation/transfer/persistence/heyaki/ui/main.cpp/tests）零命中
+      （仅注释行）。
+  - ② 退出证据与复跑（命令与结果）：
+    - 本地全量：`cmake --build --preset debug --config Debug && ctest
+      --preset debug -C Debug --timeout 120` → 100% tests passed, 0 failed
+      out of 19；release 同构 → 19/19。
+    - 退出-2 具名复跑：`ctest --preset debug -C Debug -R "test_database_worker|
+      test_persistence_database|test_persistence_repository" --timeout 120`
+      → 3/3 Passed（0.09s/0.04s/2.16s）。
+    - CI 核实（gh，2026-09-23）：PR #13~#18 逐 PR `gh pr view N --json
+      statusCheckRollup` 全部 SUCCESS——Linux debug/asan/ubsan + Windows
+      MSVC（#13~#15 四项），#16~#18 五项（+Linux tsan，DOD-03 DB worker
+      跨上下文证据）。sanitizer run 链接：
+      #13 asan/ubsan runs/35772094181（jobs 106896050795/106896050514）、
+      #14 runs/35776673982（106911531233/106911531032）、
+      #15 runs/35793399233（106966970429/106966970392）、
+      #16 runs/35804154579（107001042623/107001042726/tsan 107001042618）、
+      #17 runs/35814243010（107032242299/107032242329/tsan 107032242336）、
+      #18 runs/35874286726（107226064386/107226064601/tsan 107226064480）
+      （github.com/Linductor-alkaid/Aki/actions）。
+  - ③ 供应链登记：`docs/supply-chain/README.md`（审计索引与升级流程）+
+    `docs/supply-chain/sqlite-3.53.4.md`（zip URL + SHA3-256 `628a44cf…934e`
+      + 双文件 SHA-256（M2-08 本地 python hashlib 复算与锁文件一致：
+      `b1dd5d74…8189` / `919e7f2e…0e1d`）、public domain 许可证结论
+    （sqlite.org/copyright.html）、构建宏/sourceid 断言/sanitizer 结论）。
+  - ④ 上游缺陷处置结论（sqlite-3.53.4.md「上游缺陷处置」节）：3.53.4 约束
+    失败语句 reset 复用异常终止（三路复现 + run_cached 逐出规避，M2-04/05
+    记录）；2026-09-23 核实 sqlite.org changelog 最新稳定版仍为 3.53.4，
+    无包含修复的新版本——升级不可行亦无必要；建议由仓库负责人向 sqlite.org
+    报告（需提交者账户，未代为提交）；触发条件登记：官方发布 3.53.5+ 时先
+    复跑复现脚本再按 DEC-003 升级流程评估。复现脚本保留于 build/scratch/
+    （repro_raw2.cpp 等会话工件，复现配方已写入 supply-chain 文档，自包含）。
+  - 限制：MinGW 完整构建沿用 M1-02 记录限制 1（本地以 MSVC 等价执行）；
+    POSIX 分支行为由 CI Linux 三档（debug/asan/ubsan/tsan）编译执行覆盖；
+    上游报告为负责人待办（未代提交，见 ④）；MR 闭环由后续环节执行，本记录
+    不含 commit/CI 证据（CI 链接为已合入 PR 的 run 归档）。
+  - 同步：DEC-004 验证方式回填、总计划当前状态与里程碑索引（M2 → Done）、
+    本里程碑状态（Completed）。

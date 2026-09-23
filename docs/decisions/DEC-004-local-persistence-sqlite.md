@@ -83,6 +83,21 @@ M2 退出条件（在 M2 里程碑测试矩阵中执行）：重启后恢复设�
 admission 拒绝可见（`RULE-09` / `EXEC-06`）；CI（Linux debug/asan/ubsan + Windows
 MSVC）全绿。
 
+### 验证回填（M2-08，2026-09-23，全部通过）
+
+| 验证项 | 证据（测试 + 引入 PR） |
+| --- | --- |
+| 重启后恢复设备、会话、消息与传输历史 | `test_restart_recovery` + 宿主 `smoke.device_lifecycle`（进程内 session B 逐域断言，PR #18） |
+| 迁移 `user_version` 前进与回滚失败路径 | `test_persistence_database`（前进/回滚/幂等/乱序构造拒绝，PR #14）；重开幂等另见 `test_restart_recovery`（PR #18） |
+| DB 文件损坏时 open 干净失败 | `test_persistence_database`（`SqliteError`，PR #14）+ `test_restart_recovery`（code==26）与宿主级 `recovery.corrupt_db_clean_failure`（FATAL 输出 + 退出码 2，PR #18） |
+| 传输取消删除 `.part` | `test_file_store`（幂等删除 + 启动清扫，PR #17） |
+| shutdown 时在途 DB 作业 drain 后才 join | `test_database_worker`（drain 后 join、零丢失，PR #16）+ `test_restart_recovery`（宿主组合复验 25 作业零丢失，PR #18） |
+| 工作通道满时 admission 拒绝可见 | `test_database_worker`（通道满/关闭后/未注册/不完整四类明确拒绝 + 计数，PR #16） |
+| CI 全绿 | PR #13~#18 的 Linux debug/asan/ubsan（#16~#18 另含 tsan）+ Windows MSVC 全部 SUCCESS（M2-08 经 gh 逐 PR 核实，run 链接见 M2 里程碑 M2-08 验证记录） |
+
+供应链审计结论与上游缺陷处置已登记于
+[docs/supply-chain/sqlite-3.53.4.md](../supply-chain/sqlite-3.53.4.md)。
+
 ## 关联文档和工作项
 
 - [Aki 设计方案](../design/aki_design.md)第 11 节
