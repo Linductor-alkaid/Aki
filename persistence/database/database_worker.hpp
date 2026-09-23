@@ -103,9 +103,15 @@ public:
 
 class DatabaseWorkerControl {
 public:
+    // Repositories 由控制面持有（unique_ptr 锚定）：生命周期覆盖注册→运行→
+    // 关闭全过程，宿主与 runnable 共享同一实例（消除重定位悬垂）。
     explicit DatabaseWorkerControl(
+        std::unique_ptr<Repositories> repositories,
         DatabaseWorkerOptions options = {});
     ~DatabaseWorkerControl();
+
+    // 宿主同步使用（启动恢复/播种/关闭后读取）——单线程纪律与 M2-03 一致。
+    [[nodiscard]] Repositories& repositories() const noexcept;
 
     DatabaseWorkerControl(const DatabaseWorkerControl&) = delete;
     DatabaseWorkerControl& operator=(const DatabaseWorkerControl&) = delete;

@@ -8,7 +8,11 @@ add_library(aki_persistence STATIC
     migration/migration.cpp
     migration/schema_v1.cpp
     repository/repositories.cpp
-    repository/statement_cache.cpp)
+    repository/statement_cache.cpp
+    storage/data_root.cpp
+    storage/file_jobs.cpp
+    storage/file_store.cpp
+    storage/sha256.cpp)
 target_compile_features(aki_persistence PUBLIC cxx_std_20)
 aki_apply_warnings(aki_persistence PRIVATE)
 target_include_directories(aki_persistence PUBLIC ${PROJECT_SOURCE_DIR})

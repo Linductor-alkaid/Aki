@@ -108,11 +108,11 @@ struct WorkerFixture {
                     aki::persistence::schema_v1_steps())
                     .bring_up_to_date(database)
             == 1);
-        auto repositories = std::make_unique<Repositories>(
-            std::move(database), worker_options.repository_cache_capacity);
-        control = std::make_shared<DatabaseWorkerControl>(worker_options);
-        runnable = std::make_unique<DatabaseWorkerRunnable>(
-            std::move(repositories), control);
+        control = std::make_shared<DatabaseWorkerControl>(
+            std::make_unique<Repositories>(std::move(database),
+                worker_options.repository_cache_capacity),
+            worker_options);
+        runnable = std::make_unique<DatabaseWorkerRunnable>(control);
     }
 
     // 注册（EXEC-07 唯一入口）。thread_name 缺失即干净失败（不静默降级）。
@@ -247,7 +247,8 @@ TEST_CASE("A failing job settles its future and the worker survives",
 TEST_CASE("Submission rejection: unregistered, invalid, full and closed",
     "[unit][database_worker][dod02]") {
     SECTION("unregistered control rejects enqueue (startup discipline)") {
-        DatabaseWorkerControl control;
+        DatabaseWorkerControl control(std::make_unique<Repositories>(
+            Database::open(":memory:")));
         auto job = make_job([](Repositories&) {});
         REQUIRE_FALSE(control.enqueue(std::move(job.job)));
         REQUIRE(control.rejected_count() == 1);
