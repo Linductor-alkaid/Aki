@@ -160,9 +160,22 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
   `file_jobs.hpp/.cpp`（DbJob 工厂，shared_ptr<FileStore> 捕获生命周期安全）；
   单测 `test_file_store`（8 test case / 68 断言）经 DatabaseWorker 路径覆盖
   验收 ①②③。详见验证记录。）
-- [ ] `M2-07` 实现重启恢复并写入宿主/测试路径：设备、信任状态、会话、消息与
+- [x] `M2-07` 实现重启恢复并写入宿主/测试路径：设备、信任状态、会话、消息与
   传输历史写入 → 受控关闭 → 重新 open 后逐域断言一致（`SCOPE-09` 验收）；
-  DB 文件损坏时 open 干净失败不静默。
+  DB 文件损坏时 open 干净失败不静默。（2026-09-23：`persistence/recovery/
+  startup_recovery.hpp/.cpp`（主线程同步组合：数据根注入 → open（损坏即
+  SqliteError 干净失败）→ user_version 迁移 → 四仓储 `load_all()` 逐域加载 →
+  `sweep_tmp_orphans` 按加载活动行清扫 → 产出播种数据；单一连接整体移交
+  DatabaseWorker）+ `persistence/repository/update_jobs.hpp/.cpp`（§11.1 ①
+  typed 更新的域级 DbJob 工厂，SetPresence/SetConnectionPath 无作业）；
+  根 `main.cpp` 组合根改造（initialize 后同步恢复 → AppStateOwner 构造入参
+  播种 → Manager 构造 → 注册 DatabaseWorker → RouterSink（EXEC-02 启动段
+  纪律）；宿主 `PersistenceMirror` 在 owner 单写者上下文按接受顺序镜像
+  typed 更新入队；关闭钩子末尾 `close()` 之后排空 DB worker；进程内 session B
+  重开逐域断言）；`tests/integration/test_restart_recovery.cpp`（integration
+  标签，4 用例 / 158 断言）+ 损坏 DB 宿主级 ctest（`--exact` 模式直用损坏根，
+  FATAL 输出 + 非零退出）。同步设计 §14 目录树（补记 M2-06 `storage/` 并新增
+  `recovery/`）。详见验证记录。）
 - [ ] `M2-08` 收口审计与退出证据归集（沿用 M1-08 纪律）：实现与设计第 11 节/
   `DEC-004` 逐项校对，退出-1~5 证据与可复现命令归档，供应链登记
   （zip SHA3-256 + 文件 SHA-256、public domain 许可证结论入
@@ -180,8 +193,9 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
 
 ## 测试与退出条件
 
-- [ ] 退出-1：重启恢复——写入 → 关闭 → 重开，设备/信任/会话/消息/传输历史逐域
-  一致；损坏 DB open 干净失败。
+- [x] 退出-1：重启恢复——写入 → 关闭 → 重开，设备/信任/会话/消息/传输历史逐域
+  一致；损坏 DB open 干净失败。（`M2-07`，2026-09-23：宿主 `smoke.device_
+  lifecycle` 与 `test_restart_recovery` 双证据，见验证记录）
 - [ ] 退出-2：并发基线六项沿 `DatabaseWorker` 路径通过——正常完成、任务异常、
   提交拒绝（通道满/关闭后）、执行中取消（语句间 StopToken）、超时、shutdown
   （drain 后 join）。
@@ -559,3 +573,90 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
     执行，本机（Windows）不宣称已验证 POSIX 行为；MinGW 完整构建沿用
     M1-02 记录限制 1；MR 闭环由后续环节执行，本记录不含 commit/CI 证据。
   - 同步：本里程碑工作项 `M2-06`、总计划当前状态。
+- 2026-09-23（`M2-07`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0 / w64devkit GCC 15.2.0（语法检查））：
+  - 范围：`persistence/recovery/startup_recovery.hpp/.cpp`（启动恢复组合，
+    设计第 11.1 节 ②：数据根注入 → `<root>/db` 目录创建 → open → v1 迁移 →
+    四仓储 `load_all()` → `sweep_tmp_orphans`；`RecoveryResult` 携带
+    Repositories（单一连接整体移交 worker）、shared_ptr<FileStore>、
+    RecoveredData 与诊断计数）、`persistence/repository/update_jobs.hpp/.cpp`
+    （§11.1 ① typed 更新的域级 DbJob 工厂：四 upsert / 送达状态列 / 进度列 /
+    无文件联动终态列；SetPresence/SetConnectionPath 无作业）、根 `main.cpp`
+    （组合根：恢复 → 播种 → Manager → 注册 DatabaseWorker → RouterSink；
+    `PersistenceMirror` 写路径接线；关闭钩子末尾排空；进程内 session B 重开
+    逐域断言；argv[1] 数据根基址 + 每运行独立子目录自清理，argv[2] `--exact`
+    为驱动/诊断钩子）、`tests/integration/test_restart_recovery.cpp` +
+    `tests/CMakeLists.txt`（integration 标签测试 + configure 期损坏 DB fixture
+    的宿主级 `recovery.corrupt_db_clean_failure` ctest + 冒烟测试改注入基址）、
+    `persistence/CMakeLists.txt`、设计 §14 目录树（补记 M2-06 `storage/` 并
+    新增 `recovery/`——M2-06 未同步 §14 属既成偏差，本项一并修正）。
+  - 依据：[设计第 11.1 节 ②①③④](../design/aki_design.md)、第 8.3 节钩子
+    序列（M2-01 前向引用的排空落点）、第 10.1 节单写者纪律、第 14 节；
+    [DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)（验证方式：
+    重启恢复 / 损坏 DB / 排空后 join / admission 拒绝可见；目录布局、迁移
+    纪律）；[DEC-008](../decisions/DEC-008-application-layer.md)（宿主关闭
+    钩子先取消并消费在途 future）；M2-03~06 既有 API（RAII/迁移/仓储/
+    DatabaseWorker/FileStore/file_jobs）；总计划 `SCOPE-09`、`EXEC-01`/
+    `EXEC-02`/`EXEC-04`、`RULE-02`/`RULE-09`/`RULE-10`、`DOD-02`（六项已随
+    M2-05 worker 路径覆盖，本项无新并发路径，复验宿主组合 shutdown 排空
+    不丢作业）、`DOD-05`；executor-integration blocking-io 卡（本会话按
+    SKILL 路由加载：run(StopToken)/wakeup、request_stop 不 join、stop()
+    join、shutdown 后不保留 worker 引用）。
+  - 实现要点：① 恢复在 `ExecutorOwner.initialize()` 之后、Manager/Adapter
+    之前于主线程同步执行，不经 blocking worker；`DatabaseWorker` 与
+    RouterSink 在播种完成后注册（EXEC-02 启动段纪律）；② 写路径按
+    §11.1 ① 由 owner 单写者上下文（宿主主线程）按接受顺序入队：宿主每步
+    quiesce（pumps flush + owner drain 至静止）后以快照中已接受的实体镜像
+    typed 更新（Manager 构造的时间戳等载荷以快照权威值为准，拒绝的更新
+    不会出现在快照、不会被镜像）；幂等 no-op 终态宣告同样入队、由作业侧
+    幂等吸收；admission 拒绝与执行失败经 mirror 计数 + control 计数 + future
+    逐个消费可见；③ 关闭钩子顺序：取消在途可取消任务 → flush 各 Manager →
+    停 Adapter → `AppStateOwner.close()` → `request_drain()` + 有界等待
+    （3s > drain_budget 2s）——DB 排空位于钩子末尾（§11.1 ③，先于 EXEC-01
+    步骤 2/3）；④ `CompleteTransfer(Completed)` 镜像为 M2-06 文件作业组，
+    `Failed`/`Cancelled` 镜像为终态列更新 + `.part` 幂等删除两个串行作业；
+    ⑤ session B 重开断言 presence 归一化为 Offline（易失状态语义）。
+  - 实现与设计的偏差（如实记录）：宿主写路径采用「快照权威值镜像」而非在
+    AppStateOwner 内增加接受后回调——后者需改 app/state 公开契约（本项约束
+    明确不改）。快照即已接受更新的累积权威态（§10.1），由此镜像满足
+    「更新驱动、不由事件驱动」（§11.1 ①）与「owner 单写者上下文按接受顺序
+    入队」；差异为幂等 no-op 接受在快照无变化时不产生作业（§11.1 ① 允许
+    入队并由作业侧幂等吸收，入队侧省略不影响终态收敛，作业幂等语义已在
+    M2-06 覆盖）。Manager 更新拦截的正式落点（接受后回调或 owner 侧 tap）
+    待 M3 真实事件源接入时按 §11.1 ① 评估，届时如需改 AppStateOwner 契约
+    先更新第 10.1/11.1 节。
+  - 验证（生成器说明同 M1 记录；本机 MinGW 限制 1 未变化）：
+    - `ctest --preset debug -C Debug --timeout 120` → 19/19（原 17 + 新
+      `test_restart_recovery` 4 test case / 158 断言 + 宿主级
+      `recovery.corrupt_db_clean_failure`）。
+    - `ctest --preset release -C Release --timeout 120` → 19/19。
+    - 稳定性：宿主 `aki` debug 连续 30 次 / release 连续 15 次全部
+      `smoke: PASS`；`test_restart_recovery` debug 30 次 / release 15 次
+      全过。
+    - 损坏 DB 宿主级实测：`aki <corrupt-root> --exact` → 输出
+      `[FATAL] startup recovery failed: file is not a database`、退出码 2
+      （不静默；组件级同场景断言 `SqliteError.code()==26`（SQLITE_NOTADB），
+      失败后同组件对有效根仍正常恢复）。
+    - 覆盖映射（验收 ①② = 退出-1）：重启逐域一致（设备含信任推进
+      Unknown→Pending→Trusted、会话 Active→Disconnected→Active、消息含
+      送达终态 Sent→Delivered 与时间戳/payload 无损往返、传输历史
+      t-1 Completed 含 stored_* 回写位与文件本体落盘 + t-2 Cancelled），
+      宿主与集成测试双路径断言；迁移幂等（重开 0 步）；清扫（活动保留 /
+      终态与无行清除 removed==2）；排空不丢作业（宿主 admitted==completed
+      16==16、集成测试 25 作业零丢失、fully_stopped、drain_budget 未耗尽、
+      rejected==0）。
+    - GCC 语法检查（CI Linux 告警姿势）：`g++ -std=c++20 -Wall -Wextra
+      -Wpedantic -Werror -fsyntax-only -I. -Ithird_party/executor/include
+      -Ithird_party/sqlite` 对 `startup_recovery.cpp`、`update_jobs.cpp`、
+      `main.cpp` 通过；对 `test_restart_recovery.cpp`（含 Catch2 include）
+      通过。
+    - RULE-10 证据：`grep -rn "#include <sqlite3.h>" persistence/` 仍仅
+      `database.cpp:4`；`startup_recovery.hpp`/`update_jobs.hpp` 无
+      `executor/` include、无 `sqlite3_` 出现（executor 类型仍封在
+      database_worker_adapter.hpp 接线层）。
+  - 限制：ASAN/UBSAN 随本 PR Linux CI 门禁（无新并发路径：恢复主线程同步、
+    写路径入队复用 M2-05 worker 通道，DOD-02 六项不重复立项）；POSIX 分支
+    随 CI Linux 编译执行，本机（Windows）不宣称已验证 POSIX 行为；MinGW
+    完整构建沿用 M1-02 记录限制 1；MR 闭环由后续环节执行，本记录不含
+    commit/CI 证据。
+  - 同步：设计第 14 节、本里程碑工作项 `M2-07` 与退出-1、总计划当前状态。

@@ -756,7 +756,9 @@ device-messenger/
 ├── persistence/
 │   ├── database
 │   ├── repository
-│   └── migration
+│   ├── migration
+│   ├── storage
+│   └── recovery
 ├── heyaki/
 │   ├── adapter
 │   ├── events
