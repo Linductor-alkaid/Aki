@@ -409,7 +409,9 @@ int run_demo(const std::string& run_root) {
 
     // 4) AppStateOwner：以加载结果播种初始快照 + 接受后处理器（DEC-009 ①；
     //    owner 上下文 = 主线程，单写者，RULE-02/EXEC-03）。
-    WritePathSink sink{db, recovery.store, ConversationId{}};
+    // 全成员显式初始化：GCC -Wmissing-field-initializers（CI Linux -Werror）
+    // 对省略尾随成员的聚合初始化告警（CI run 35905251211 实测；MSVC 不告警）。
+    WritePathSink sink{db, recovery.store, ConversationId{}, {}, 0, 0};
     AppStateOwner state_owner{AppStateOwnerOptions{},
         app_state_from(recovery.state),
         [&sink](const AppStateUpdate& update) { sink(update); }};
