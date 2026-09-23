@@ -188,6 +188,7 @@
   路径（DOD-02 六项已随 M2-05 覆盖）；ASAN/UBSAN 随本 PR Linux CI；MinGW
   限制沿用 M1-02 记录。详见 M2 里程碑文档 M2-07 验证记录。
 - 2026-09-23：`M2-08` 完成，M2 关闭（Done）：收口审计与退出证据归集——设计-实现审计矩阵逐项一致（§11/11.1/14 与 §8.2/8.3/10.1 对 persistence/ 五子目录与根 main.cpp 宿主组合；两项已知偏差（M2-05 轮询环、M2-07 快照权威值镜像）锚点核实，未记录偏差数 0）；RULE-07/RULE-10 边界 grep 通过（sqlite3* 封死 persistence 唯一编译单元、executor 类型仅接线层、第一方无自建线程）。退出证据：本地 MSVC debug/release 全量 ctest 复跑 19/19；gh 逐 PR 核实 #13~#18 CI 全绿（Linux debug/asan/ubsan + Windows MSVC，#16~#18 含 Linux tsan 覆盖 DOD-03）。`docs/supply-chain/` 创建并登记 SQLite vendored 审计（zip SHA3-256 + 双文件 SHA-256 本地复算一致、public domain 结论）与上游缺陷处置（3.53.4 仍为最新无可升级修复；建议负责人向 sqlite.org 报告，触发条件已登记）；DEC-004 验证方式逐项回填（测试 + PR 映射表）；M2 文档状态 Completed、里程碑索引 M2 → Done。详见 M2 里程碑文档 M2-08 验证记录。
+- 2026-09-24：`M3-01` 完成，M3 启动（In Progress）：heyaki 目标级构建接入（`DEC-006`）——依赖树首次拉取（fetch_third_party.sh，ref+commit 双校验，33 项 runtime + googletest/zstd 全部 verified）；单一构建图接入只链 `heyaki::client`（HEYAKI_BUILD_APPS/AUTO_INSTALL=OFF、heyaki 测试不进构建面）；Aki 移除自身 executor add（SYSTEM include 转移到 heyaki 提供的 executor target，构建图单份 executor 实证）；configure 三方 executor commit 一致校验（Aki lock / heyaki lock / checkout）实测；MSVC debug/release 全量 configure/build/ctest 20/20（既有 19 项零回归），OpenSSL DLL 部署集与 LibDataChannelStatic 无需 datachannel.dll 实测；双 SQLite 实测出链接序敏感并以 aki_persistence 先行固化为契约（map 取证 697 sqlite3_* 符号全部来自 Aki vendored 3.53.4、heyaki 副本零符号进入、无行为冲突）；边界锁定用例 test_heyaki_client_surface（RULE-01/10）；tsan 预设联动 HEYAKI_SANITIZER=thread 与 CI 四档（fetch+缓存+OpenSSL）更新随 PR 门禁取证；MinGW configure-only 未达成（失败点前移至 heyaki vendored SQLite 生成，w64devkit 限制扩展）如实记录。详见 M3 里程碑文档 M3-01 验证记录。
 - 2026-09-23：[M3 里程碑文档](m3-heyaki-integration.md) 创建（Planned，`M3-01`~`M3-09`，
   里程碑索引 M3 文档链接更新）。范围：pinned heyaki 真实接入与文本消息
   （`SCOPE-01/02/03/05/06/10/11`）。开工前必须完成：`DEC-006`（Heyaki API 契约
@@ -293,7 +294,7 @@
 | M0 | 工程骨架与协作基线 | Done | 无 | 无（仓库基线） | [m0-project-skeleton.md](m0-project-skeleton.md) |
 | M1 | 领域模型与状态边界 | Done | M0（依赖来源解锁） | v0.1.0 | [m1-domain-state.md](m1-domain-state.md) |
 | M2 | 本地持久化 | Done | M1 | v0.2.0 | [m2-local-persistence.md](m2-local-persistence.md) |
-| M3 | Heyaki 真实接入与文本消息 | Planned | M1、M2、DEC-006 | v0.3.0 | [m3-heyaki-integration.md](m3-heyaki-integration.md) |
+| M3 | Heyaki 真实接入与文本消息 | In Progress | M1、M2、DEC-006 | v0.3.0 | [m3-heyaki-integration.md](m3-heyaki-integration.md) |
 | M4 | 图片消息与文件传输 | Planned | M3 | v0.4.0 | 待创建 |
 | M5 | EUI-NEO UI 与 MVP 验收 | Planned | M2、M3、M4、DEC-005 | v0.5.0（MVP） | 待创建 |
 

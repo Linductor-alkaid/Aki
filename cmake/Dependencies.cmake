@@ -55,6 +55,67 @@ foreach(_i RANGE ${_aki_last})
                 "Run: git -C ${_path} checkout ${_commit}")
         endif()
 
+        # DEC-006（M3-01，对 DEC-003 的修订条款）：executor 自 M3-01 起经 heyaki
+        # 单图间接进入构建（heyaki third_party/executor 提供构建图内的 executor
+        # target，双侧同 pin）。configure 校验扩展为三方一致：Aki lock /
+        # heyaki lock / heyaki checkout——任一侧升级即破坏单图单副本前提。
+        if(_name STREQUAL "executor")
+            set(_heyaki_lock_path
+                "${PROJECT_SOURCE_DIR}/third_party/heyaki/third_party/dependencies.lock")
+            if(NOT EXISTS "${_heyaki_lock_path}")
+                message(FATAL_ERROR
+                    "Heyaki dependency lock is missing at "
+                    "third_party/heyaki/third_party/dependencies.lock "
+                    "(submodule not initialized). Run: git submodule update --init")
+            endif()
+            file(READ "${_heyaki_lock_path}" _heyaki_lock_text)
+            # heyaki lock 行格式：name|url|ref|commit|recursive|group（[|] 为
+            # 字符类形式的字面管道符——CMake regex 中 \| 会被当作择一运算符）。
+            string(REGEX MATCH "executor[|][^\r\n]*" _heyaki_executor_line
+                "${_heyaki_lock_text}")
+            if(_heyaki_executor_line STREQUAL "")
+                message(FATAL_ERROR
+                    "Heyaki lock has no executor entry; cannot verify the "
+                    "single-graph executor pin (DEC-006).")
+            endif()
+            string(REPLACE "|" ";" _heyaki_executor_fields "${_heyaki_executor_line}")
+            list(GET _heyaki_executor_fields 3 _heyaki_executor_commit)
+            if(NOT _heyaki_executor_commit STREQUAL _commit)
+                message(FATAL_ERROR
+                    "Executor pin mismatch across the single build graph (DEC-006): "
+                    "Aki lock requires ${_commit}, heyaki lock requires "
+                    "${_heyaki_executor_commit}. Align both lock files before "
+                    "configuring.")
+            endif()
+
+            set(_heyaki_executor_dir
+                "${PROJECT_SOURCE_DIR}/third_party/heyaki/third_party/executor")
+            if(NOT EXISTS "${_heyaki_executor_dir}/.git")
+                message(FATAL_ERROR
+                    "Heyaki's executor checkout is missing at "
+                    "third_party/heyaki/third_party/executor. "
+                    "Run: bash third_party/heyaki/scripts/fetch_third_party.sh "
+                    "(ref+commit verified, DEC-006).")
+            endif()
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" -C "${_heyaki_executor_dir}" rev-parse HEAD
+                RESULT_VARIABLE _heyaki_rev_result
+                OUTPUT_VARIABLE _heyaki_executor_head
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET)
+            if(NOT _heyaki_rev_result EQUAL 0 OR
+               NOT _heyaki_executor_head STREQUAL _commit)
+                message(FATAL_ERROR
+                    "Heyaki's executor checkout is at "
+                    "'${_heyaki_executor_head}', but ${_commit} is required by both "
+                    "lock files (single-graph single-copy premise, DEC-006). "
+                    "Run: bash third_party/heyaki/scripts/fetch_third_party.sh")
+            endif()
+
+            message(STATUS "Executor pin verified three-way consistent "
+                "(Aki lock / heyaki lock / checkout @ ${_commit})")
+        endif()
+
         message(STATUS "Dependency '${_name}' pinned at ${_commit}")
     elseif(_class STREQUAL "vendored")
         string(JSON _version GET "${_aki_lock}" "dependencies" "${_i}" "version")

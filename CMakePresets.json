@@ -56,9 +56,10 @@
             "inherits": "debug",
             "displayName": "Debug + ThreadSanitizer (GCC/Clang, Linux)",
             "cacheVariables": {
-                "CMAKE_CXX_FLAGS": "-fsanitize=thread",
-                "CMAKE_C_FLAGS": "-fsanitize=thread",
-                "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
+                "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+                "CMAKE_C_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+                "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
+                "HEYAKI_SANITIZER": "thread"
             }
         }
     ],

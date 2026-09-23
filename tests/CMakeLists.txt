@@ -211,3 +211,23 @@ add_test(NAME recovery.corrupt_db_clean_failure
 set_tests_properties(recovery.corrupt_db_clean_failure PROPERTIES
     LABELS "integration"
     PASS_REGULAR_EXPRESSION "\\[FATAL\\] startup recovery failed")
+
+# M3-01：heyaki::client 消费边界锁定（DEC-006 单图接入的唯一显式消费点；
+# RULE-01/RULE-10）。链接 aki_persistence + heyaki::client：同一二进制内
+# aki vendored sqlite 3.53.4（DEC-004 锁定）与 heyaki::sqlite 3.50.4 两份静态
+# 副本并存，静态链接按序解析为单份——aki_persistence 必须列在 heyaki::client
+# 之前：aki 侧 sqlite3_* 先被 Aki 经哈希审计的 vendored 副本满足，
+# heyaki_sqlite 不会被拉入（有效版本运行期经 SQL 断言 == Aki 锁文件；实测
+# heyaki 在前时有效版本为 3.50.4，见 M3-01 验证记录的双 SQLite 处置）。
+# 符号单份性由 dumpbin/nm 离线证明。
+add_executable(test_heyaki_client_surface unit/test_heyaki_client_surface.cpp)
+target_compile_features(test_heyaki_client_surface PRIVATE cxx_std_20)
+aki_apply_warnings(test_heyaki_client_surface PRIVATE)
+target_link_libraries(test_heyaki_client_surface PRIVATE
+    aki_persistence
+    heyaki::client)
+target_compile_definitions(test_heyaki_client_surface PRIVATE
+    AKI_EXPECTED_SQLITE_VERSION="${AKI_SQLITE_LOCK_VERSION}")
+aki_deploy_openssl_dlls(test_heyaki_client_surface)
+add_test(NAME test_heyaki_client_surface COMMAND test_heyaki_client_surface)
+set_tests_properties(test_heyaki_client_surface PROPERTIES LABELS "unit")

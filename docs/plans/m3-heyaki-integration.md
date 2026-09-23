@@ -1,13 +1,13 @@
 # M3：Heyaki 真实接入与文本消息
 
-> 状态：Planned
+> 状态：In Progress
 > 负责人：Linductor
 > 所属计划：[Aki 实施总计划](aki-implementation-plan.md)
 > 前置：M1、M2（均已关闭：SPI/状态边界/Manager 骨架与本地持久化就绪）；
 > [DEC-006](../decisions/DEC-006-heyaki-api-contract.md)（Heyaki API 契约版本与
 > 目标级集成方式，2026-09-23 已冻结为 `Accepted`，本里程碑直接依据其执行）
 > 建议发布点：v0.3.0
-> 更新日期：2026-09-23
+> 更新日期：2026-09-24
 
 ## 目标
 
@@ -116,7 +116,7 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
 
 ## 工作项
 
-- [ ] `M3-01` 按 `DEC-006` 完成 heyaki 目标级构建接入与实测验证（决策与调研
+- [x] `M3-01` 按 `DEC-006` 完成 heyaki 目标级构建接入与实测验证（决策与调研
   已于 2026-09-23 冻结，本项为执行与取证）：单一构建图
   `add_subdirectory(third_party/heyaki)` 只链 `heyaki::client`
   （`HEYAKI_BUILD_APPS=OFF`、`HEYAKI_AUTO_INSTALL=OFF`），Aki 移除自己的
@@ -126,7 +126,18 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
   configure/build（MSVC 含 OpenSSL/DLL 部署实测、MinGW configure-only、CI Linux
   三档）、最终二进制单份 sqlite3 符号与有效版本（dumpbin/nm）、tsan preset
   联动 `HEYAKI_SANITIZER=thread` 的全图插桩；Aki 侧依赖边界
-  （`RULE-01`/`RULE-10`：heyaki 类型封死在 `heyaki/` 层）。
+  （`RULE-01`/`RULE-10`：heyaki 类型封死在 `heyaki/` 层）。（2026-09-24：
+  依赖树 33 项 runtime + googletest/zstd 全部 verified（ref+commit 双校验，
+  含 libdatachannel 递归子模块）；单图接入 + 开关冻结 + heyaki 测试不进构建面
+  实测；三方 executor 校验 STATUS 实测；MSVC debug/release configure/build/
+  ctest 全过（20/20，原 19 项零回归），OpenSSL DLL 部署集与 LibDataChannel
+  Static 无需 datachannel.dll 实测确认；双 SQLite 实测出链接序敏感——aki_
+  persistence 先于 heyaki::client 时 Aki vendored 3.53.4 确定性胜出（map
+  取证 697 sqlite3_* 符号全部单源、heyaki_sqlite 零符号进入、二进制无
+  3.50.4 字符串），无行为冲突无需改决策，运行期版本断言固化为回归护栏；
+  MinGW configure-only 未达成（失败点前移至 heyaki vendored SQLite 生成，
+  HeyakiVendoredRuntime.cmake:378）——限制如实记录；tsan 全图插桩与 CI 四档
+  全绿随本 PR 门禁（本地不可执行）。详见验证记录。）
 - [ ] `M3-02` 设计先行契约固化（先文档后代码，M1-08 纪律）：按调研已选方向
   固化第 11.1 节 ① 写路径正式落点——`AppStateOwner` 构造注入接受后处理器
   （owner 单写者上下文按接受顺序同步调用、幂等 no-op 同样入队），更新第
@@ -223,4 +234,118 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
 
 ## 验证记录
 
-（尚无记录；自 `M3-01` 起按工程规范 6.1/6.3 追加。）
+- 2026-09-24（`M3-01`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0 / Git for Windows bash 5.2 / OpenSSL 3.5.8（开发安装
+  `G:/OpenSSL-Win64`，`-DOPENSSL_ROOT_DIR` 注入）；执行与取证，构建接入
+  变更不含 heyaki/ 层适配代码）：
+  - 范围：根 `CMakeLists.txt`（heyaki 单图接入块（行 19 起）：
+    `HEYAKI_BUILD_APPS=OFF` / `HEYAKI_AUTO_INSTALL=OFF` /
+    `HEYAKI_FETCH_DEPENDENCIES=OFF`（configure 只做 --check 校验，不静默
+    联网）/ `HEYAKI_VERIFY_DEPENDENCIES=ON`、`BUILD_TESTING` 局部 OFF、
+    `add_subdirectory(third_party/heyaki)`、SYSTEM include 转移到 heyaki
+    提供的 executor target（IDE 生成器门控保留，行为同 M1 记录）；Aki 自己
+    的 executor add 块移除（`DEC-003` 条款按 `DEC-006` 修订）；新增
+    `aki_deploy_openssl_dlls`（POST_BUILD 部署 libssl-3-x64.dll /
+    libcrypto-3-x64.dll））、`cmake/Dependencies.cmake`（三方 executor
+    commit 一致校验块）、`third_party/dependencies.lock.json`（executor
+    used_by 修订为 DEC-006 措辞，diff 1 行）、`CMakePresets.json`（tsan
+    预设增 `HEYAKI_SANITIZER: thread`）、`.github/workflows/ci.yml`
+    （heyaki 依赖 fetch 步骤 + actions/cache 缓存 + Linux libssl-dev +
+    Windows OPENSSL_ROOT_DIR）、`tests/unit/test_heyaki_client_surface.cpp`
+    + `tests/CMakeLists.txt`（unit 标签边界锁定用例，链接序契约注释在案）。
+    构建图内只消费 `heyaki::client`（`heyaki::services` 空伞 target 未链，
+    `DEC-006`）。
+  - 依据：[DEC-006](../decisions/DEC-006-heyaki-api-contract.md)（决策节全部
+    + 影响与风险节：DEC-003 修订条款/双 SQLite/首次配置网络/三工具链/TSAN
+    联动）、本里程碑 `M3-01` 工作项与风险节、设计第 8.1/8.2 节、
+    [DEC-003](../decisions/DEC-003-dependency-locking.md)、
+    [DEC-007](../decisions/DEC-007-test-framework.md)、总计划
+    `RULE-01`/`RULE-07`/`RULE-10`、`EXEC-01`、`DOD-03`/`DOD-05`/`DOD-06`。
+    executor-integration blocking-io 卡本会话按 SKILL 路由已加载（本项为
+    构建接入，无新增并发路径，DOD-02 六项不适用——沿 M2-05 DatabaseWorker
+    路径覆盖并随全量 ctest 复验）。
+  - ① 依赖树首次拉取：`bash third_party/heyaki/scripts/fetch_third_party.sh`
+    → runtime 33 项全部 `verified @ <commit>`（ref+commit 双校验；含
+    libdatachannel v0.23.2 及其 5 个递归子模块、sqlite version-3.50.4 @
+    `8ed5e7365e6f`、executor @ `74a9419`、protobuf v31.1（递归）、abseil、
+    blake3、libsodium、FTXUI 等），exit 0。`--check` 离线复核 → `all
+    selected dependencies are valid`。googletest v1.17.0 @ `52eb8108` 与
+    zstd v1.5.7 @ `f8745da6` 按 lock 条目补拉——heyaki configure 的许可证
+    清单（licenses.lock，40 项）无条件校验两者 LICENSE 文件存在（缺 zstd
+    时实测 FATAL 于 `third_party/heyaki/CMakeLists.txt:554`，即 heyaki
+    测试关建造就 License 残留依赖，如实记录）。
+  - ② 单一构建图与测试隔离：`ctest --test-dir build/m3-01-debug -C Debug
+    -N` → 20 项全部为 Aki 侧测试（19 项既有 + 1 项新边界用例），无 heyaki
+    上游测试进入 Aki 构建面（`BUILD_TESTING` 局部 OFF 挡住 heyaki
+    `CMakeLists.txt:507` 的 `add_subdirectory(tests)`）。
+  - ③ executor 单图单副本：`find build/m3-01-debug -name executor.lib` →
+    仅 `lib/Debug/executor.lib` 一份，对象目录 `third_party/heyaki/
+    third_party/executor/src/executor.dir`（heyaki checkout 提供）；Aki
+    `third_party/executor` 不在构建图。
+  - ④ 三方 executor 校验：debug 与 release 两树 configure 均输出 STATUS
+    `Executor pin verified three-way consistent (Aki lock / heyaki lock /
+    checkout @ 74a94198fbe0f2a4081cd260658a26f969986870)`；FATAL 负向语义
+    在联调中实际触发过（解析失败路径输出 `Executor pin mismatch across the
+    single build graph (DEC-006) ... Align both lock files before
+    configuring.`）。
+  - ⑤ MSVC 实测（configure 命令：`cmake -S . -B build/m3-01-{debug,release}
+    -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE={Debug,Release}
+    -DAKI_BUILD_TESTS=ON -DAKI_WARNINGS_AS_ERRORS=ON
+    -DOPENSSL_ROOT_DIR=G:/OpenSSL-Win64`）：
+    - debug：configure Configuring done → build exit 0 → `ctest --test-dir
+      build/m3-01-debug -C Debug --timeout 180` → 100% passed 20/20（既有
+      19 项零回归）；release 同构 → 20/20。
+    - OpenSSL DLL 部署集实测：build 输出 `deploying libssl-3-x64.dll for
+      test_heyaki_client_surface`（及 libcrypto）；tests/{Debug,Release}
+      目录实际只含该两个 DLL。
+    - LibDataChannelStatic：tests 目录无 datachannel.dll，全部测试通过——
+      构建树内静态链接无需 datachannel.dll 确认（`DEC-006` 预期项）。
+    - 边界用例运行输出（两配置一致）：`heyaki 1.0.1 @
+      e114508ab32d496d52e9db9bac26eb1cc88c4ae7, wire {1,3}` +
+      `effective sqlite in this binary: 3.53.4 (lock: 3.53.4)` + feature 位
+      断言通过（HEYAKI_BUILD_APPS=OFF：client 在编、relay/tui 不在编）。
+  - ⑥ 双 SQLite（`DEC-006` 影响节实测项，重要发现与处置）：边界用例首版以
+    heyaki::client 在前的链接序编译，运行期有效版本为 heyaki 副本 3.50.4
+    → 用例断言失败暴露（不静默）。处置：测试目标链接序固定
+    `aki_persistence` 先于 `heyaki::client`（tests/CMakeLists.txt 链接序
+    契约注释在案）——Aki 经哈希审计的 vendored 3.53.4（`DEC-004`）确定性
+    胜出。取证（MSVC `/MAP` map 文件；`dumpbin //symbols` 对最终 EXE 不
+    枚举静态库符号解析结果，工具替换如实记录）：`grep -c "sqlite3_"
+    boundary.map` = 697 且全部来自 `sqlite3:sqlite3.obj`（Aki vendored）；
+    `grep -c "heyaki_sqlite" boundary.map` = 0（heyaki 副本零符号进入）；
+    最终二进制字符串计数 release exe `3.50.4` 出现 0 次（debug 同）。
+    结论：单份 sqlite3 符号、有效版本 = 3.53.4 = 锁文件；无行为冲突，
+    无需改 `DEC-004` 或新增统一决策。回归护栏 = 边界用例运行期版本断言
+    （未来链接配置漂移致 heyaki 副本胜出时测试即失败）。
+  - ⑦ 边界 grep（`RULE-01`/`RULE-10`）：`grep -rnE '#include
+    [<"]heyaki/[a-z_]+\.hpp[>"]'`（heyaki 公开单分量头）在第一方代码仅
+    `tests/unit/test_heyaki_client_surface.cpp`（8 处，接线层消费点）命中
+    （`tests/test_skeleton.cpp` 的 `heyaki/skeleton.hpp` 为 Aki 自有骨架
+    文件，非第三方）；Aki 自身 `heyaki/` 层（adapter SPI/Fake）零第三方
+    heyaki 类型；产品目标不链 `heyaki::client`（CMake 链接面锁定，公开头
+    泄漏即编译失败）。
+  - ⑧ MinGW configure-only（限制，未达成）：`cmake -S . -B build/mingw-m3-cfg
+    -G "MinGW Makefiles" -DOPENSSL_ROOT_DIR=G:/OpenSSL-Win64` → Aki 侧全部
+    通过（三方 executor 校验 STATUS + `Pinned dependency verification
+    passed`），随后失败于 heyaki vendored SQLite amalgamation 生成
+    （`third_party/heyaki/cmake/HeyakiVendoredRuntime.cmake:378` `Pinned
+    SQLite configure failed: unknown error`——heyaki 在 configure 期对
+    canonical sqlite 检出树执行其自带 configure+make，w64devkit 环境不可
+    用）。较 M1-02 记录限制 1 进一步：失败点前移至 heyaki 子配置；本机另无
+    MinGW 兼容 OpenSSL 开发库（slproweb 安装仅 MSVC .lib）。补跑条件：
+    MSYS2 完整工具链（含 mingw-w64-x86_64-openssl）重试，或以 CI Linux
+    三档为全量主路径（与 `DEC-006` 三工具链风险节预期一致）。
+  - ⑨ tsan 联动：preset 已设 `HEYAKI_SANITIZER=thread`（heyaki 侧对
+    executor target 补 `-fsanitize=thread` 编译 + PUBLIC 链接选项的补丁
+    路径为 `third_party/heyaki/CMakeLists.txt:190-204`，GNU/Clang 生效）；
+    本机（MSVC/w64devkit）无法运行 tsan——全图插桩验证随 CI Linux tsan 档
+    （PR 门禁）提供，本记录如实标注未本地执行。
+  - 限制：CI Linux debug/asan/ubsan/tsan 四档全绿证据随本 PR 门禁产生
+    （本地不可执行，ci.yml 已更新）；本地 preset（老 build/debug、
+    build/release 树）自本项起 configure 需附 OpenSSL（`-DOPENSSL_ROOT_DIR=
+    <OpenSSL 3 前缀>` 或同名环境变量），本项实测以显式 -S/-B 树
+    build/m3-01-debug、build/m3-01-release 执行；`build/openssl-3.5.8`
+    残留目录被系统 msiexec 服务占用无法删除（build/ 内，不进仓库）；MR
+    闭环由后续环节执行，本记录不含 commit/CI 证据。
+  - 同步：本里程碑（状态 In Progress、M3-01 勾选、本记录）、总计划当前
+    状态与里程碑索引（M3 → In Progress）。
