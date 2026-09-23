@@ -165,7 +165,7 @@ TEST_CASE("SHA-256 streaming keeps partial buffer across small updates",
     // 任意小于块的分块序列与一次性一致（Python hashlib 交叉验证）。
     // 旧实现在「部分缓冲未被本次数据填满」时把 buffer_size_ 清零丢字节；
     // 10+20 / 10+10+10 分块结构性触发该路径。
-    for (const std::vector<std::size_t> splits : {std::vector<std::size_t>{10, 20},
+    for (const auto& splits : {std::vector<std::size_t>{10, 20},
              std::vector<std::size_t>{10, 10, 10}}) {
         aki::persistence::Sha256 streaming;
         std::size_t offset = 0;
