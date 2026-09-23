@@ -1,40 +1,42 @@
-// Aki console 冒烟宿主（M1-06 起为设计第 8.3 节组合根的最小进程内实现；M2-07
-// 起接入本地持久化的启动恢复与写路径，v0.2.0 验收载体 / M2 退出-1）。
+// Aki console 冒烟宿主（M1-06 起为设计第 8.3 节组合根的最小进程内实现；
+// M3-03 起按 §8.3 七步装配序运行：本地真实身份 + DEC-009 接受后处理器写路径，
+// v0.3.0 验收载体 / M3 退出-1 前置）。
 //
 // 进程内 Executor owner 自 M1-06 起为正式 ExecutorOwner（设计第 8.2 节落点说明，
 // AGENTS 规则 7/8）：Manager 排空泵、传输会话与 DatabaseWorker（blocking worker，
-// EXEC-04 首次启用）全部任务都在其生命周期内，无 std::thread / std::async /
-// 自建线程（RULE-07）。
+// EXEC-04）全部任务都在其生命周期内，无 std::thread / std::async / 自建线程
+// （RULE-07）。
 //
-// M2-07 组合顺序（设计第 8.3 节 + 第 11.1 节 ②③）：
-//   ExecutorOwner.initialize() → 主线程同步启动恢复（解析数据根 → open（损坏即
-//   干净失败输出原因退出）→ user_version 迁移 → 四仓储逐域加载 → files/tmp/
-//   清扫 → 以加载结果经 AppStateOwner 构造入参播种初始快照）→ 四 Manager 构造
-//   → 注册 DatabaseWorker → RouterSink（恢复完成前不注册、不注入事件，
-//   EXEC-02 启动段纪律）→ 演示场景（每步 quiesce 后由 owner 单写者上下文按
-//   接受顺序镜像 typed 更新为 DB 作业，§11.1 ①）→ 受控关闭（钩子末尾
-//   AppStateOwner.close() 之后排空 DatabaseWorker，§11.1 ③；EXEC-01 步骤 2~5）
-//   → 重开恢复逐域断言一致（SCOPE-09 / M2 退出-1，进程内两次打开同一数据根）。
+// M3-03 组合顺序（设计第 8.3 节七步 + 第 11.1 节 ②③，DEC-009）：
+//   1 ExecutorOwner.initialize() → 2 主线程同步启动恢复（解析数据根 → open
+//   （损坏即干净失败输出原因退出）→ user_version 迁移 → 四仓储逐域加载 →
+//   files/tmp/ 清扫 → 播种数据）+ 本地身份供给（ProfileStore create-or-open，
+//   heyaki/adapter/local_identity.hpp，RULE-10：公开面仅 aki/std 类型）→
+//   3 DatabaseWorkerControl（锚定恢复移交的单一连接）→ 4 AppStateOwner（构造
+//   入参：初始快照 + 接受后处理器——DEC-009 ① 正式落点，owner 单写者上下文
+//   按接受顺序入队 DB 作业；M2-07 镜像形态移除，两者不并存）→ 5 四 Manager →
+//   6 start_blocking_worker + mark_registered → 7 RouterSink（EXEC-02 启动段
+//   纪律）→ 演示场景（发现/信任/文本/传输历史/断开/重连）→ 受控关闭（钩子
+//   末尾 AppStateOwner.close() 之后排空 DatabaseWorker，§11.1 ③）→ 重开恢复
+//   逐域断言一致 + 本地身份二次加载逐字节一致（SCOPE-01/09）。
 //
-// 演示脚本：两台假设备（local-1 本机 / alpha-01 远端）经 FakeHeyakiAdapter 的
-// inject_* 编程式注入完成"发现 -> 信任（Pending -> Trusted）-> 文本消息
+// 演示脚本：两台假设备（本机真实 heyaki 身份 / alpha-01 经 FakeHeyakiAdapter
+// inject_* 编程式注入）完成"发现 -> 信任（Pending -> Trusted）-> 文本消息
 // （send_text + delivered/received）-> 传输历史（t-1 Completed 含文件本体作业组 /
 // t-2 Cancelled）-> 断开 -> 重连"，经 DoubleBuffer 一致快照与序列号排序的必达
-// 事件主路径逐步断言，输出人可读控制台结果。
+// 事件主路径逐步断言。真实 heyaki 接入（LAN 发现/配对/收发）自 M3-04/05/08
+// 分批替换注入面；本版本落点是身份真实化与写路径正式化。
 //
 // 确定性：inject_* 与出站命令全部由主线程串行驱动（FakeHeyakiAdapter 的宿主
 // 串行化契约，EXEC-02），每步经 flush（有界预算）+ owner drain 推进到静止后再
 // 断言，不依赖时序；数据根为每次运行独立子目录（默认基址 resolve_data_root()，
 // argv[1] 可覆盖），同一可执行文件连续多次运行输出一致；成功后清理运行目录，
 // 失败保留供诊断。
-//
-// 设备信任确认属用户流程（设计第 4/8.3 节）：M1 无 Trust Manager 与 UI，由宿主
-// 经 AppStateOwner 的 UpsertDevice 更新指令模拟用户确认（owner 侧按信任状态机
-// 校验合法边），UI 于 M5 接入。
 #include "app/application/router_sink.hpp"
 #include "app/lifecycle/executor_owner.hpp"
 #include "app/state/app_state_owner.hpp"
 #include "heyaki/adapter/fake_heyaki_adapter.hpp"
+#include "heyaki/adapter/local_identity.hpp"
 #include "persistence/database/database.hpp"
 #include "persistence/database/database_worker.hpp"
 #include "persistence/database/database_worker_adapter.hpp"
@@ -105,6 +107,8 @@ using aki::device::DiscoveryMethod;
 using aki::device::PresenceState;
 using aki::device::TrustState;
 using aki::heyaki::FakeHeyakiAdapter;
+using aki::heyaki::LocalIdentity;
+using aki::heyaki::provision_local_identity;
 using aki::persistence::DatabaseWorkerControl;
 using aki::persistence::DatabaseWorkerOptions;
 using aki::persistence::DatabaseWorkerRunnable;
@@ -235,33 +239,57 @@ std::span<const std::byte> bytes_of(const std::string& text) {
     return {reinterpret_cast<const std::byte*>(text.data()), text.size()};
 }
 
-// §11.1 ① typed 更新 → DB 作业的宿主接线（owner 单写者上下文 = 主线程，按
-// 接受顺序入队；入队不新增执行上下文）。SetPresence/SetConnectionPath 不持久化
-// （易失/摘要语义）；幂等 no-op 接受同样入队，由作业侧幂等语义吸收（§11.1 ①）。
-// admission 拒绝与执行失败可观测（RULE-09）：future 全部保留、排空后逐个消费。
-struct PersistenceMirror {
-    PersistenceMirror(std::shared_ptr<DatabaseWorkerControl> control_in,
-        std::shared_ptr<FileStore> store_in)
-        : control(std::move(control_in)), store(std::move(store_in)) {}
+// 本地身份 → DeviceIdentity（DEC-006 映射 1）：id = 规范 hex；公钥 32 字节；
+// 已恢复的本地行保留其信任状态（状态机不接受 Trusted -> Unknown 的回退），
+// 身份自有字段（公钥）以当前身份为准；presence 恢复为 Offline（易失）。
+DeviceIdentity make_local_device_identity(const LocalIdentity& identity,
+    const std::vector<DeviceIdentity>& recovered_devices) {
+    DeviceIdentity device;
+    device.id = identity.id;
+    device.display_name = "aki";
+    device.device_class = DeviceClass::Other;
+    device.os_name = "console host";
+    device.public_key = identity.public_key;
+    device.trust_state = TrustState::Unknown;
+    device.presence = PresenceState::Offline;
+    for (const auto& recovered : recovered_devices) {
+        if (recovered.id == identity.id) {
+            device.display_name = recovered.display_name;
+            device.device_class = recovered.device_class;
+            device.os_name = recovered.os_name;
+            device.trust_state = recovered.trust_state;
+            device.capabilities = recovered.capabilities;
+            device.public_key = identity.public_key;
+            break;
+        }
+    }
+    return device;
+}
 
+// DEC-009 ①：接受后处理器（owner 单写者上下文按接受顺序同步调用）。作业映射
+// 复用 §11.1 ① + update_jobs 工厂；SetPresence/SetConnectionPath 不持久化。
+// 入队拒绝经 enqueue_rejected 与 control->rejected_count 双可见（RULE-09）；
+// 处理器异常由 owner 全捕获（post_accept_failures），此处不需自兜底。
+// UpsertMessage 的会话归属暂由宿主捕获（message_conversation，ensure_conversation
+// 后赋值）——DEC-009 ② 的载荷扩展随 M3-05 消息批次落地，届时移除该簿记。
+struct WritePathSink {
     std::shared_ptr<DatabaseWorkerControl> control;
     std::shared_ptr<FileStore> store;
-    ConversationId conversation;  // UpsertMessage 的 FK 归属（宿主已知会话）。
+    ConversationId message_conversation;
     std::vector<std::future<void>> futures;
     std::uint64_t admitted = 0;
     std::uint64_t enqueue_rejected = 0;
 
-    bool submit(AppStateUpdate update) {
+    void operator()(const AppStateUpdate& update) {
         for (DbJob& job : jobs_for(update)) {
             futures.push_back(job.done->get_future());
             if (!control->enqueue(std::move(job))) {
                 futures.pop_back();
-                ++enqueue_rejected;
-                return false;  // 明确拒绝，不静默（RULE-09）
+                ++enqueue_rejected;  // 明确拒绝，不静默（RULE-09）
+                continue;
             }
             ++admitted;
         }
-        return true;
     }
 
 private:
@@ -283,7 +311,7 @@ private:
                                        aki::app::UpsertMessage>) {
                     jobs.push_back(
                         aki::persistence::make_message_upsert_job(
-                            concrete.message, conversation));
+                            concrete.message, message_conversation));
                 } else if constexpr (std::is_same_v<Update,
                                        aki::app::UpsertTransfer>) {
                     jobs.push_back(
@@ -338,13 +366,14 @@ AppState app_state_from(const aki::persistence::RecoveredData& data) {
 
 int run_demo(const std::string& run_root) {
     std::printf(
-        "aki 0.1.0 (M2 smoke: discovery -> trust -> messaging -> transfer"
-        " history -> restart recovery)\n");
+        "aki 0.1.0 (M3 smoke: local identity + discovery -> trust -> messaging"
+        " -> transfer history -> restart recovery)\n");
     std::printf(
-        "devices: local-1 (this host) / alpha-01 (remote, FakeHeyakiAdapter)\n");
+        "devices: this host (real heyaki identity) / alpha-01"
+        " (FakeHeyakiAdapter)\n");
     std::printf("data root: %s\n", run_root.c_str());
 
-    // ---- 组合根（设计第 8.3 节装配顺序 + 第 11.1 节 ② 启动恢复）----
+    // ---- 组合根（设计第 8.3 节七步 + 第 11.1 节 ②，DEC-009）----
     // 1) ExecutorOwner.initialize()——进程内唯一 Executor 生命周期 owner。
     ExecutorOwner executor_owner;
     if (!executor_owner.initialize()) {
@@ -352,26 +381,48 @@ int run_demo(const std::string& run_root) {
         return 1;
     }
     // 2) 主线程同步启动恢复（§11.1 ②：不经 blocking worker；DB 损坏即干净
-    //    失败输出原因退出，不静默）。
+    //    失败输出原因退出，不静默）+ 本地身份供给（SCOPE-01，同一恢复段）。
     RecoveryResult recovery;
+    LocalIdentity identity;
     try {
         recovery = perform_startup_recovery(run_root);
+        identity = provision_local_identity(run_root);
     } catch (const std::exception& error) {
         std::printf("[FATAL] startup recovery failed: %s\n", error.what());
         return 2;  // ExecutorOwner 析构兜底关闭（无生产者）。
     }
-    std::printf(
-        "recovery: %zu device(s), %zu conversation(s), %zu message(s),"
+    std::printf("recovery: %zu device(s), %zu conversation(s), %zu message(s),"
         " %zu transfer(s), %zu migration step(s), %zu tmp orphan(s) removed\n",
         recovery.state.devices.size(), recovery.state.conversations.size(),
         recovery.state.messages.size(), recovery.state.transfers.size(),
         recovery.diagnostics.migrations_applied,
         recovery.diagnostics.tmp_orphans_removed);
-    // 3) AppStateOwner：以加载结果播种初始快照（构造入参自 M1-02 存在；
+    std::printf("local identity: %s (%s), device id %.16s...\n",
+        identity.created ? "created" : "loaded",
+        aki::heyaki::kAkiApplicationId, identity.id.value.c_str());
+
+    // 3) DatabaseWorkerControl——先于 AppStateOwner 构造（§8.3 七步序，
+    //    DEC-009 装配时序；单一连接整体移交）。
+    DatabaseWorkerOptions db_options;
+    auto db = std::make_shared<DatabaseWorkerControl>(
+        std::move(recovery.repositories), db_options);
+
+    // 4) AppStateOwner：以加载结果播种初始快照 + 接受后处理器（DEC-009 ①；
     //    owner 上下文 = 主线程，单写者，RULE-02/EXEC-03）。
+    WritePathSink sink{db, recovery.store, ConversationId{}};
     AppStateOwner state_owner{AppStateOwnerOptions{},
-        app_state_from(recovery.state)};
-    // 4) FakeHeyakiAdapter 与四 Manager（构造注入 executor、owner、adapter 与
+        app_state_from(recovery.state),
+        [&sink](const AppStateUpdate& update) { sink(update); }};
+
+    // 本地身份经 UpsertDevice 进入 Application State（SCOPE-01）：恢复段已有
+    // 本地行则保留其信任状态并刷新身份自有字段；首个权威更新在首次 drain 时
+    // 经处理器入队 DEVICE 行（幂等接受同样入队，§11.1 ①）。
+    report(state_owner.submit_update(
+               UpsertDevice{make_local_device_identity(identity,
+                   recovery.state.devices)}),
+        "local identity submitted (UpsertDevice via post-accept handler)");
+
+    // 5) FakeHeyakiAdapter 与四 Manager（构造注入 executor、owner、adapter 与
     //    容量预算）。
     FakeHeyakiAdapter adapter;
 
@@ -387,21 +438,18 @@ int run_demo(const std::string& run_root) {
 
     MessageManagerOptions message_options;
     message_options.pump.name = "aki.mm";
-    message_options.local_device = DeviceId{"local-1"};
+    message_options.local_device = identity.id;  // 出站消息 sender = 本地身份
     MessageManager messages{
         executor_owner.executor(), state_owner, adapter, message_options};
 
     TransferManagerOptions transfer_options;
     transfer_options.pump.name = "aki.tm";
-    transfer_options.sender = DeviceId{"local-1"};
+    transfer_options.sender = identity.id;
     TransferManager transfers{
         executor_owner.executor(), state_owner, adapter, transfer_options};
 
-    // 5) 注册 DatabaseWorker（恢复完成后；单一连接整体移交，§11.1 ③；
-    //    EXEC-07 唯一入口 start_blocking_worker，句柄归 owner）。
-    DatabaseWorkerOptions db_options;
-    auto db = std::make_shared<DatabaseWorkerControl>(
-        std::move(recovery.repositories), db_options);
+    // 6) 注册 DatabaseWorker（恢复完成后；EXEC-07 唯一入口
+    //    start_blocking_worker，句柄归 owner）。
     auto db_runnable = std::make_unique<DatabaseWorkerRunnable>(db);
     executor::BlockingWorkerSpec db_spec;
     db_spec.name = "aki.db-worker";
@@ -413,15 +461,14 @@ int run_demo(const std::string& run_root) {
     }
     db->mark_registered();
 
-    // 6) RouterSink 注册（EXEC-02 启动段纪律：恢复完成、worker 就位后才接通
+    // 7) RouterSink 注册（EXEC-02 启动段纪律：恢复完成、worker 就位后才接通
     //    事件源）。
     RouterSink router{devices, conversations, messages, transfers};
     adapter.set_sink(&router);
 
-    PersistenceMirror mirror{db, recovery.store};
-
     // 每步推进到静止：flush 四个 Manager（有界预算，消费排空 future）+ 状态
-    // owner drain 至水位不变（主线程即 owner 上下文）。
+    // owner drain 至水位不变（主线程即 owner 上下文；处理器在 drain 内按接受
+    // 顺序入队 DB 作业，DEC-009 ①）。
     const auto quiesce = [&] {
         const bool flushed = devices.flush(2s) && conversations.flush(2s)
             && messages.flush(2s) && transfers.flush(2s);
@@ -460,18 +507,9 @@ int run_demo(const std::string& run_root) {
         return events;
     };
 
-    // ---- 步骤 1/7：本机身份 + 发现（discovered + connected）----
-    std::printf("\n[step 1/7] local identity + discovery\n");
-    DeviceIdentity local;
-    local.id = DeviceId{"local-1"};
-    local.display_name = "local-1 (this host)";
-    local.device_class = DeviceClass::Desktop;
-    local.os_name = "console host";
-    local.trust_state = TrustState::Unknown;
-    report(state_owner.submit_update(UpsertDevice{local}),
-        "local identity registered (UpsertDevice local-1)");
-    quiesce();
-    report(mirror.submit(UpsertDevice{local}), "db: device local-1 enqueued");
+    // ---- 步骤 1/6：发现（discovered + connected）----
+    std::printf("\n[step 1/6] discovery\n");
+    quiesce();  // 本地身份 UpsertDevice 落库（经处理器入队）。
 
     report(devices.start_discovery(DiscoveryMethod::LanDiscovery),
         "start_discovery(LanDiscovery) accepted");
@@ -505,9 +543,11 @@ int run_demo(const std::string& run_root) {
                 "trust_state == Unknown");
             report(device->presence == PresenceState::Online,
                 "presence == Online (" + enum_text(device->presence) + ")");
-            report(mirror.submit(UpsertDevice{*device}),
-                "db: device alpha-01 enqueued");
         }
+        const DeviceIdentity* local =
+            find_device(snapshot.value, identity.id);
+        report(local != nullptr && local->public_key == identity.public_key,
+            "device store has local identity (public key bound)");
     }
     {
         auto events = consume_events();
@@ -520,20 +560,18 @@ int run_demo(const std::string& run_root) {
         }
     }
 
-    // ---- 步骤 2/7：信任（Pending -> Trusted，用户流程模拟）----
-    std::printf("\n[step 2/7] trust (Pending -> Trusted)\n");
+    // ---- 步骤 2/6：信任（Pending -> Trusted，用户流程模拟）----
+    std::printf("\n[step 2/6] trust (Pending -> Trusted)\n");
     DeviceIdentity pending = alpha;
     pending.trust_state = TrustState::Pending;
     report(state_owner.submit_update(UpsertDevice{pending}),
         "trust: Unknown -> Pending accepted by trust state machine");
     quiesce();
-    report(mirror.submit(UpsertDevice{pending}), "db: trust Pending enqueued");
     DeviceIdentity trusted = alpha;
     trusted.trust_state = TrustState::Trusted;
     report(state_owner.submit_update(UpsertDevice{trusted}),
         "trust: Pending -> Trusted accepted by trust state machine");
     quiesce();
-    report(mirror.submit(UpsertDevice{trusted}), "db: trust Trusted enqueued");
     {
         executor::comm::Snapshot<AppState> snapshot;
         report(load_snapshot(state_owner, snapshot), "snapshot readable");
@@ -546,10 +584,10 @@ int run_demo(const std::string& run_root) {
     }
     consume_events();  // 信任更新不产生主路径事件。
 
-    // ---- 步骤 3/7：会话 + 文本消息（send_text + delivered/received）----
-    std::printf("\n[step 3/7] conversation + text messaging\n");
-    report(conversations.ensure_conversation(DeviceId{"local-1"}, DeviceId{"alpha-01"}),
-        "ensure_conversation(local-1, alpha-01)");
+    // ---- 步骤 3/6：会话 + 文本消息（send_text + delivered/received）----
+    std::printf("\n[step 3/6] conversation + text messaging\n");
+    report(conversations.ensure_conversation(identity.id, DeviceId{"alpha-01"}),
+        "ensure_conversation(local, alpha-01)");
     quiesce();
     {
         executor::comm::Snapshot<AppState> snapshot;
@@ -563,10 +601,9 @@ int run_demo(const std::string& run_root) {
             report(conversation.state == ConversationState::Active,
                 "conversation state == Active ("
                     + enum_text(conversation.state) + ")");
-            mirror.conversation = conversation.id;
-            report(mirror.submit(
-                        aki::app::UpsertConversation{conversation}),
-                "db: conversation enqueued");
+            // UpsertMessage 会话归属的过渡簿记（DEC-009 ② 载荷扩展前的宿主
+            // 捕获；M3-05 消息批次收编）。
+            sink.message_conversation = conversation.id;
         }
     }
     report(messages.send_text(DeviceId{"alpha-01"}, MessageId{"m-1"}, "hello alpha"),
@@ -579,7 +616,7 @@ int run_demo(const std::string& run_root) {
     Message reply;
     reply.id = MessageId{"m-2"};
     reply.sender = DeviceId{"alpha-01"};
-    reply.receiver = DeviceId{"local-1"};
+    reply.receiver = identity.id;
     reply.type = MessageType::Text;
     reply.state = DeliveryState::Sent;  // Manager 收到事件后强制记录 Delivered。
     reply.payload = TextPayload{"hello local"};
@@ -603,17 +640,6 @@ int run_demo(const std::string& run_root) {
                 + ")");
         report(adapter.sent_texts().size() == 1,
             "adapter observed one outbound text");
-        if (sent != nullptr) {
-            report(mirror.submit(aki::app::UpsertMessage{*sent}),
-                "db: message m-1 enqueued");
-            report(mirror.submit(aki::app::SetDeliveryState{
-                        MessageId{"m-1"}, DeliveryState::Delivered}),
-                "db: delivery final state m-1 enqueued");
-        }
-        if (received != nullptr) {
-            report(mirror.submit(aki::app::UpsertMessage{*received}),
-                "db: message m-2 enqueued");
-        }
     }
     {
         // 主路径 FIFO 顺序：delivered(m-1) 先于 received(m-2)。
@@ -639,8 +665,8 @@ int run_demo(const std::string& run_root) {
         }
     }
 
-    // ---- 步骤 4/7：断开（disconnected）----
-    std::printf("\n[step 4/7] disconnect\n");
+    // ---- 步骤 4/6：断开（disconnected）----
+    std::printf("\n[step 4/6] disconnect\n");
     report(adapter.inject_device_disconnected(DeviceId{"alpha-01"}),
         "inject_device_disconnected(alpha-01)");
     quiesce();
@@ -660,11 +686,6 @@ int run_demo(const std::string& run_root) {
             "conversation state == Disconnected");
         report(snapshot.value.messages.messages.size() == 2,
             "message history kept across disconnect");
-        if (snapshot.value.conversations.conversations.size() == 1) {
-            report(mirror.submit(aki::app::UpsertConversation{
-                        snapshot.value.conversations.conversations.front()}),
-                "db: conversation Disconnected enqueued");
-        }
     }
     {
         auto events = consume_events();
@@ -675,8 +696,8 @@ int run_demo(const std::string& run_root) {
         }
     }
 
-    // ---- 步骤 5/7：重连（connected -> Active，同一会话与历史保持，RULE-06）----
-    std::printf("\n[step 5/7] reconnect\n");
+    // ---- 步骤 5/6：重连（connected -> Active，同一会话与历史保持，RULE-06）----
+    std::printf("\n[step 5/6] reconnect\n");
     report(adapter.inject_device_connected(DeviceId{"alpha-01"}, ConnectionPath::P2p),
         "inject_device_connected(alpha-01, P2P)");
     quiesce();
@@ -699,8 +720,6 @@ int run_demo(const std::string& run_root) {
             report(conversation.state == ConversationState::Active,
                 "conversation state == Active ("
                     + enum_text(conversation.state) + ")");
-            report(mirror.submit(aki::app::UpsertConversation{conversation}),
-                "db: conversation Active enqueued");
         }
         report(snapshot.value.messages.messages.size() == 2,
             "message history unchanged across reconnect");
@@ -714,13 +733,13 @@ int run_demo(const std::string& run_root) {
         }
     }
 
-    // ---- 步骤 6/7：传输历史（t-1 Completed 含文件本体 / t-2 Cancelled）----
-    std::printf("\n[step 6/7] transfer history (completed with file + cancelled)\n");
+    // ---- 步骤 6/6：传输历史（t-1 Completed 含文件本体 / t-2 Cancelled）----
+    std::printf("\n[step 6/6] transfer history (completed with file + cancelled)\n");
     const std::string t1_payload =
         "restart-recovery payload for transfer t-1 (host byte source)";
     Transfer t1;
     t1.id = TransferId{"t-1"};
-    t1.sender = DeviceId{"local-1"};
+    t1.sender = identity.id;
     t1.receiver = DeviceId{"alpha-01"};
     t1.file = aki::transfer::FileMetadata{"notes.txt", t1_payload.size(),
         "text/plain"};
@@ -735,10 +754,6 @@ int run_demo(const std::string& run_root) {
         const Transfer* row = find_transfer(snapshot.value, TransferId{"t-1"});
         report(row != nullptr && row->state == TransferState::Transferring,
             "t-1 recorded (Transferring)");
-        if (row != nullptr) {
-            report(mirror.submit(aki::app::UpsertTransfer{*row}),
-                "db: transfer t-1 enqueued");
-        }
     }
     // 字节源驱动 .part（M2-06 纪律：真实数据链路 M4）。
     recovery.store->write_part("t-1", bytes_of(t1_payload));
@@ -753,11 +768,6 @@ int run_demo(const std::string& run_root) {
         report(row != nullptr && row->transferred == t1_payload.size()
                 && row->total == t1_payload.size(),
             "t-1 progress recorded");
-        if (row != nullptr) {
-            report(mirror.submit(aki::app::UpdateTransferProgress{
-                        TransferId{"t-1"}, row->transferred, row->total}),
-                "db: transfer t-1 progress enqueued");
-        }
     }
     report(adapter.inject_transfer_completed(TransferId{"t-1"},
                 TransferState::Completed),
@@ -771,15 +781,12 @@ int run_demo(const std::string& run_root) {
             "t-1: -> Completed ("
                 + std::string(row != nullptr ? enum_text(row->state) : "missing")
                 + ")");
-        report(row != nullptr && mirror.submit(aki::app::CompleteTransfer{
-                    TransferId{"t-1"}, TransferState::Completed}),
-            "db: transfer t-1 complete job group enqueued");
     }
 
     Transfer t2;
     t2.id = TransferId{"t-2"};
     t2.sender = DeviceId{"alpha-01"};
-    t2.receiver = DeviceId{"local-1"};
+    t2.receiver = identity.id;
     t2.file = aki::transfer::FileMetadata{"aborted.bin", 4096,
         "application/octet-stream"};
     t2.state = TransferState::Queued;
@@ -790,10 +797,6 @@ int run_demo(const std::string& run_root) {
         report(load_snapshot(state_owner, snapshot), "snapshot readable");
         const Transfer* row = find_transfer(snapshot.value, TransferId{"t-2"});
         report(row != nullptr, "t-2 recorded (Queued)");
-        if (row != nullptr) {
-            report(mirror.submit(aki::app::UpsertTransfer{*row}),
-                "db: transfer t-2 enqueued");
-        }
     }
     report(adapter.inject_transfer_completed(TransferId{"t-2"},
                 TransferState::Cancelled),
@@ -807,10 +810,6 @@ int run_demo(const std::string& run_root) {
             "t-2: -> Cancelled ("
                 + std::string(row != nullptr ? enum_text(row->state) : "missing")
                 + ")");
-        // 终态作业不入队等待结算：留作关闭排空「不丢作业」复验载荷（M2 退出-1）。
-        report(row != nullptr && mirror.submit(aki::app::CompleteTransfer{
-                    TransferId{"t-2"}, TransferState::Cancelled}),
-            "db: transfer t-2 terminal + discard jobs enqueued");
     }
     {
         auto events = consume_events();
@@ -846,8 +845,8 @@ int run_demo(const std::string& run_root) {
         }
     }
 
-    // ---- 步骤 7/7：受控关闭（设计第 8.3 节钩子顺序 -> EXEC-01 步骤 2~5）----
-    std::printf("\n[step 7/7] controlled shutdown\n");
+    // ---- 受控关闭（设计第 8.3 节钩子顺序 -> EXEC-01 步骤 2~5）----
+    std::printf("\n[controlled shutdown]\n");
     const auto shutdown_report = executor_owner.shutdown([&] {
         // EXEC-01 步骤 1 钩子（设计第 8.3 节顺序 + 第 11.1 节 ③ 排空落点）：
         (void)transfers.request_cancel_all();  // ① 取消在途可取消任务（无在飞时幂等）
@@ -873,13 +872,13 @@ int run_demo(const std::string& run_root) {
     report(!adapter.inject_message_received(reply),
         "injection after delivery stopped is rejected");
 
-    // 复验宿主路径排空不丢作业（M2 退出-1）：已 admit 作业全部完成、无拒绝、
-    // 无失败，future 全部结算成功（RULE-09：结果可见，不静默）。
+    // 复验写路径（DEC-009 ①）：已 admit 作业全部完成、无拒绝、无失败、处理器
+    // 无异常（future 逐个消费，RULE-09：结果可见，不静默）。
     report(db->drain_completed(), "database worker drain completed");
     report(!db->drain_budget_exhausted(), "drain budget not exhausted");
     {
         int settle_failures = 0;
-        for (auto& future : mirror.futures) {
+        for (auto& future : sink.futures) {
             try {
                 future.get();
             } catch (const std::exception& error) {
@@ -889,18 +888,22 @@ int run_demo(const std::string& run_root) {
         }
         report(settle_failures == 0, "all admitted db jobs settled successfully");
     }
-    report(db->completed_count() == mirror.admitted,
+    report(sink.admitted > 0 && db->completed_count() == sink.admitted,
         "db jobs completed == admitted (" + std::to_string(db->completed_count())
-            + " == " + std::to_string(mirror.admitted) + ", zero loss)");
+            + " == " + std::to_string(sink.admitted) + ", zero loss)");
     report(db->failed_count() == 0, "no failed db jobs");
-    report(mirror.enqueue_rejected == 0 && db->rejected_count() == 0,
+    report(sink.enqueue_rejected == 0 && db->rejected_count() == 0,
         "no enqueue rejections");
+    report(state_owner.stats().post_accept_failures == 0,
+        "no post-accept handler failures");
 
-    // ---- 重启恢复（session B）：重新 open 后逐域断言一致（SCOPE-09 / 退出-1）----
+    // ---- 重启恢复（session B）：重新 open 后逐域断言一致（SCOPE-09/01）----
     std::printf("\n[restart] reopen data root and assert per-domain consistency\n");
     RecoveryResult reopened;
+    LocalIdentity reopened_identity;
     try {
         reopened = perform_startup_recovery(run_root);
+        reopened_identity = provision_local_identity(run_root);
     } catch (const std::exception& error) {
         report(false, std::string("reopen recovery failed: ") + error.what());
     }
@@ -909,8 +912,15 @@ int run_demo(const std::string& run_root) {
             "migration idempotent on reopen (0 steps applied)");
         report(reopened.diagnostics.tmp_orphans_removed == 0,
             "no tmp orphans after clean shutdown");
+        // 本地身份二次加载（SCOPE-01 验收 ②）：DeviceId/公钥逐字节一致。
+        report(reopened_identity.id == identity.id,
+            "local identity DeviceId stable across restart");
+        report(reopened_identity.public_key == identity.public_key,
+            "local identity public key byte-identical across restart");
+        report(!reopened_identity.created,
+            "second boot loads the existing profile (no new identity)");
         report(reopened.state.devices == expected.devices.devices,
-            "devices consistent after restart (identity + trust state,"
+            "devices consistent after restart (incl. local identity row,"
             " presence recovered Offline)");
         report(reopened.state.conversations
                 == expected.conversations.conversations,
@@ -965,8 +975,8 @@ int main(int argc, char** argv) {
     // 子目录（确定性：同一可执行文件连续多次运行输出一致；成功后清理，失败
     // 保留供诊断）。
     // argv[2] == "--exact" 为驱动/诊断钩子：argv[1] 作为数据根原样使用（不建
-    // 子目录、不自动清理）——损坏 DB 干净失败用例（recovery.corrupt_db_clean_
-    // failure）与手动复跑真实数据根依赖该模式；演示断言假定空根。
+    // 子目录、不自动清理）——损坏 DB 干净失败用例与手动复跑真实数据根依赖该
+    // 模式；演示断言假定空根。
     const bool exact_root = argc > 2 && std::string(argv[2]) == "--exact";
     const std::string base = argc > 1
         ? std::string(argv[1])

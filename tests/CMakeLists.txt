@@ -72,7 +72,8 @@ target_link_libraries(test_app_state PRIVATE
     aki_app
     aki_device
     aki_conversation
-    aki_transfer)
+    aki_transfer
+    aki_persistence)
 add_test(NAME test_app_state COMMAND test_app_state)
 set_tests_properties(test_app_state PROPERTIES LABELS "unit")
 
@@ -195,7 +196,9 @@ aki_apply_warnings(test_restart_recovery PRIVATE)
 target_link_libraries(test_restart_recovery PRIVATE
     Catch2::Catch2WithMain
     aki_persistence
-    aki_app)
+    aki_app
+    heyaki::client)
+aki_deploy_openssl_dlls(test_restart_recovery)
 add_test(NAME test_restart_recovery COMMAND test_restart_recovery)
 set_tests_properties(test_restart_recovery PROPERTIES LABELS "integration")
 
@@ -231,3 +234,17 @@ target_compile_definitions(test_heyaki_client_surface PRIVATE
 aki_deploy_openssl_dlls(test_heyaki_client_surface)
 add_test(NAME test_heyaki_client_surface COMMAND test_heyaki_client_surface)
 set_tests_properties(test_heyaki_client_surface PROPERTIES LABELS "unit")
+
+# M3-03：本地设备身份接线单测（DEC-006 映射 1；SCOPE-01）。aki_heyaki 为
+# INTERFACE 头文件库，local_identity 的 heyaki 符号由 heyaki::client 提供；
+# OpenSSL 运行期 DLL 随测试部署。
+add_executable(test_local_identity unit/test_local_identity.cpp)
+target_compile_features(test_local_identity PRIVATE cxx_std_20)
+aki_apply_warnings(test_local_identity PRIVATE)
+target_link_libraries(test_local_identity PRIVATE
+    Catch2::Catch2WithMain
+    aki_heyaki
+    heyaki::client)
+aki_deploy_openssl_dlls(test_local_identity)
+add_test(NAME test_local_identity COMMAND test_local_identity)
+set_tests_properties(test_local_identity PROPERTIES LABELS "unit")

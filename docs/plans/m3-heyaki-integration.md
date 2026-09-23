@@ -157,8 +157,23 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
   `UpsertMessage` 子决策=扩展载荷加 conversation 字段、§6 Message 模型不变。
   M2-07 镜像偏差被 DEC-009 取代（M2 历史记录保持原样）；实现随 M3-03+ 按新
   契约跟进，当前代码暂不变。详见验证记录。）
-- [ ] `M3-03` 本地设备身份真实化（`SCOPE-01`）：首次启动创建 Heyaki 长期身份、
-  后续启动加载；`DeviceId` 与公钥稳定绑定；身份行持久化，重启恢复后一致。
+- [x] `M3-03` 本地设备身份真实化（`SCOPE-01`）：首次启动创建 Heyaki 长期身份、
+  后续启动加载；`DeviceId` 与公钥稳定绑定；身份行持久化，重启恢复后一致。（2026-09-24：
+  含 DEC-009 契约的首批代码实现——`app/state` 新增 `PostAcceptHandler` 构造
+  入参（默认空，源兼容）与 `post_accept_failures` 统计，`drain_updates` 在
+  accept 后单写者上下文按接受顺序同步调用、被拒绝不调用、异常全捕获；
+  `heyaki/adapter/local_identity.hpp`（aki_heyaki 头文件库新接线面，RULE-10
+  公开面仅 aki/std 类型）：ProfileStore create-or-open + initialize_local
+  （占位 verifier 与文件回退 secret backend，宿主配置如实记录）+
+  endpoint_for("org.aki.app") + derive_device_id 恒等绑定断言；根 main.cpp
+  切换 §8.3 七步装配序（恢复→身份供给→control→AppStateOwner(seed+handler)→
+  Manager→注册→RouterSink），M2-07 镜像形态移除；本地身份经 UpsertDevice +
+  处理器入队 DEVICE 行落库，恢复段已有行保留信任状态；测试：test_app_state
+  五类断言 + 幂等 no-op 作业吸收（DEC-009 清单）、test_local_identity 新建、
+  test_restart_recovery 身份恢复用例；MSVC debug/release ctest 21/21 零回归
+  （宿主稳定 5 次）；DEC-006「规范 hex」措辞按实测（to_string 为 hy1_ 前缀
+  编码串）修正。UpsertMessage 会话归属载荷扩展留 M3-05（处理器暂以宿主捕获
+  补齐，如实记录）。详见验证记录。）
 - [ ] `M3-04` 设备发现与信任真实化（`SCOPE-02`/`SCOPE-03`）：LAN 发现映射
   `DiscoveredDevice`；配对与公钥指纹确认驱动信任状态机全部合法转移；已知设备
   记录随启动恢复加载并支持再连接；`Rejected`/`Revoked` 终态幂等（`RULE-08`）。
@@ -426,3 +441,84 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
     先更新第 10.1/11.1/8.3 节与 DEC-009 再合代码；MR 闭环由后续环节执行，
     本记录不含 commit/CI 证据。
   - 同步：本里程碑工作项 `M3-02`、总计划当前状态。
+
+- 2026-09-24（`M3-03`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0 / OpenSSL 3.5.8（G:/OpenSSL-Win64，-DOPENSSL_ROOT_DIR））：
+  - 范围：`app/state/app_state_owner.hpp`（DEC-009 ① 契约：`PostAcceptHandler =
+    std::function<void(const AppStateUpdate&)>` 构造入参（默认空，源兼容）；
+    `AppStateOwnerStats.post_accept_failures`；`drain_updates` 在 `apply()`
+    返回 true 后经 `run_post_accept` 同步调用——被拒绝不调用、异常全捕获计数
+    不上浮不中断本批 drain）；`heyaki/adapter/local_identity.hpp`（新接线面，
+    aki_heyaki INTERFACE 头文件库单头 inline 实现：ProfileStore
+    create-or-open（`<root>/db/profile.sqlite`）→ readiness 收敛（首次
+    initialize_local：占位口令 verifier + PairingPolicy 默认授予 scope
+    message.send（DEC-006 冻结）+ LanConfiguration 默认）→ endpoint_for
+    ("org.aki.app") → derive_device_id(public_key) == profile device_id 恒等
+    绑定断言；公开面仅 `LocalIdentity`（aki DeviceId/PublicKey + endpoint_id
+    + created）与 std 类型，RULE-10）；根 `main.cpp`（§8.3 七步装配序切换：
+    initialize → 恢复+身份供给（同一恢复段主线程同步）→ control →
+    AppStateOwner(初始快照 + `WritePathSink` 处理器) → 四 Manager（sender/
+    local_device = 本地身份 id）→ 注册 worker → RouterSink；M2-07
+    `PersistenceMirror` 移除，处理器形态唯一；本地身份经 UpsertDevice 提交
+    （恢复段已有行保留信任状态并刷新公钥，presence Offline）；受控关闭后
+    重开二次供给身份并逐域断言）；`tests/unit/test_app_state.cpp`（DEC-009
+    五类断言 + 幂等 no-op 作业吸收，链接 +aki_persistence）、
+    `tests/unit/test_local_identity.cpp`（新建：同根稳定/异根唯一/二次加载
+    非新建/endpoint 确定性）、`tests/integration/test_restart_recovery.cpp`
+    （身份落库 + 二次启动一致用例，链接 +heyaki::client + DLL 部署）、
+    根/tests `CMakeLists.txt`（aki 目标 +heyaki::client + OpenSSL DLL 部署——
+    产品目标首批消费 heyaki::client）。
+  - 依据：[DEC-009](../decisions/DEC-009-appstate-write-path.md)（① 契约/
+    异常策略/容量预算/装配时序/实现迁移）、[DEC-006](../decisions/DEC-006-heyaki-api-contract.md)
+    （映射 1 + 冻结常量）、[DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)
+    （DeviceRepository/作业承载）、[DEC-002](../decisions/DEC-002-layering-and-state-boundary.md)/
+    [DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)；
+    设计第 3/8.1/8.3/10.1/11.1 节（M3-02 已固化）；总计划 `SCOPE-01`、
+    `RULE-02`/`RULE-07`/`RULE-09`/`RULE-10`、`EXEC-01`/`EXEC-02`/`EXEC-04`。
+    heyaki 公开 API 锚点：`profile_store.hpp`（create/open/local_readiness/
+    initialize_local/endpoint_for）、`identity.hpp:45`（derive_device_id）、
+    `ids.hpp:91`（to_string）、`error.hpp:79`（error_code_name）、
+    heyaki 自身测试/示例的 initialize_local 用型（m10_gateway_policy_test、
+    m2_profile_demo）。
+  - 实现与契约的偏差（如实记录，均已在文档登记）：① `UpsertMessage` 的
+    conversation 归属载荷扩展（DEC-009 ②）随 M3-05 消息批次实现——M3-03 处理
+    器暂以宿主捕获的会话 id 补齐归属（`WritePathSink::message_conversation`，
+    ensure_conversation 后赋值；与 M2-07 簿记等效但已处于 owner 上下文处理器
+    内），届时移除；② `provision_local_identity` 的占位口令 verifier（argon2
+    固定串，heyaki 自身测试同型）与 secret backend `prefer_os_backend=false`
+    （加密文件回退，不依赖 OS 钥匙串）——宿主确定性配置，真实口令流程随 M5
+    设置面，均已在接线头注登记；③ DEC-006「规范 hex」措辞修正：实测
+    `to_string(device_id)` 为带 `hy1_` kind 前缀的编码串（56 字符），非裸
+    hex——DEC-006 已按实现修正措辞（权威规则「value = to_string(device_id)」
+    不变，M1-08 纪律）。
+  - 验证（configure/build/ctest 命令同 M3-01 记录的显式 -S/-B 树 + 
+    -DOPENSSL_ROOT_DIR）：
+    - debug：build exit 0 → `ctest --test-dir build/m3-01-debug -C Debug
+      --timeout 180` → **100% passed 21/21**（原 20 项零回归 + 新
+      `test_local_identity`；`test_restart_recovery` 扩展身份用例）。
+    - release：同构 → **21/21**。
+    - 宿主（smoke）实测输出：`local identity: created (org.aki.app), device
+      id hy1_qrvgokmgkfsu...`、`device store has local identity (public key
+      bound)`；重启段 `[ok] local identity DeviceId stable across restart` /
+      `public key byte-identical across restart` / `second boot loads the
+      existing profile (no new identity)` → `smoke: PASS`；宿主连续 5 次运行
+      全过（debug）。
+    - DEC-009 五类断言（test_app_state [dec009] 标签，4 用例全过）：接受才
+      调用且按顺序（d-1,d-2；ghost 更新 drain 拒绝、处理器未调用）；处理器
+      异常全捕获（post_accept_failures==2、drain 继续、两更新均被调用）；
+      未注册 control 入队拒绝双计数（sink==2 且 rejected_count==2，且
+      post_accept_failures==0——拒绝不是异常）；幂等 no-op 入队并被作业侧
+      吸收（admitted==3、drain 后 completed==3、failed==0、行仍 Completed）。
+    - RULE-10 grep（复跑）：`#include <heyaki/…>` 单分量公开头命中仅
+      `heyaki/adapter/local_identity.hpp`（2 处，层内自身）+
+      `tests/unit/test_heyaki_client_surface.cpp`（既有接线层消费点）+
+      `tests/test_skeleton.cpp`（Aki 自有骨架头）；app/state、persistence、
+      main.cpp 零第三方 heyaki include（main.cpp 经 local_identity 的
+      aki/std 公开面消费身份）。
+  - 限制：ASAN/UBSAN/TSAN 随本 PR Linux CI 门禁（本项无新并发路径——身份
+    供给在恢复段主线程同步、写路径经既有 DatabaseWorker 通道，DOD-02 六项
+    沿 M2-05 覆盖并随全量 ctest 复验）；MinGW 限制沿 M3-01 记录；CI 四档
+    全绿证据随本 PR 门禁产生；MR 闭环由后续环节执行，本记录不含 commit/CI
+    证据。
+  - 同步：DEC-006 措辞修正（规范字符串形式）、本里程碑（M3-03 勾选、本
+    记录）、总计划当前状态。
