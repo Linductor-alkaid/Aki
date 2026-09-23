@@ -12,7 +12,7 @@
             "license_file": "third_party/executor/LICENSE",
             "class": "pinned",
             "submodule": true,
-            "used_by": "M1 起承载全部并发任务（AGENTS.md 强制约束）"
+            "used_by": "M3-01 起经 heyaki 单图间接进入构建（DEC-006：双侧同 pin 74a94198，构建图内单份 executor；configure 三方一致性校验）"
         },
         {
             "name": "EUI-NEO",
