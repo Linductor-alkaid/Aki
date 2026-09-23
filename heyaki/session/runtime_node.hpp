@@ -34,6 +34,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -102,8 +103,19 @@ public:
         // （与 heyaki 自身双节点测试一致）。
         hh::RuntimeConfig runtime_config{};
         runtime_config.worker_name = options.worker_name;
+
+        // Runtime 包装对象堆置且地址稳定（M3-04 CI run 35922249364 ASan
+        // stack-use-after-return 实测）：NodeConfig.runtime 为非拥有指针，
+        // Node 内部异步路径（如 ShellPtyCoordinator drain、expiry timer）在
+        // 返回 create() 之后仍经该指针访问 Runtime。若指向本函数栈上
+        // Result 内的临时对象，函数返回即悬垂。unique_ptr 指针对象跨
+        // NodeSession 移动保持地址不变；成员声明序（runtime_ 在 node_ 之前）
+        // 保证析构时 Node 先于 Runtime 消亡。
+        auto runtime = std::make_unique<hh::Runtime>(
+            std::move(*runtime_result.value_if()));
+
         hh::NodeConfig config{.profile = &options.profile->store(),
-            .runtime = &*runtime_result.value_if(),
+            .runtime = runtime.get(),
             .application_id = options.application_id,
             .lan_override = options.lan_override,
             .runtime_config = runtime_config,
@@ -130,7 +142,7 @@ public:
                 + std::string(hh::error_code_name(error->code())) + ": "
                 + std::string(error->safe_detail()));
         }
-        return NodeSession(std::move(*runtime_result.value_if()),
+        return NodeSession(std::move(runtime),
             std::move(*node_result.value_if()));
     }
 
@@ -292,7 +304,7 @@ public:
         NodeSessionShutdownReport report;
         auto node_report = node_.shutdown();
         report.node_stopped = node_report.stopped;
-        auto runtime_report = runtime_.shutdown();
+        auto runtime_report = runtime_->shutdown();
         report.runtime_stopped =
             runtime_report.final_phase == ::heyaki::RuntimePhase::stopped;
         report.runtime_executor_shutdown_performed =
@@ -307,7 +319,7 @@ public:
     }
 
 private:
-    NodeSession(::heyaki::Runtime runtime, ::heyaki::Node node)
+    NodeSession(std::unique_ptr<::heyaki::Runtime> runtime, ::heyaki::Node node)
         : runtime_(std::move(runtime)), node_(std::move(node)) {}
 
     [[nodiscard]] std::optional<::heyaki::DeviceEndpointKey> endpoint_key_of(
@@ -326,7 +338,9 @@ private:
         return std::nullopt;
     }
 
-    ::heyaki::Runtime runtime_;
+    // 声明序即析构序约束：reverse 析构先 node_ 后 runtime_——Node 内部持有
+    // runtime_.get() 非拥有指针（见 create 内注释），Node 必须先消亡。
+    std::unique_ptr<::heyaki::Runtime> runtime_;
     ::heyaki::Node node_;
     std::atomic<bool> shutdown_done_{false};
     NodeSessionShutdownReport last_report_{};
