@@ -5,6 +5,7 @@
 
 #include "heyaki/adapter/heyaki_adapter.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <set>
 #include <string>
@@ -187,7 +188,10 @@ private:
     }
 
     HeyakiAdapterSink* sink_ = nullptr;
-    bool discovery_running_ = false;
+    // 跨线程状态标志：写入发生在 Adapter 出站调用方上下文（可为 executor
+    // worker 线程，如 Manager drain），读取发生在宿主/测试等待轮询上下文
+    // （TSAN 实测并发读写裸 bool 报 data race）——以 atomic 保证同步。
+    std::atomic<bool> discovery_running_{false};
     std::vector<aki::device::DiscoveryMethod> discovery_methods_;
     std::vector<SentText> sent_texts_;
     std::vector<TransferCommand> transfer_commands_;

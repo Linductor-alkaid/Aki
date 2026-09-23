@@ -416,7 +416,9 @@ TEST_CASE("Shutdown drains admitted jobs with bounded latency and full evidence"
     std::vector<std::future<void>> futures;
     for (int i = 0; i < kJobs; ++i) {
         auto job = make_job(
-            [&](Repositories& repos) { repos.devices.upsert(make_device(
+            // 按值捕获 i：作业在 worker 上异步执行，循环局部变量按引用捕获
+            // 在循环结束后悬垂（ASAN stack-use-after-scope 实测）。
+            [i](Repositories& repos) { repos.devices.upsert(make_device(
                                            "d-" + std::to_string(i))); });
         futures.push_back(std::move(job.future));
         REQUIRE(fx.control->enqueue(std::move(job.job)));
@@ -459,7 +461,7 @@ TEST_CASE("Drain budget anchors at the drain request, not worker start",
     std::vector<std::future<void>> futures;
     for (int i = 0; i < kJobs; ++i) {
         auto job = make_job(
-            [&](Repositories& repos) { repos.devices.upsert(make_device(
+            [i](Repositories& repos) { repos.devices.upsert(make_device(
                                            "d-" + std::to_string(i))); });
         futures.push_back(std::move(job.future));
         REQUIRE(fx.control->enqueue(std::move(job.job)));
