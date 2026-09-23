@@ -248,3 +248,19 @@ target_link_libraries(test_local_identity PRIVATE
 aki_deploy_openssl_dlls(test_local_identity)
 add_test(NAME test_local_identity COMMAND test_local_identity)
 set_tests_properties(test_local_identity PROPERTIES LABELS "unit")
+
+# M3-04：设备发现与信任真实化（DEC-006 映射 2/3；双节点进程内回环；DOD-02
+# 沿 EXEC-04 timer / pairing observer 路径）。接口缺失环境输出 [skip]（回环
+# 补跑条件见里程碑验证记录）。
+add_executable(test_discovery_pairing integration/test_discovery_pairing.cpp)
+target_compile_features(test_discovery_pairing PRIVATE cxx_std_20)
+aki_apply_warnings(test_discovery_pairing PRIVATE)
+target_link_libraries(test_discovery_pairing PRIVATE
+    Catch2::Catch2WithMain
+    aki_persistence
+    aki_app
+    aki_heyaki
+    heyaki::client)
+aki_deploy_openssl_dlls(test_discovery_pairing)
+add_test(NAME test_discovery_pairing COMMAND test_discovery_pairing)
+set_tests_properties(test_discovery_pairing PROPERTIES LABELS "integration")
