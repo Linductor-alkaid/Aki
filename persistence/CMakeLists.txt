@@ -7,8 +7,10 @@ add_library(aki_persistence STATIC
     database/database_worker.cpp
     migration/migration.cpp
     migration/schema_v1.cpp
+    recovery/startup_recovery.cpp
     repository/repositories.cpp
     repository/statement_cache.cpp
+    repository/update_jobs.cpp
     storage/data_root.cpp
     storage/file_jobs.cpp
     storage/file_store.cpp

@@ -169,6 +169,24 @@
   ctest 17/17；file_store debug 40 次稳定；ASAN/UBSAN 随本 PR Linux CI；
   POSIX 分支随 CI Linux 编译执行（本机 Windows 不宣称已验证）；MinGW
   限制沿用 M1-02 记录。详见 M2 里程碑文档 M2-06 验证记录。
+- 2026-09-23：`M2-07` 完成：重启恢复与宿主/测试写路径落地（`SCOPE-09` /
+  M2 退出-1）——`persistence/recovery/perform_startup_recovery`：主线程同步
+  组合（数据根注入 → open（损坏即 SqliteError 干净失败）→ user_version 迁移
+  → 四仓储逐域加载 → sweep_tmp_orphans 按加载活动行清扫）；根 `main.cpp`
+  组合根按设计第 11.1 节 ②③ 接线：initialize 后同步恢复 → 加载结果经
+  AppStateOwner 构造入参播种初始快照 → 注册 DatabaseWorker 与 RouterSink
+  （EXEC-02 启动段纪律）；写路径 `PersistenceMirror` 在 owner 单写者上下文
+  按接受顺序镜像 typed 更新为 DbJob（§11.1 ①，域级工厂 update_jobs；
+  SetPresence/SetConnectionPath 不持久化）；关闭钩子末尾 `close()` 之后
+  request_drain + 有界等待（排空先于 EXEC-01 步骤 2/3，宿主路径复验
+  admitted==completed 零丢失）；进程内 session B 重开逐域断言一致（设备/
+  信任/会话/消息含送达终态/传输历史 + stored_* 回写位）。新增
+  `test_restart_recovery`（integration 标签，4 test case / 158 断言）与
+  损坏 DB 宿主级 ctest（`--exact` 模式，FATAL 输出原因 + 退出码 2）。设计
+  §14 目录树同步（补记 storage/ 并新增 recovery/）。本地 MSVC debug/release
+  ctest 19/19；宿主与恢复测试 debug 30 次 / release 15 次稳定；无新并发
+  路径（DOD-02 六项已随 M2-05 覆盖）；ASAN/UBSAN 随本 PR Linux CI；MinGW
+  限制沿用 M1-02 记录。详见 M2 里程碑文档 M2-07 验证记录。
 
 ## 交付边界
 

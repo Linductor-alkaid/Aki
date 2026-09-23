@@ -41,7 +41,7 @@ target_link_libraries(aki_skeleton_test PRIVATE
 add_test(NAME skeleton.includes COMMAND aki_skeleton_test)
 set_tests_properties(skeleton.includes PROPERTIES LABELS "unit")
 
-add_test(NAME skeleton.app_runs COMMAND aki)
+add_test(NAME skeleton.app_runs COMMAND aki "${CMAKE_CURRENT_BINARY_DIR}/aki-smoke-data")
 set_tests_properties(skeleton.app_runs PROPERTIES
     LABELS "smoke"
     PASS_REGULAR_EXPRESSION "aki 0\\.1\\.0")
@@ -49,7 +49,9 @@ set_tests_properties(skeleton.app_runs PROPERTIES
 # M1-06：console 冒烟宿主（v0.1.0 验收载体，覆盖 M1 退出-1）。integration 标签
 # 自本项启用（DEC-007）；宿主即进程内组合根（正式 ExecutorOwner，设计第 8.2/8.3
 # 节），输出以 "smoke: PASS"/"smoke: FAIL" 收尾供正则断言。
-add_test(NAME smoke.device_lifecycle COMMAND aki)
+# M2-07 起：数据根基址经 argv 注入（宿主每次运行使用基址下独立子目录并自清理，
+# 不触碰真实 %APPDATA%/XDG 目录），宿主内含重启恢复逐域断言（M2 退出-1）。
+add_test(NAME smoke.device_lifecycle COMMAND aki "${CMAKE_CURRENT_BINARY_DIR}/aki-smoke-data")
 set_tests_properties(smoke.device_lifecycle PROPERTIES
     LABELS "integration"
     PASS_REGULAR_EXPRESSION "smoke: PASS")
@@ -183,3 +185,29 @@ target_link_libraries(test_file_store PRIVATE
     aki_app)
 add_test(NAME test_file_store COMMAND test_file_store)
 set_tests_properties(test_file_store PROPERTIES LABELS "unit")
+
+# M2-07：重启恢复集成测试（设计第 11.1 节 ②③；DEC-004 验证方式；SCOPE-09）。
+# 组合镜像宿主路径：恢复 → 播种 → 注册 worker → 写入 → 排空关闭 → 重开逐域
+# 断言；损坏 DB 干净失败；清扫；宿主路径排空不丢作业。
+add_executable(test_restart_recovery integration/test_restart_recovery.cpp)
+target_compile_features(test_restart_recovery PRIVATE cxx_std_20)
+aki_apply_warnings(test_restart_recovery PRIVATE)
+target_link_libraries(test_restart_recovery PRIVATE
+    Catch2::Catch2WithMain
+    aki_persistence
+    aki_app)
+add_test(NAME test_restart_recovery COMMAND test_restart_recovery)
+set_tests_properties(test_restart_recovery PROPERTIES LABELS "integration")
+
+# M2-07 验收 ②（宿主级）：损坏 DB 文件的组合根干净失败——aki 以 --exact 模式
+# 直用损坏数据根，open 失败时输出 "[FATAL] startup recovery failed: <原因>"
+# 并以非零退出码退出（不静默）。损坏文件在 configure 期固定写入测试二进制目录。
+set(AKI_CORRUPT_DB_ROOT "${CMAKE_CURRENT_BINARY_DIR}/aki-corrupt-db-root")
+file(MAKE_DIRECTORY "${AKI_CORRUPT_DB_ROOT}/db")
+file(WRITE "${AKI_CORRUPT_DB_ROOT}/db/aki.db3"
+    "this is not a sqlite database - M2-07 corrupt-db clean-failure fixture\n")
+add_test(NAME recovery.corrupt_db_clean_failure
+    COMMAND aki "${AKI_CORRUPT_DB_ROOT}" --exact)
+set_tests_properties(recovery.corrupt_db_clean_failure PROPERTIES
+    LABELS "integration"
+    PASS_REGULAR_EXPRESSION "\\[FATAL\\] startup recovery failed")
