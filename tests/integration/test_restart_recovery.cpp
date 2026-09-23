@@ -27,6 +27,7 @@
 #include "persistence/database/database_worker_adapter.hpp"
 #include "persistence/recovery/startup_recovery.hpp"
 #include "persistence/repository/update_jobs.hpp"
+#include "heyaki/adapter/local_identity.hpp"
 #include "persistence/storage/file_jobs.hpp"
 #include "persistence/storage/file_store.hpp"
 #include "persistence/storage/sha256.hpp"
@@ -438,4 +439,87 @@ TEST_CASE("Host-style shutdown drain loses no admitted jobs",
     // 作业真实落库（重开断言）。
     RecoveryResult reopened = perform_startup_recovery(root);
     REQUIRE(reopened.state.devices.size() == kJobs);
+}
+
+// ---- M3-03：本地身份真实化（SCOPE-01；DEC-009 ① 首批实现）----
+// 首次启动 provision（profile 落盘）→ UpsertDevice 经接受后处理器入队 DEVICE
+// 行落库（admitted==completed、rejected==0）→ 二次启动加载同一身份
+// （DeviceId/公钥逐字节一致）→ 恢复行逐域一致。
+TEST_CASE("Local identity provisions once and lands in the device store",
+    "[integration][restart_recovery][local_identity]") {
+    const std::string root = temp_root("identity");
+
+    ExecutorOwner owner;
+    REQUIRE(owner.initialize());
+
+    RecoveryResult first = perform_startup_recovery(root);
+    REQUIRE(first.state.devices.empty());
+
+    auto control = std::make_shared<DatabaseWorkerControl>(
+        std::move(first.repositories));
+    executor::BlockingWorkerSpec spec;
+    spec.name = "aki.db-worker";
+    spec.config.thread_name = "aki-db-worker";
+    spec.worker = std::make_unique<DatabaseWorkerRunnable>(control);
+    REQUIRE(owner.start_blocking_worker(std::move(spec)));
+    control->mark_registered();
+
+    // 接受后处理器（DEC-009 ①；本用例仅 UpsertDevice → DEVICE upsert 作业）。
+    aki::app::AppStateOwnerOptions options;
+    std::uint64_t admitted = 0;
+    aki::app::AppStateOwner state_owner{options,
+        seed_from(first.state),
+        [&admitted, control](const aki::app::AppStateUpdate& update) {
+            if (std::holds_alternative<aki::app::UpsertDevice>(update)) {
+                auto job = aki::persistence::make_device_upsert_job(
+                    std::get<aki::app::UpsertDevice>(update).device);
+                auto future = job.done->get_future();
+                REQUIRE(control->enqueue(std::move(job)));
+                future.get();
+                ++admitted;
+            }
+        }};
+
+    // 恢复段内主线程同步供给身份（§11.1 ② 模式）：首次创建。
+    const aki::heyaki::LocalIdentity identity =
+        aki::heyaki::provision_local_identity(root);
+    REQUIRE(identity.created);
+    REQUIRE(identity.public_key.bytes.size() == 32);
+
+    DeviceIdentity device;
+    device.id = identity.id;
+    device.display_name = "aki";
+    device.device_class = aki::device::DeviceClass::Other;
+    device.os_name = "console host";
+    device.public_key = identity.public_key;
+    device.trust_state = TrustState::Unknown;
+    device.presence = PresenceState::Offline;
+    REQUIRE(state_owner.submit_update(aki::app::UpsertDevice{device}));
+    state_owner.drain();
+    REQUIRE(admitted == 1);
+    REQUIRE(control->completed_count() == 1);
+    REQUIRE(control->rejected_count() == 0);
+    REQUIRE(state_owner.stats().post_accept_failures == 0);
+
+    const auto report = owner.shutdown([&] {
+        state_owner.close();
+        control->request_drain();
+        REQUIRE(wait_until([&] { return control->drain_completed(); }, 3s));
+    });
+    REQUIRE(report.fully_stopped());
+
+    // 二次启动：加载同一身份（非新建）+ DEVICE 行恢复一致。
+    RecoveryResult reopened = perform_startup_recovery(root);
+    REQUIRE(reopened.state.devices.size() == 1);
+    REQUIRE(reopened.state.devices[0].id == identity.id);
+    REQUIRE(reopened.state.devices[0].public_key == identity.public_key);
+    REQUIRE(reopened.state.devices[0].trust_state == TrustState::Unknown);
+    REQUIRE(reopened.state.devices[0].presence == PresenceState::Offline);
+
+    const aki::heyaki::LocalIdentity loaded =
+        aki::heyaki::provision_local_identity(root);
+    REQUIRE_FALSE(loaded.created);
+    REQUIRE(loaded.id == identity.id);
+    REQUIRE(loaded.public_key == identity.public_key);
+    REQUIRE(loaded.endpoint_id == identity.endpoint_id);
 }

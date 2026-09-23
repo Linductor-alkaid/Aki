@@ -30,6 +30,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -45,7 +46,17 @@ struct AppStateOwnerStats {
     std::uint64_t events_dropped = 0;    // 有界移交失败（预期为 0，出现即缺陷信号）
     std::uint64_t observer_rejects = 0;  // Topic 慢订阅者被拒（RejectNewest）
     std::uint64_t snapshots_published = 0;
+    // 接受后处理器异常的全捕获计数（DEC-009：处理器契约不抛出，owner 兜底
+    // 捕获使异常不上浮、不中断 drain；非零即处理器缺陷信号）。
+    std::uint64_t post_accept_failures = 0;
 };
+
+// 接受后处理器（DEC-009 ①，设计第 10.1 节；对齐 ManagerPump 的 Handler 先例）：
+// drain_updates 在 apply() 返回 true（含幂等 no-op）后于 owner 单写者上下文按
+// 接受顺序同步调用；被拒绝的更新不调用。实现纪律：处理器不得抛出异常（owner
+// 全捕获仅是缺陷可见的兜底）；入队拒绝经处理器侧计数与 DatabaseWorkerControl
+// 的 rejected 计数双可见，不回滚已接受的内存更新。
+using PostAcceptHandler = std::function<void(const AppStateUpdate&)>;
 
 // 构造选项置于命名空间作用域：类内默认实参引用嵌套类型的 NSDMI 在 GCC 下非法
 // （“required before the end of its enclosing class”）。
@@ -64,7 +75,8 @@ public:
     static constexpr std::size_t kDefaultDrainUpdates = 64;
     static constexpr std::size_t kDefaultDrainEvents = 128;
 
-    explicit AppStateOwner(AppStateOwnerOptions options = {}, AppState initial = AppState{})
+    explicit AppStateOwner(AppStateOwnerOptions options = {}, AppState initial = AppState{},
+        PostAcceptHandler post_accept = {})
         : options_(std::move(options)),
           limits_(options_.limits),
           snapshot_(std::move(initial), options_.name + ".snapshot"),
@@ -79,7 +91,8 @@ public:
               .enable_stats = true,
               .name = options_.name + ".event_outbox"}),
           connection_path_(options_.name + ".connection_path"),
-          observers_(options_.name + ".observers") {}
+          observers_(options_.name + ".observers"),
+          post_accept_(std::move(post_accept)) {}
 
     AppStateOwner(const AppStateOwner&) = delete;
     AppStateOwner& operator=(const AppStateOwner&) = delete;
@@ -216,9 +229,23 @@ private:
             }
             if (apply(update)) {
                 ++stats_.updates_applied;
+                run_post_accept(update);
             } else {
                 ++stats_.updates_rejected;
             }
+        }
+    }
+
+    // 接受后处理器调用（DEC-009 ①）：仅 owner 上下文；异常全捕获计数，
+    // 不上浮、不中断本批 drain 的后续更新与事件处理。
+    void run_post_accept(const AppStateUpdate& update) {
+        if (!post_accept_) {
+            return;
+        }
+        try {
+            post_accept_(update);
+        } catch (...) {
+            ++stats_.post_accept_failures;
         }
     }
 
@@ -448,6 +475,7 @@ private:
     executor::comm::MpscChannel<AppEvent> event_outbox_;
     executor::comm::LatestMailbox<aki::device::ConnectionPath> connection_path_;
     executor::comm::Topic<AppEventPtr> observers_;
+    PostAcceptHandler post_accept_;  // 仅 owner 上下文调用（DEC-009）。
     AppStateOwnerStats stats_;
     std::uint64_t next_event_sequence_ = 1;
     bool snapshot_dirty_ = false;  // 仅 owner 上下文访问。

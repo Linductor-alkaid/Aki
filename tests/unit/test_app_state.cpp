@@ -13,10 +13,18 @@
 // 正式 owner 由 M1-04 的 app/lifecycle 提供）。并发任务一律经 pinned executor
 // 的公开能力（submit_auto）承载，不使用 std::thread / std::async；Catch2 断言
 // 只在 main 线程执行，worker 任务只返回值。
+#include "app/lifecycle/executor_owner.hpp"
 #include "app/state/app_events.hpp"
 #include "app/state/app_state.hpp"
 #include "app/state/app_state_owner.hpp"
 #include "app/state/app_state_updates.hpp"
+#include "persistence/database/database.hpp"
+#include "persistence/database/database_worker.hpp"
+#include "persistence/database/database_worker_adapter.hpp"
+#include "persistence/migration/migration.hpp"
+#include "persistence/migration/schema_v1.hpp"
+#include "persistence/repository/repositories.hpp"
+#include "persistence/repository/update_jobs.hpp"
 
 #include <executor/comm/types.hpp>
 #include <executor/executor.hpp>
@@ -620,6 +628,161 @@ TEST_CASE("Concurrent producers converge through the single writer without loss"
     executor::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.devices.devices.size() == kProducers * kUpdatesPerProducer);
+}
+
+// ---- DEC-009 ①：接受后处理器契约（M3-03）----
+// 覆盖五类断言 + 幂等 no-op 入队被作业侧吸收：
+//   1) 接受才调用、按接受顺序；2) 拒绝不调用；3) 处理器异常全捕获计数且
+//   drain 继续；4) 入队拒绝经处理器侧与 DatabaseWorkerControl::rejected_count
+//   双可见；5) 幂等 no-op 接受同样入队并被作业侧幂等吸收。
+
+// 1)+2)：纯记录型处理器，无需持久化。
+TEST_CASE("Post-accept handler runs only for accepted updates in order",
+    "[unit][app_state][dec009]") {
+    aki::app::AppStateOwnerOptions options;
+    std::vector<std::string> accepted;
+    aki::app::AppStateOwner owner{options, aki::app::AppState{},
+        [&](const aki::app::AppStateUpdate& update) {
+            if (std::holds_alternative<aki::app::UpsertDevice>(update)) {
+                accepted.push_back(
+                    std::get<aki::app::UpsertDevice>(update).device.id.value);
+            }
+        }};
+
+    // 两个可接受更新 + 一个会被拒绝的更新（未知 id 的进度更新）。
+    // submit_update 返回通道 admission（不等于已生效）；拒绝发生在 drain。
+    REQUIRE(owner.submit_update(aki::app::UpsertDevice{make_device("d-1")}));
+    REQUIRE(owner.submit_update(aki::app::UpsertDevice{make_device("d-2")}));
+    REQUIRE(owner.submit_update(
+        aki::app::UpdateTransferProgress{TransferId{"ghost"}, 1, 2}));
+    owner.drain();
+
+    REQUIRE(accepted == std::vector<std::string>{"d-1", "d-2"});  // 顺序 + 拒绝不调用
+    REQUIRE(owner.stats().updates_applied == 2);
+    REQUIRE(owner.stats().updates_rejected == 1);  // ghost 更新被状态机拒绝
+    REQUIRE(owner.stats().post_accept_failures == 0);
+}
+
+// 3)：处理器异常全捕获计数且 drain 继续（异常不上浮）。
+TEST_CASE("Post-accept handler exceptions are contained and counted",
+    "[unit][app_state][dec009]") {
+    aki::app::AppStateOwnerOptions options;
+    int calls = 0;
+    aki::app::AppStateOwner owner{options, aki::app::AppState{},
+        [&calls](const aki::app::AppStateUpdate&) {
+            ++calls;
+            throw std::runtime_error("handler defect (dec009 containment)");
+        }};
+
+    REQUIRE(owner.submit_update(aki::app::UpsertDevice{make_device("d-1")}));
+    REQUIRE(owner.submit_update(aki::app::UpsertDevice{make_device("d-2")}));
+    owner.drain();  // 异常不上浮：drain 正常返回，后续更新继续处理。
+
+    REQUIRE(calls == 2);  // 两个接受更新都被调用（异常未中断 drain）
+    REQUIRE(owner.stats().updates_applied == 2);
+    REQUIRE(owner.stats().post_accept_failures == 2);  // 全捕获计数可见
+}
+
+// 4)：入队拒绝双计数——control 未注册时 enqueue 明确拒绝（§11.1 ② 窗口
+// 语义），处理器侧计数与 control->rejected_count 同帧可见。
+TEST_CASE("Post-accept enqueue rejection is double-counted",
+    "[unit][app_state][dec009]") {
+    auto control = std::make_shared<aki::persistence::DatabaseWorkerControl>(
+        std::make_unique<aki::persistence::Repositories>(
+            aki::persistence::Database::open(":memory:")));
+
+    aki::app::AppStateOwnerOptions options;
+    std::uint64_t sink_rejected = 0;
+    aki::app::AppStateOwner owner{options, aki::app::AppState{},
+        [&](const aki::app::AppStateUpdate& update) {
+            if (std::holds_alternative<aki::app::UpsertDevice>(update)) {
+                auto job = aki::persistence::make_device_upsert_job(
+                    std::get<aki::app::UpsertDevice>(update).device);
+                if (!control->enqueue(std::move(job))) {
+                    ++sink_rejected;  // 处理器侧计数（RULE-09）
+                }
+            }
+        }};
+
+    REQUIRE(owner.submit_update(aki::app::UpsertDevice{make_device("d-1")}));
+    REQUIRE(owner.submit_update(aki::app::UpsertDevice{make_device("d-2")}));
+    owner.drain();
+
+    REQUIRE(sink_rejected == 2);                  // 处理器侧
+    REQUIRE(control->rejected_count() == 2);      // control 侧（双可见）
+    REQUIRE(owner.stats().post_accept_failures == 0);  // 拒绝不是异常
+}
+
+// 5)：幂等 no-op 接受同样入队，并被作业侧幂等吸收（终态列更新对已终态行
+// 重放仍成功）；零丢失由关闭排空后 completed==admitted 证明。
+TEST_CASE("Idempotent no-op acceptance enqueues and is absorbed by the job",
+    "[unit][app_state][dec009]") {
+    auto db = aki::persistence::Database::open(":memory:");
+    REQUIRE(aki::persistence::Migrator(aki::persistence::schema_v1_steps())
+                .bring_up_to_date(db)
+        == 1);
+    auto control = std::make_shared<aki::persistence::DatabaseWorkerControl>(
+        std::make_unique<aki::persistence::Repositories>(std::move(db)));
+    control->repositories().transfers.upsert(
+        make_transfer("t-1", aki::transfer::TransferState::Completed));
+
+    aki::app::ExecutorOwner owner_executor;  // 用例局部顺序 owner（AGENTS 7/8）
+    REQUIRE(owner_executor.initialize());
+    auto runnable = std::make_unique<aki::persistence::DatabaseWorkerRunnable>(
+        control);
+    executor::BlockingWorkerSpec worker_spec;
+    worker_spec.name = "aki.db-worker";
+    worker_spec.config.thread_name = "aki-db-worker";
+    worker_spec.worker = std::move(runnable);
+    REQUIRE(owner_executor.start_blocking_worker(std::move(worker_spec)));
+    control->mark_registered();  // 未注册 control 会拒绝一切入队（§11.1 ②）
+
+    aki::app::AppStateOwnerOptions options;
+    std::uint64_t admitted = 0;
+    aki::app::AppStateOwner owner{options, aki::app::AppState{},
+        [&admitted, control](const aki::app::AppStateUpdate& update) {
+            std::vector<aki::persistence::DbJob> jobs;
+            if (std::holds_alternative<aki::app::UpsertTransfer>(update)) {
+                jobs.push_back(aki::persistence::make_transfer_upsert_job(
+                    std::get<aki::app::UpsertTransfer>(update).transfer));
+            } else if (std::holds_alternative<aki::app::CompleteTransfer>(
+                           update)) {
+                jobs.push_back(aki::persistence::make_transfer_terminal_job(
+                    std::get<aki::app::CompleteTransfer>(update).transfer,
+                    std::get<aki::app::CompleteTransfer>(update).final_state));
+            }
+            for (auto& job : jobs) {
+                REQUIRE(control->enqueue(std::move(job)));
+                ++admitted;
+            }
+        }};
+
+    // 先让 owner 知道该传输（Completed，新行接受），再重复终态宣告：
+    // from == to 视为幂等 no-op 接受（第 10.1 节），DEC-009：同样入队。
+    REQUIRE(owner.submit_update(aki::app::UpsertTransfer{
+        make_transfer("t-1", aki::transfer::TransferState::Completed)}));
+    REQUIRE(owner.submit_update(aki::app::CompleteTransfer{
+        TransferId{"t-1"}, aki::transfer::TransferState::Completed}));
+    REQUIRE(owner.submit_update(aki::app::CompleteTransfer{
+        TransferId{"t-1"}, aki::transfer::TransferState::Completed}));
+    owner.drain();
+    REQUIRE(admitted == 3);  // 1 upsert + 2 幂等 no-op（未被入队侧去重）
+
+    const auto report = owner_executor.shutdown([&] {
+        control->request_drain();
+        const auto deadline = std::chrono::steady_clock::now()
+            + std::chrono::milliseconds{3000};
+        while (!control->drain_completed()) {
+            REQUIRE(std::chrono::steady_clock::now() < deadline);
+            std::this_thread::yield();
+        }
+    });
+    REQUIRE(report.fully_stopped());
+    REQUIRE(control->completed_count() == 3);  // 作业侧幂等吸收（无失败）
+    REQUIRE(control->failed_count() == 0);
+    const auto row = control->repositories().transfers.find(TransferId{"t-1"});
+    REQUIRE(row.has_value());
+    REQUIRE(row->state == aki::transfer::TransferState::Completed);
 }
 
 int main(int argc, char* argv[]) {

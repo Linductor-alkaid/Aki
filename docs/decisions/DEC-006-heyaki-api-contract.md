@@ -50,7 +50,9 @@ M3 要以 pinned `third_party/heyaki` 替换 `FakeHeyakiAdapter`（[DEC-002](DEC
   1. 身份/配置：`ProfileStore::create/open` + `initialize_local` +
      `endpoint_for(application_id)`；`DeviceId` = 32 字节 `Identifier`，
      `derive_device_id(public_key)` 实现公钥稳定绑定；aki `DeviceId.value` 取
-     `heyaki::to_string(device_id)` 规范 hex。
+     `heyaki::to_string(device_id)` 的规范字符串形式（M3-03 实测澄清：为带
+     kind 前缀的 `hy1_` 编码串，56 字符，非裸 hex——原「规范 hex」措辞按实现
+     修正，权威规则「value = to_string(device_id)」不变）。
   2. 发现：Node 常驻 LAN 广播/监听，无 start/stop discovery API——SPI
      `start_discovery`/`stop_discovery` 在 Adapter 层落为「启停观察管道」：
      `submit_periodic` 轮询 `endpoints()` diff 合成 `on_device_discovered`；
@@ -81,7 +83,7 @@ M3 要以 pinned `third_party/heyaki` 替换 `FakeHeyakiAdapter`（[DEC-002](DEC
     「有界校验 + 投递」对齐；业务 handler 一律在 Manager 执行上下文。
 - **冻结常量**（防止各工作项各自发明编码）：`application_id = "org.aki.app"`；
   `DeviceId`（32B）/`MessageId`（16B）/`TransferId` 与 heyaki `Identifier` 的
-  字节 ↔ 规范 hex 字符串双射；envelope `type = "aki.text"`；配对 scope =
+  字节 ↔ 规范字符串（`to_string` 编码形式）双射；envelope `type = "aki.text"`；配对 scope =
   `message.send`。
 - **已知语义缺口（如实记录，不静默）**：LanPresence 不携带
   display_name/device_class/os_name/capabilities 元数据——`DeviceIdentity` 这些

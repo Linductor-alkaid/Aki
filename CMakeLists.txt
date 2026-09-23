@@ -135,6 +135,8 @@ add_subdirectory(ui)
 
 add_executable(aki main.cpp)
 aki_apply_warnings(aki PRIVATE)
+# M3-03：宿主经 heyaki/adapter/local_identity.hpp 消费真实 heyaki 身份
+# （DEC-006 单图接入的产品目标首批消费点）；OpenSSL 运行期 DLL 随宿主部署。
 target_link_libraries(aki PRIVATE
     aki_app
     aki_device
@@ -142,7 +144,9 @@ target_link_libraries(aki PRIVATE
     aki_transfer
     aki_persistence
     aki_heyaki
+    heyaki::client
     aki_ui)
+aki_deploy_openssl_dlls(aki)
 
 if(AKI_BUILD_TESTS)
     enable_testing()
