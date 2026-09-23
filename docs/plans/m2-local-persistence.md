@@ -128,10 +128,22 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
   终止缺陷（官方 DLL/MSVC/GCC 三路复现）——`run_cached` 统一在 SqliteError 时
   逐出缓存语句规避，详见验证记录。本项为同步封装，DOD-02 六项不适用。
   详见验证记录。）
-- [ ] `M2-05` 提供 `DatabaseWorker`：经 `ExecutorOwner` 注册 blocking worker
+- [x] `M2-05` 提供 `DatabaseWorker`：经 `ExecutorOwner` 注册 blocking worker
   （首次启用，设计第 8.2 节落点），单一连接 + 有界工作通道串行消费、StopToken
   在语句间协作取消、通道满与执行失败经 Executor 监控设施可见（`EXEC-04`/
   `EXEC-06`/`RULE-09`），关闭顺序并入 `EXEC-01`（drain 在途 DB 作业后 join）。
+  （2026-09-23：`persistence/database/database_worker.hpp/.cpp`（公开控制面
+  `DatabaseWorkerControl`：enqueue（try_send 明确拒绝）/request_drain/
+  request_exit（协作退出）/completed-failed-rejected 及通道 dropped/
+  closed_send 计数，pimpl 公开头无 sqlite/executor 类型）+
+  `database_worker_adapter.hpp`（注册侧接线头：`DatabaseWorkerRunnable`
+  实现 `IBlockingIoWorker`，独占连接经 M2-04 仓储消费作业；等待采用
+  try_receive + 短睡眠轮询环——pinned v0.5.0-7 的 receive_for 在本场景
+  观测到已 admit 作业不可见/进程异常终止（官方 DLL 复现），采用集成指南
+  备选 ⑧，响应延迟上界=轮询间隔）；宿主组合：unique_ptr 锚定 Repositories
+  （仓储持 Database& 回引，不可移动）+ control 共享。DOD-02 六项沿 worker
+  路径全覆盖（`test_database_worker` 8 test case / 102 断言，debug 60 次/
+  release 30 次稳定性通过；初稿误记 7/87，以合入前双配置实测为准）。详见验证记录。）
 - [ ] `M2-06` 落实文件本体存储布局与生命周期：数据根目录（Platform Adapter 解析，
   Windows `%APPDATA%` / Linux XDG，Core 不见平台类型）下 `db/aki.db3` 与 `files/`
   并置；`files/tmp/<transfer_id>.part` 写入、`Completed` 终态流式 SHA-256 后原子
@@ -407,3 +419,83 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
     C 编译面）；MinGW 完整构建沿用 M1-02 记录限制 1；MR 闭环由后续环节
     执行，本记录不含 commit/CI 证据。
   - 同步：本里程碑工作项 `M2-04`、总计划当前状态。
+
+- 2026-09-23（`M2-05`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0 / w64devkit GCC 15.2.0（语法检查））：
+  - 范围：`persistence/database/database_worker.hpp/.cpp`（公开控制面
+    `DatabaseWorkerControl`）、`persistence/database/database_worker_adapter.hpp`
+    （注册侧接线头：`DatabaseWorkerRunnable` : `executor::IBlockingIoWorker`；
+    executor 类型按设计第 8.2 节允许存在于该接线层，RULE-10 守卫公开面不含）、
+    `persistence/CMakeLists.txt`（PRIVATE 链接 executor::executor）、
+    `tests/unit/test_database_worker.cpp` + `tests/CMakeLists.txt`、
+    `persistence/repository/statement_cache.hpp`（补移动语义——Repositories
+    组装需要）。`app/lifecycle` 未改（start_blocking_worker 既有入口直接消费）。
+  - 依据：调研结论 `M2-05-blocking-worker-semantics`（BlockingWorkerSpec 无
+    队列面，作业通道应用层自建 `executor::comm::MpscChannel<DbJob>`；wakeup
+    平凡 noexcept；关闭排空走宿主钩子；无能力缺口不进 9.4 台账）、
+    [设计第 11.1 节 ①③](../design/aki_design.md)、第 8.2/8.3 节、
+    [DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)、总计划
+    `EXEC-01`/`EXEC-04`/`EXEC-06`/`EXEC-07`、`RULE-07`/`RULE-09`/`RULE-10`、
+    `DOD-02`/`DOD-03`；AGENTS.md Executor 规则 5/6/8/10；executor-integration
+    blocking-io 卡（本会话已加载）。
+  - 实现要点：① 入队 `enqueue(DbJob)->bool`：未注册/作业不完整（缺执行体或
+    完成通道）/通道满/已关闭四类明确拒绝（rejected 计数 + 通道 CommStats
+    Dropped/ClosedSend）；② run() 轮询消费：try_receive 全量排空 → 作业间
+    检查 StopToken 与 drain/exit 旗标 → 短睡眠（wait_timeout，默认 100ms）
+    ——响应延迟上界=轮询间隔；③ 逐作业 try/catch：SqliteError/runtime_error
+    经 promise set_exception 结算 + failed 计数，worker 存活（未捕获异常会以
+    WorkerException 终止 worker——硬纪律，测试显式断言存活）；④ request_drain
+    后排空优先于 StopToken（先于 EXEC-01 步骤 2），预算（drain_budget，
+    默认 2s，锚定 run 启动）内消费至空则 close+drain_completed；预算耗尽
+    如实记录 drain_budget_exhausted 不伪造完成；⑤ request_exit：协作退出
+    （不排空），作业间退出，存量按取消处理——DOD-02 执行中取消的确定性
+    验证通道；⑥ Repositories 不可移动（四仓储持 Database& 回引，重定位即
+    悬垂），DatabaseWorkerRunnable 以 unique_ptr 锚定 + control 别名
+    shared_ptr 共享生命周期。
+  - 实现与调研/设计的偏差（如实记录）：调研推荐 run() 以 `receive_for` 有界
+    等待等待通道；联调中该路径观测到已 admit 作业不可见/进程异常终止（见
+    下游缺陷条目），改用集成指南备选 ⑧（try_receive + 短睡眠轮询环，响应
+    上界=轮询间隔）。设计第 11.1 节 ③ 的契约（有界等待、语句间取消、可解除
+    阻塞）不受影响，无需改设计；wakeup() 平凡 noexcept 实现与调研结论一致。
+  - **上游 SQLite 缺陷（M2-04 已记录，本项再次确认影响）**：SQLite 3.53.4
+    对“约束失败语句的 reset 复用”异常终止（官方 DLL/MSVC/GCC 三路复现）。
+    本项规避：仓储 `run_cached` 在 SqliteError 时逐出缓存语句；DatabaseWorker
+    作业异常不重放、经 promise 结算。建议向上游报告或评估版本升级（M2-08
+    审计归档）。
+  - 验证（生成器说明同 M1 记录；本机 MinGW 限制 1 未变化）：
+    - `ctest --preset debug -C Debug --timeout 60` → 16/16（原 15 + 新
+      `test_database_worker` 8 test case / 102 断言）。
+    - `ctest --preset release -C Release --timeout 60` → 16/16。
+    - 稳定性：`test_database_worker` debug 连续 60 次、release 连续 30 次
+      全部通过。
+    - GCC 语法检查（CI Linux 告警姿势）：`g++ -std=c++20 -Wall -Wextra
+      -Wpedantic -Werror -fsyntax-only`（含 executor/sqlite include）对
+      database_worker.cpp 及 test_database_worker.cpp 通过。
+    - RULE-10 证据（验收 ③）：`grep -rn "executor/|#include <sqlite3.h>"
+      persistence/database/database_worker.hpp persistence/repository/*.hpp
+      persistence/migration/*.hpp` 无命中；公开面守卫
+      `test_persistence_public_surface` 继续通过。
+    - 覆盖映射（验收 ①，DOD-02 六项沿 worker 路径 = M2 退出-2）：
+      正常完成（3 作业入队 → 串行执行 → promise 结算 → 文件库重启断言
+      device/conversation 生效）；任务异常（仓储 SqliteError 经 promise
+      结算 + failed 计数 + 后续作业继续——worker 存活显式断言）；提交拒绝
+      （未注册 / 作业不完整 / 通道满（门闩作业占住 run 循环 + 容量 2）/
+      排空关闭后，四类均 `enqueue` 明确 false + rejected 计数）；执行中取消
+      （`request_exit` 作业间退出：在飞门闩作业放行后完成不打断、排队作业
+      不执行）；超时（drain_budget=30ms < 3×80ms 作业 → 预算耗尽
+      `drain_budget_exhausted` 如实记录、不伪造完成）；shutdown（钩子
+      request_drain → drain_completed（延迟上界 < budget+1s 实测）→
+      EXEC-01 步骤 2/3 → `fully_stopped()`，已 admit 作业零丢失）。
+      验收 ②：同实体作业 FIFO 保序（作业 2 的会话外键依赖作业 1 的设备行，
+      乱序即 FK 失败 + order 向量断言）。
+  - 过程修正：联调修正四处用例/实现问题——① UPDATE 的 `step()` 恒返回
+    DONE，“未命中即抛”改以 `changes()==0` 判定（三处）；② 缓存测试 DDL/
+    INSERT 未 step 即断言表存在（补 step）；③ 公开面用例迁移需含 v1 schema
+    （DeviceRepository 依赖）；④ 在飞判定改用作业内 entered 原子（gate
+    future 未就绪不能证明在飞）。
+  - 限制：ASAN/UBSAN/TSAN 随本 PR Linux CI 门禁；TSAN：DB worker 属跨上下文
+    交互（DOD-03）——tsan 预设已存在，本机 MinGW 不可跑（限制 2），补跑
+    条件「CI 矩阵增加 tsan job」已于本 MR 落实（`.github/workflows/ci.yml`
+    matrix 增补 `tsan`，运行证据随 MR CI 产出）；MR 闭环由后续环节执行，
+    本记录不含 commit/CI 证据。
+  - 同步：本里程碑工作项 `M2-05`、总计划当前状态。
