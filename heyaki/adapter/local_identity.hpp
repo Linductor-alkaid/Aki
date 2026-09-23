@@ -47,40 +47,69 @@ struct LocalIdentity {
     bool created = false;              // true = 本次启动新建；false = 既有加载
 };
 
-// 在 <data_root>/db/profile.sqlite 创建或打开本地 profile 并补齐就绪项
-// （身份/endpoint/口令 verifier/配对策略/LAN 配置）。失败抛 std::runtime_error
-// （携带 heyaki error_code_name + safe_detail，不静默）——组合根按第 11.1 节 ②
-// 干净退出。
-[[nodiscard]] inline LocalIdentity provision_local_identity(
-    const std::string& data_root) {
-    namespace hh = ::heyaki;
+// 持有打开的本地 profile（M3-04：Node/Runtime 装配需要常驻 store）。
+// store() 供 heyaki/ 层内接线（heyaki/session）使用；组合根只见 identity()。
+class LocalProfile {
+public:
+    // create-or-open + readiness 收敛（语义同 provision_local_identity）。
+    [[nodiscard]] static LocalProfile open(const std::string& data_root) {
+        namespace hh = ::heyaki;
 
-    const auto profile_path =
-        std::filesystem::path{data_root} / "db" / "profile.sqlite";
-    const bool created = !std::filesystem::exists(profile_path);
+        const auto profile_path =
+            std::filesystem::path{data_root} / "db" / "profile.sqlite";
+        const bool created = !std::filesystem::exists(profile_path);
 
-    hh::ProfileOpenOptions options;
-    options.secret_backend.prefer_os_backend = false;  // 确定性（见头注）
-    auto profile_result = created ? hh::ProfileStore::create(profile_path, options)
-                                  : hh::ProfileStore::open(profile_path, options);
-    if (!profile_result) {
-        const auto* error = profile_result.error_if();
-        throw std::runtime_error(std::string("local identity: profile ")
-            + (created ? "create" : "open") + " failed: "
-            + std::string(hh::error_code_name(error->code())) + ": "
-            + std::string(error->safe_detail()));
+        hh::ProfileOpenOptions options;
+        options.secret_backend.prefer_os_backend = false;  // 确定性（见头注）
+        auto profile_result = created
+            ? hh::ProfileStore::create(profile_path, options)
+            : hh::ProfileStore::open(profile_path, options);
+        if (!profile_result) {
+            const auto* error = profile_result.error_if();
+            throw std::runtime_error(std::string("local identity: profile ")
+                + (created ? "create" : "open") + " failed: "
+                + std::string(hh::error_code_name(error->code())) + ": "
+                + std::string(error->safe_detail()));
+        }
+
+        LocalProfile profile(std::move(*profile_result.value_if()), created);
+        profile.converge_local_initialization();
+        profile.refresh_identity();
+        return profile;
     }
-    auto profile = std::move(*profile_result.value_if());
 
-    // 首次启动补齐本地初始化；后续启动经 readiness 收敛（幂等）。
-    auto readiness = profile.local_readiness(kAkiApplicationId);
-    if (!readiness) {
-        const auto* error = readiness.error_if();
-        throw std::runtime_error(std::string("local identity: readiness failed: ")
-            + std::string(hh::error_code_name(error->code())) + ": "
-            + std::string(error->safe_detail()));
+    LocalProfile(LocalProfile&&) noexcept = default;
+    LocalProfile& operator=(LocalProfile&&) = delete;
+    LocalProfile(const LocalProfile&) = delete;
+    LocalProfile& operator=(const LocalProfile&) = delete;
+
+    [[nodiscard]] const LocalIdentity& identity() const noexcept {
+        return identity_;
     }
-    if (!readiness.value_if()->ready()) {
+
+    // heyaki/ 层内接线使用（heyaki/session 的 Node 装配）；组合根不得调用
+    // （RULE-10：heyaki 类型不出层）。
+    [[nodiscard]] ::heyaki::ProfileStore& store() noexcept { return store_; }
+
+private:
+    LocalProfile(::heyaki::ProfileStore store, bool created)
+        : store_(std::move(store)) {
+        identity_.created = created;
+    }
+
+    void converge_local_initialization() {
+        namespace hh = ::heyaki;
+        auto readiness = store_.local_readiness(kAkiApplicationId);
+        if (!readiness) {
+            const auto* error = readiness.error_if();
+            throw std::runtime_error(
+                std::string("local identity: readiness failed: ")
+                + std::string(hh::error_code_name(error->code())) + ": "
+                + std::string(error->safe_detail()));
+        }
+        if (readiness.value_if()->ready()) {
+            return;
+        }
         hh::PasswordVerifier verifier{.format_version = 1U,
             .parameters = hh::PasswordHashParameters{},
             .encoded = "$argon2id$v=19$m=65536,t=2,p=1$aki$aki"};
@@ -92,7 +121,7 @@ struct LocalIdentity {
             .password_generation = 1U,
             .pairing_policy = std::move(pairing),
             .lan = hh::LanConfiguration{}};
-        auto initialized = profile.initialize_local(initialization);
+        auto initialized = store_.initialize_local(initialization);
         if (!initialized) {
             const auto* error = initialized.error_if();
             throw std::runtime_error(
@@ -102,33 +131,43 @@ struct LocalIdentity {
         }
     }
 
-    LocalIdentity out;
-    out.created = created;
-
-    // DeviceId ↔ 公钥恒等绑定（DEC-006 映射 1；identity.hpp derive 契约）。
-    const hh::IdentityPublicKey& key = profile.identity_public_key();
-    auto derived = hh::derive_device_id(std::span<const std::byte>(key));
-    if (!derived || !(*derived.value_if() == profile.device_id())) {
-        throw std::runtime_error(
-            "local identity: derive_device_id(public_key) does not match the "
-            "profile device id (identity binding broken)");
+    void refresh_identity() {
+        namespace hh = ::heyaki;
+        const hh::IdentityPublicKey& key = store_.identity_public_key();
+        auto derived = hh::derive_device_id(std::span<const std::byte>(key));
+        if (!derived || !(*derived.value_if() == store_.device_id())) {
+            throw std::runtime_error(
+                "local identity: derive_device_id(public_key) does not match "
+                "the profile device id (identity binding broken)");
+        }
+        identity_.id =
+            aki::device::DeviceId{hh::to_string(store_.device_id())};
+        identity_.public_key.bytes.clear();
+        identity_.public_key.bytes.reserve(key.size());
+        for (const std::byte byte : key) {
+            identity_.public_key.bytes.push_back(
+                std::to_integer<std::uint8_t>(byte));
+        }
+        auto endpoint = store_.endpoint_for(kAkiApplicationId);
+        if (!endpoint) {
+            const auto* error = endpoint.error_if();
+            throw std::runtime_error(
+                std::string("local identity: endpoint_for('")
+                + kAkiApplicationId + "') failed: "
+                + std::string(hh::error_code_name(error->code())) + ": "
+                + std::string(error->safe_detail()));
+        }
+        identity_.endpoint_id = hh::to_string(*endpoint.value_if());
     }
 
-    out.id = aki::device::DeviceId{hh::to_string(profile.device_id())};
-    out.public_key.bytes.reserve(key.size());
-    for (const std::byte byte : key) {
-        out.public_key.bytes.push_back(std::to_integer<std::uint8_t>(byte));
-    }
+    ::heyaki::ProfileStore store_;
+    LocalIdentity identity_;
+};
 
-    auto endpoint = profile.endpoint_for(kAkiApplicationId);
-    if (!endpoint) {
-        const auto* error = endpoint.error_if();
-        throw std::runtime_error(std::string("local identity: endpoint_for('") + kAkiApplicationId
-            + "') failed: " + std::string(hh::error_code_name(error->code()))
-            + ": " + std::string(error->safe_detail()));
-    }
-    out.endpoint_id = hh::to_string(*endpoint.value_if());
-    return out;
+// 便捷形态（M3-03）：供给身份后即关闭 profile（无 Node 装配的场景）。
+[[nodiscard]] inline LocalIdentity provision_local_identity(
+    const std::string& data_root) {
+    return LocalProfile::open(data_root).identity();
 }
 
 }  // namespace aki::heyaki

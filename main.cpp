@@ -37,6 +37,7 @@
 #include "app/state/app_state_owner.hpp"
 #include "heyaki/adapter/fake_heyaki_adapter.hpp"
 #include "heyaki/adapter/local_identity.hpp"
+#include "heyaki/session/runtime_node.hpp"
 #include "persistence/database/database.hpp"
 #include "persistence/database/database_worker.hpp"
 #include "persistence/database/database_worker_adapter.hpp"
@@ -55,6 +56,7 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <system_error>
@@ -81,6 +83,7 @@ using aki::app::DeviceDiscoveredEvent;
 using aki::app::DeviceDisconnectedEvent;
 using aki::app::DeviceManager;
 using aki::app::ExecutorOwner;
+using aki::app::ExecutorOwnerOptions;
 using aki::app::ManagerPumpOptions;
 using aki::app::MessageDeliveredEvent;
 using aki::app::MessageManager;
@@ -375,22 +378,35 @@ int run_demo(const std::string& run_root) {
 
     // ---- 组合根（设计第 8.3 节七步 + 第 11.1 节 ②，DEC-009）----
     // 1) ExecutorOwner.initialize()——进程内唯一 Executor 生命周期 owner。
-    ExecutorOwner executor_owner;
+    //    DEC-006 合并负载定容（borrowed Runtime 的线程参数不生效，仅 Aki 侧
+    //    可 sizing）：heyaki asio/backend 负载 + Manager 泵 + DB blocking
+    //    worker 并入后显式定容。
+    ExecutorOwnerOptions executor_options;
+    executor_options.executor_config.min_threads = 2;
+    executor_options.executor_config.max_threads = 6;
+    ExecutorOwner executor_owner{executor_options};
     if (!executor_owner.initialize()) {
         std::printf("[FATAL] ExecutorOwner.initialize() failed\n");
         return 1;
     }
     // 2) 主线程同步启动恢复（§11.1 ②：不经 blocking worker；DB 损坏即干净
-    //    失败输出原因退出，不静默）+ 本地身份供给（SCOPE-01，同一恢复段）。
+    //    失败输出原因退出，不静默）+ 本地身份供给（SCOPE-01，同一恢复段；
+    //    profile 常驻供 Node 装配，M3-04）。
     RecoveryResult recovery;
     LocalIdentity identity;
+    std::optional<aki::heyaki::LocalProfile> profile_storage;
     try {
         recovery = perform_startup_recovery(run_root);
-        identity = provision_local_identity(run_root);
+        profile_storage.emplace(aki::heyaki::LocalProfile::open(run_root));
     } catch (const std::exception& error) {
         std::printf("[FATAL] startup recovery failed: %s\n", error.what());
-        return 2;  // ExecutorOwner 析构兜底关闭（无生产者）。
+        // return 2 正常展开：栈上 executor_owner 析构兜底关闭（此时无生产者，
+        // 与 main() 契约一致）。不得 std::exit——它不销毁自动对象，兜底析构
+        // 与受控关闭都不会执行，executor 线程将存活至静态析构期。
+        return 2;
     }
+    aki::heyaki::LocalProfile& profile = *profile_storage;
+    identity = profile.identity();
     std::printf("recovery: %zu device(s), %zu conversation(s), %zu message(s),"
         " %zu transfer(s), %zu migration step(s), %zu tmp orphan(s) removed\n",
         recovery.state.devices.size(), recovery.state.conversations.size(),
@@ -403,6 +419,18 @@ int run_demo(const std::string& run_root) {
 
     // 3) DatabaseWorkerControl——先于 AppStateOwner 构造（§8.3 七步序，
     //    DEC-009 装配时序；单一连接整体移交）。
+    // 3.5) Node/Runtime 装配（DEC-006 借用注入：borrowed Runtime + Node，
+    //      EXEC-02 启动段纪律——恢复完成后、事件源接通前；LAN 发现观察管道
+    //      随 M3-08 组合切换接入，本版本宿主 Node 仅常驻公告）。
+    std::printf("node session: creating (borrowed runtime)\n");
+    auto node_session = std::make_unique<aki::heyaki::NodeSession>(
+        aki::heyaki::NodeSession::create(executor_owner.executor(),
+            aki::heyaki::NodeSession::Options{.profile = &profile}));
+    if (!node_session->has_lan_interfaces()) {
+        std::printf(
+            "node session: no LAN interface (presence idle this run)\n");
+    }
+
     DatabaseWorkerOptions db_options;
     auto db = std::make_shared<DatabaseWorkerControl>(
         std::move(recovery.repositories), db_options);
@@ -858,6 +886,15 @@ int run_demo(const std::string& run_root) {
         (void)messages.flush(2s);
         adapter.set_sink(nullptr);             // ③ 停 Adapter 投递
         adapter.stop_discovery();
+        // ③.5 Heyaki 生产者停止（DEC-006/§8.3：Node::shutdown + Runtime::
+        //      shutdown，EXEC-01 步骤 1 内、早于 owner 步骤 2/3/5）。
+        const auto node_report = node_session->shutdown();
+        report(node_report.node_stopped && node_report.runtime_stopped,
+            "node session stopped (Node + borrowed Runtime)");
+        report(!node_report.runtime_executor_shutdown_performed,
+            "borrowed runtime did not shut the host executor down (DEC-006)");
+        report(!node_report.runtime_drain_timed_out,
+            "runtime drain completed without timeout");
         state_owner.close();                   // ④ comm 关闭（主线程 = owner 上下文）
         // ⑤ DB 排空位于钩子序列末尾（close() 之后、EXEC-01 步骤 2/3 之前，
         //    §11.1 ③）：close 的排空让最后一批更新被接受并入队 DB 作业。

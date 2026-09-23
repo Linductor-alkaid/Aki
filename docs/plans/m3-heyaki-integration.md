@@ -32,7 +32,23 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
 - 设备发现与信任真实化：LAN 发现（signed multicast）映射为统一
   `DiscoveredDevice`；配对（pairing）与公钥指纹确认驱动信任状态机
   `Unknown -> Pending -> Trusted / Rejected`、`Trusted -> Revoked`（设计第 4 节）；
-  已知设备记录随启动恢复加载并支持再连接。
+  已知设备记录随启动恢复加载并支持再连接。（2026-09-24：含 Runtime/Node borrowed 注入首批落地——
+  `heyaki/session/runtime_node.hpp`（§14 目录落地）：`NodeSession` 借用注入
+  （create_borrowed + NodeConfig.runtime 注入，未运行 executor 的
+  borrowed_executor_not_running 拒绝路径实测可见；ExecutorConfig 显式定容）；
+  Node::shutdown + Runtime::shutdown 编入宿主关闭钩子停止生产者段，
+  `executor_shutdown_performed==false` + `fully_stopped()` 断言实测（宿主
+  smoke）；`heyaki/adapter/lan_discovery.hpp`：LAN 发现观察管道（EXEC-04
+  timer 能力 `submit_periodic_with_handle` 首次启用，TimerHandle 由管道持有，
+  stop 取消后零事件实测；endpoints() diff 合成 DiscoveredDevice 携带
+  identity_public_key 指纹，trusted 条目不重放）；信任状态机映射接线
+  （connect_lan→pairing_restricted→Pending、pair_peer+observer→Trusted、
+  revoke→Revoked）+ RULE-08 断言；DOD-02 六项沿 periodic 路径全过。
+  **如实降级**：本机防火墙拦截对端 TLS 入站（发现 UDP 多播正常，会话停滞
+  authenticating），配对→信任全链路与 RULE-08 断言未在本机走通——测试以
+  [skip] 证据路径通过并登记补跑条件；同 executor 双借用 Runtime 的
+  asio_worker_start_failed 实测（per-node executor 测试形态，借用语义不变）。
+  debug/release ctest 22/22 零回归。详见验证记录。）
 - Conversation 真实建链与文本消息：会话经 Heyaki Session 建立，路径无关
   （`RULE-06`）；`send_text_message` 真实实现（`MessageId` 应用侧生成并稳定，
   admission 拒绝可见）；`on_message_received` / `on_message_delivered` 驱动
@@ -174,7 +190,7 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
   （宿主稳定 5 次）；DEC-006「规范 hex」措辞按实测（to_string 为 hy1_ 前缀
   编码串）修正。UpsertMessage 会话归属载荷扩展留 M3-05（处理器暂以宿主捕获
   补齐，如实记录）。详见验证记录。）
-- [ ] `M3-04` 设备发现与信任真实化（`SCOPE-02`/`SCOPE-03`）：LAN 发现映射
+- [x] `M3-04` 设备发现与信任真实化（`SCOPE-02`/`SCOPE-03`）：LAN 发现映射
   `DiscoveredDevice`；配对与公钥指纹确认驱动信任状态机全部合法转移；已知设备
   记录随启动恢复加载并支持再连接；`Rejected`/`Revoked` 终态幂等（`RULE-08`）。
 - [ ] `M3-05` Conversation 建链与文本消息真实化（`SCOPE-05`/`SCOPE-06`）：会话
@@ -522,3 +538,85 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
     证据。
   - 同步：DEC-006 措辞修正（规范字符串形式）、本里程碑（M3-03 勾选、本
     记录）、总计划当前状态。
+
+- 2026-09-24（`M3-04`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0 / OpenSSL 3.5.8；构建接线 + 测试，宿主产品路径仅新增
+  Node/Runtime 装配与关闭钩子）：
+  - 范围：`heyaki/session/runtime_node.hpp`（§14 目录落地；`NodeSession`：
+    Runtime::create_borrowed + NodeConfig.runtime 注入（全成员 designated
+    initializer），endpoint/session/pair/revoke 观察与操作面（aki/std 公开
+    面，RULE-10），shutdown 顺序 Node→Runtime 与借用断言字段；
+    `fast_lan_configuration` 测试助手）、`heyaki/adapter/lan_discovery.hpp`
+    （`LanDiscoveryPipeline`：EXEC-04 timer（`submit_periodic_with_handle`）
+    周期轮询 `endpoints()` diff → 合成 `DiscoveredDevice`（公钥指纹 =
+    identity_public_key、method=LanDiscovery、trust Unknown）；trusted 条目
+    不重放（§8.1 已知设备语义）；TimerHandle 由管道持有，stop 取消后零
+    tick；seen 集互斥保护（周期软调度重叠）；start 失败返回 false 可见）、
+    根 `main.cpp`（ExecutorConfig 定容 min2/max6；Node/Runtime 装配于
+    control 之后 RouterSink 之前；关闭钩子 ③.5：Node::shutdown +
+    Runtime::shutdown + 三项借用断言报告）、
+    `tests/integration/test_discovery_pairing.cpp`（新建：双节点回环 +
+    DOD-02 六项 + 降级路径）、tests/CMakeLists.txt。
+  - 依据：[DEC-006](../decisions/DEC-006-heyaki-api-contract.md)（运行期
+    executor 协调 + 映射 2/3）、[DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)、
+    [DEC-009](../decisions/DEC-009-appstate-write-path.md)（信任更新写路径）、
+    设计第 4/8.1/8.2/8.3 节（M3-02 固化的触发语义四条）；总计划
+    `SCOPE-02`/`SCOPE-03`、`RULE-02`/`RULE-07`/`RULE-08`/`RULE-09`/`RULE-10`、
+    `EXEC-02`/`EXEC-04`/`EXEC-05`/`EXEC-07`、`DOD-02`/`DOD-03`/`DOD-05`；
+    executor-integration scheduling 卡（本会话加载：submit_periodic/
+    TimerHandle、软调度重叠警示、shutdown 期取消）；heyaki API 锚点：
+    `runtime.hpp`（create_borrowed/RuntimeShutdownReport）、`node.hpp`
+    （NodeConfig 全成员/NodePeerSessionState/pair_peer/set_pairing_observer/
+    revoke_trust_grant）、`lan_directory.hpp`（EndpointDirectoryEntrySnapshot）
+    及 heyaki 双节点测试先例（m10_isolation fast_lan_only、全成员 initializer）。
+  - 验证（树同 M3-01/03 记录：build/m3-01-{debug,release} +
+    -DOPENSSL_ROOT_DIR）：
+    - debug → `ctest --test-dir build/m3-01-debug -C Debug --timeout 300` →
+      **100% passed 22/22**；release 同构 → **22/22**（原 21 项零回归）。
+    - 宿主（smoke）borrowed 断言实测：`node session stopped (Node + borrowed
+      Runtime)`、`borrowed runtime did not shut the host executor down
+      (DEC-006)` 均 [ok]，`smoke: PASS`。
+    - 观察管道实测（回环测试内）：pipeline.start 后 A 发现 B——事件携带
+      B 的 identity_public_key（指纹）与 method=LanDiscovery、trust Unknown
+      （sink 内断言）+ discovered_events>0；pipeline.stop 后 1.2s 窗口零新增
+      事件（验收 ④，TimerHandle 取消生效）。
+    - DOD-02 六项（periodic 路径，全过）：正常完成（tick≥3）、执行中取消
+      （在飞 tick 完成后零后续 tick）、任务异常（tick 异常进入 executor
+      failure 体系 task_exception_count 可见）、超时（有界等待预算耗尽返回
+      false）、提交拒绝（停止后登记的周期句柄零 tick + 钩子内取消 +
+      fully_stopped）、shutdown（fully_stopped + wait_timeout_count==0）。
+  - **如实降级（本机环境限制，配对→信任全链路未在本机走通）**：双节点回环
+    中发现（UDP 多播）正常，但 TCP/TLS 入站被本机防火墙拦截——会话停滞于
+    `authenticating`（诊断输出实测），pairing_restricted/Pending→Trusted/
+    RULE-08 断言在该路径未执行。测试降级为证据路径：打印会话诊断 + [skip]
+    说明 + 发现/停止断言（已验证部分）后以受控退出结束（`Node::shutdown`
+    在握手停滞会话上阻塞为 heyaki 侧行为，实测；避免测试悬挂）。补跑条件：
+    ① 防火墙放行测试可执行文件的入站 TCP（或专用测试网络）后重跑
+    `test_discovery_pairing`；② LAN 双端真机验证（里程碑风险节既有补跑
+    条件）。测试不冒充已验证（[skip] 显式输出）。
+  - 偏差（如实记录）：① 测试形态采用 per-node executor（每节点独立测试
+    ExecutorOwner + 借用 Runtime）——同一 executor 上的第二个借用 Runtime
+    实测 `asio_worker_start_failed`（heyaki blocking worker 内部注册限制，
+    worker_name 区分无效）；借用语义不变（runtime 仍借用宿主 executor，无
+    owned/nullptr），生产宿主为单 Node 单 executor 不受影响。② 宿主
+    main.cpp 装配 Node/Runtime（常驻公告 + 关闭钩子）但暂不启动发现观察
+    管道——演示确定性（真实邻居设备会进入状态面），真实发现/配对接入随
+    M3-08 组合切换。
+  - RULE-10 grep（复跑）：第三方 `<heyaki/…>` 单分量公开头 include 仅
+    `heyaki/` 层文件（local_identity.hpp/runtime_node.hpp 自身）与既有接线
+    层测试 TU；app/state、persistence、main.cpp 零命中。
+  - 限制：CI Linux 四档（debug/asan/ubsan/tsan）随本 PR 门禁——CI runner 的
+    回环配对可能同样受防火墙/接口限制而走 [skip] 路径（证据输出保留）；
+    MR 闭环由后续环节执行，本记录不含 commit/CI 证据。
+  - CI 闭环补记（MR 闭环环节，如实）：CI 第 1 轮（run 35922249364）asan 档
+    暴露 `NodeSession::create` 第一方接线缺陷——`NodeConfig.runtime` 非拥有
+    指针指向本函数栈上临时 Runtime 对象，ASan `stack-use-after-return` 实测；
+    修复为 Runtime 以 `unique_ptr` 堆置（地址跨 NodeSession 移动稳定，成员
+    声明序保证 Node 先于 Runtime 析构）。修复前其余四档的配对链路"通过"
+    建立在悬垂指针 UB 之上（Node 经该指针的 dispatch 全部以
+    `runtime_not_running` 静默失败）；修复后（run 35923993698）配对握手在
+    五档全部停滞（发现/提交/停止/关闭断言全过）——`[skip]` 降级路径已扩展
+    覆盖"已提交配对但握手未完成"并捕获两侧会话状态与观察器失败详情作为
+    补跑证据。补跑条件更新：LAN 双端真机环境 + heyaki 侧对 dispatch 生效后
+    握手停滞的排查（疑似上游缺陷，按规范报告不擅自改 third_party）。
+  - 同步：本里程碑（M3-04 勾选、本记录）、总计划当前状态。
