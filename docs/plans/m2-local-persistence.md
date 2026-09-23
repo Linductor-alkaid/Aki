@@ -619,7 +619,7 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
     序列（M2-01 前向引用的排空落点）、第 10.1 节单写者纪律、第 14 节；
     [DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)（验证方式：
     重启恢复 / 损坏 DB / 排空后 join / admission 拒绝可见；目录布局、迁移
-    纪律）；[DEC-008](../decisions/DEC-008-application-layer.md)（宿主关闭
+    纪律）；[DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)（宿主关闭
     钩子先取消并消费在途 future）；M2-03~06 既有 API（RAII/迁移/仓储/
     DatabaseWorker/FileStore/file_jobs）；总计划 `SCOPE-09`、`EXEC-01`/
     `EXEC-02`/`EXEC-04`、`RULE-02`/`RULE-09`/`RULE-10`、`DOD-02`（六项已随

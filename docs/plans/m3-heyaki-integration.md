@@ -138,14 +138,25 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
   MinGW configure-only 未达成（失败点前移至 heyaki vendored SQLite 生成，
   HeyakiVendoredRuntime.cmake:378）——限制如实记录；tsan 全图插桩与 CI 四档
   全绿随本 PR 门禁（本地不可执行）。详见验证记录。）
-- [ ] `M3-02` 设计先行契约固化（先文档后代码，M1-08 纪律）：按调研已选方向
+- [x] `M3-02` 设计先行契约固化（先文档后代码，M1-08 纪律）：按调研已选方向
   固化第 11.1 节 ① 写路径正式落点——`AppStateOwner` 构造注入接受后处理器
   （owner 单写者上下文按接受顺序同步调用、幂等 no-op 同样入队），更新第
   10.1/11.1① 与 §8.3 装配顺序、§11.1② 注册时序措辞；同批固化阻塞子决策：
   `UpsertMessage` 的 conversation_id 归属（倾向扩展更新载荷并同步评估第 6 节
   Message 模型会话归属）；处理器异常策略与容量预算入契约。细化设计第 8.1 节
   记录型来源接入与"发现 → 进入信任确认"的触发语义（DEC-006 映射权威下的
-  Adapter 观察管道语义）。
+  Adapter 观察管道语义）。（2026-09-24：纯文档变更，无产品代码——新建
+  [DEC-009](../decisions/DEC-009-appstate-write-path.md)（6.2 模板，Accepted，
+  含 tap/维持镜像/事件面驱动三项否决与 Message 模型子决策）；设计第 10.1 节
+  新增接受后处理器契约（PostAcceptHandler 构造入参、accept 后单写者上下文按
+  接受顺序同步调用、不抛出 + owner 全捕获 `post_accept_failures`）、第 11.1 节
+  标题与 ①（写入时机替换为正式落点 + 容量预算 64×2=128≤256 + 双计数失败语义）
+  与 ②（control 先于 owner 构造的时序对齐，未注册窗口拒绝可见）、第 8.3 节
+  装配顺序固化为七步（恢复→control→AppStateOwner(seed+handler)→Manager→
+  注册→RouterSink）、第 8.1 节记录型来源与「发现→信任确认」触发语义四条；
+  `UpsertMessage` 子决策=扩展载荷加 conversation 字段、§6 Message 模型不变。
+  M2-07 镜像偏差被 DEC-009 取代（M2 历史记录保持原样）；实现随 M3-03+ 按新
+  契约跟进，当前代码暂不变。详见验证记录。）
 - [ ] `M3-03` 本地设备身份真实化（`SCOPE-01`）：首次启动创建 Heyaki 长期身份、
   后续启动加载；`DeviceId` 与公钥稳定绑定；身份行持久化，重启恢复后一致。
 - [ ] `M3-04` 设备发现与信任真实化（`SCOPE-02`/`SCOPE-03`）：LAN 发现映射
@@ -349,3 +360,69 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
     闭环由后续环节执行，本记录不含 commit/CI 证据。
   - 同步：本里程碑（状态 In Progress、M3-01 勾选、本记录）、总计划当前
     状态与里程碑索引（M3 → In Progress）。
+
+- 2026-09-24（`M3-02`，纯文档变更，无产品代码——沿 `M2-01` 设计先行先例；
+  Windows 11 工作站，编辑与核验为本会话执行）：
+  - 范围：[docs/decisions/DEC-009-appstate-write-path.md](../decisions/DEC-009-appstate-write-path.md)
+    （新建，工程规范 6.2 模板：背景/决策/备选/影响与风险/验证方式/关联文档）；
+    [设计第 10.1 节](../design/aki_design.md)（新增「接受后处理器」段：
+    `PostAcceptHandler` 构造入参、accept 后单写者上下文按接受顺序同步调用、
+    被拒绝不调用、不抛出 + `post_accept_failures` 全捕获、入队拒绝双计数）；
+    [设计第 11.1 节](../design/aki_design.md)（标题加 M3-02/DEC-009 修订注记 +
+    M2-07 过渡形态声明；① 写入时机替换为正式落点 + 幂等 no-op 同样入队（补回
+    原句）+ 容量预算 64×2=128≤256 + 入队拒绝双可见；② 新增时序对齐段：control
+    先于 owner 构造、注册指 `mark_registered()` 时点、未注册窗口拒绝可见且预期
+    计数 0）；[设计第 8.3 节](../design/aki_design.md)（装配顺序固化为七步：
+    initialize → 启动恢复 → DatabaseWorkerControl → AppStateOwner(初始快照 +
+    处理器) → 四 Manager → 注册 worker → RouterSink；M1-06/M2-07 过渡形态
+    声明）；[设计第 8.1 节](../design/aki_design.md)（记录型来源接入四条：
+    扫描型=观察管道启停、「发现→信任确认」触发=DeviceDiscovered 主路径事件 +
+    `trust_state == Unknown` 过滤、已知设备记录=启动恢复直入 Store 不重放
+    discovered、邀请链接/手动输入=同一入口分期）；[DEC-009](../decisions/DEC-009-appstate-write-path.md)
+    子决策 ②=扩展 `UpsertMessage` 载荷加 conversation 字段、第 6 节 Message
+    模型不变（评估结论：归属是持久化关联元数据而非消息本体语义，§6 改动牵动
+    协议/UI 模型收益为零）。本里程碑文档（M3-02 勾选 + 本记录）、总计划当前
+    状态。
+  - 依据：本里程碑 `M3-02` 工作项与「设计与决策依据」两项调研结论（写路径
+    落点选型、executor 生命周期协调——后者已于 M3-01 落地）；[M2 里程碑
+    M2-07 验证记录偏差段](m2-local-persistence.md)（被 DEC-009 取代的临时
+    形态）；[设计第 10.1/11.1/8.3/8.1/6 节](../design/aki_design.md)；
+    [DEC-006](../decisions/DEC-006-heyaki-api-contract.md)、
+    [DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)、
+    [DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)；工程规范
+    6.2/8（公开 API/事件 schema 变更行）；总计划 `RULE-02`/`RULE-09`、
+    `EXEC-02`/`EXEC-04`、`DOD-04`/`DOD-05`。代码锚点核对：`ManagerPump`
+    Handler 先例 `app/application/manager_runtime.hpp:115`；`AppStateOwner`
+    构造入参形态 `app/state/app_state_owner.hpp:67`、`drain_updates` 的
+    apply/计数 `:211-223`；`MessageDeliveredEvent` 自带 conversation 先例
+    `app/state/app_events.hpp:33-36`；`MessageRepository::upsert(message,
+    conversation_id)` 调用方提供归属 `persistence/repository/repositories.hpp:74`。
+  - 一致性自查（验收 ①）：§10.1（处理器契约：调用时点/顺序/异常策略/拒绝双
+    计数）↔ §11.1 ①（写入时机正式落点 + 幂等 no-op 原句 + 容量预算 + 失败
+    语义）↔ §11.1 ②（control 先于 owner 的时序与未注册窗口）↔ §8.3（七步
+    装配序与其引用的 ②③）↔ §8.1（观察管道触发语义，DEC-006 映射权威）↔
+    DEC-009（①② 决策与三项否决备选）逐项交叉核对一致；与 M2-07 已实现形态
+    的偏差声明清晰（过渡形态保留于 console 宿主，DEC-009 取代其偏差说明、
+    M2 历史记录保持原样；正式落点为 M3-03+ 实现依据，当前代码暂不变）。
+    `UpsertMessage` 扩展与 `EXEC-02`（owner 上下文执行）/`EXEC-04`（作业仍由
+    worker 串行消费）/`RULE-02`（单写者）无冲突；§6 Message 模型未改动。
+  - 链接核验：脚本遍历四份变更文档的相对链接目标逐一核实存在（设计/DEC-009/
+    本里程碑/总计划；见下方验证命令输出，全部有效）。
+  - 验证：纯文档变更（验收：git status 仅涉设计/决策/计划文档），无构建/测试
+    行为改动——`git status --short` 确认改动仅
+    `docs/design/aki_design.md`、`docs/decisions/DEC-009-appstate-write-path.md`（新建）、
+    `docs/plans/m3-heyaki-integration.md`、`docs/plans/aki-implementation-plan.md`
+    五份文档内的前四份加 `docs/plans/m2-local-persistence.md`（一项事实修正：
+    M2-07 依据行引用的 DEC-008 文件名错误
+    `DEC-008-application-layer.md` → 实际文件
+    `DEC-008-manager-routing-and-executor-tasks.md`，链接核验暴露、仅改文件名
+    不动内容，沿 M1-08 事实修正先例）；相对链接核验：脚本遍历五份文档抽取
+    markdown 相对链接 108 条逐一核实目标存在 → `links checked: 108, broken: 0`
+    （修正前 1 条断链即上述 DEC-008 文件名）；第 6 节 Message 模型 diff 为零
+    （`git diff docs/design/aki_design.md` 不含 `struct Message` 块改动）。
+  - 限制：本项为设计先行契约，实现随 M3-03+ 批次跟进（`AppStateOwner` 构造
+    入参、`post_accept_failures` 统计、`UpsertMessage.conversation` 字段、
+    console 宿主切换到 §8.3 七步序）；实现若与本契约出现偏差，按 M1-08 纪律
+    先更新第 10.1/11.1/8.3 节与 DEC-009 再合代码；MR 闭环由后续环节执行，
+    本记录不含 commit/CI 证据。
+  - 同步：本里程碑工作项 `M3-02`、总计划当前状态。
