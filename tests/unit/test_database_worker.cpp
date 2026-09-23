@@ -398,7 +398,7 @@ TEST_CASE("Drain budget exhaustion is recorded and not faked as clean",
         }
     }
     REQUIRE(executed.load() + cancelled == 3);
-    REQUIRE(fx.control->failed_count() == cancelled);
+    REQUIRE(fx.control->failed_count() == static_cast<std::uint64_t>(cancelled));
 
     REQUIRE(report.executor_shutdown_completed);
 }

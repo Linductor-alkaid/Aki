@@ -142,8 +142,8 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
   观测到已 admit 作业不可见/进程异常终止（官方 DLL 复现），采用集成指南
   备选 ⑧，响应延迟上界=轮询间隔）；宿主组合：unique_ptr 锚定 Repositories
   （仓储持 Database& 回引，不可移动）+ control 共享。DOD-02 六项沿 worker
-  路径全覆盖（`test_database_worker` 7 test case / 87 断言，40 次稳定性
-  通过）。详见验证记录。）
+  路径全覆盖（`test_database_worker` 8 test case / 102 断言，debug 60 次/
+  release 30 次稳定性通过；初稿误记 7/87，以合入前双配置实测为准）。详见验证记录。）
 - [ ] `M2-06` 落实文件本体存储布局与生命周期：数据根目录（Platform Adapter 解析，
   Windows `%APPDATA%` / Linux XDG，Core 不见平台类型）下 `db/aki.db3` 与 `files/`
   并置；`files/tmp/<transfer_id>.part` 写入、`Completed` 终态流式 SHA-256 后原子
@@ -464,7 +464,7 @@ metadata、消息历史与 Transfer history，DB 访问经 Executor blocking wor
     审计归档）。
   - 验证（生成器说明同 M1 记录；本机 MinGW 限制 1 未变化）：
     - `ctest --preset debug -C Debug --timeout 60` → 16/16（原 15 + 新
-      `test_database_worker` 7 test case / 87 断言）。
+      `test_database_worker` 8 test case / 102 断言）。
     - `ctest --preset release -C Release --timeout 60` → 16/16。
     - 稳定性：`test_database_worker` debug 连续 60 次、release 连续 30 次
       全部通过。
