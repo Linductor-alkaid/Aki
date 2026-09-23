@@ -130,6 +130,20 @@
   限制沿用 M1-02 记录。
   详见 M2 里程碑文档 M2-04 验证记录。
 
+- 2026-09-23：`M2-05` 完成：`DatabaseWorker` 落地（blocking worker 首次启用，
+  设计第 8.2/8.3/11.1 节落点）——公开控制面 `DatabaseWorkerControl`（enqueue
+  明确拒绝/排空/协作退出/计数，公开头无 sqlite/executor 类型）+ 注册侧
+  `DatabaseWorkerRunnable`（IBlockingIoWorker，独占连接经 M2-04 仓储串行
+  消费，try_receive+短睡眠轮询环等待）；经 `ExecutorOwner::
+  start_blocking_worker` 注册（EXEC-07），关闭顺序并入 EXEC-01（钩子内
+  drain→close，先于步骤 2/3）。DOD-02 六项沿 worker 路径全覆盖（M2 退出-2）。
+  本地 MSVC debug/release ctest 16/16（+`test_database_worker` 7 test case /
+  87 断言，debug 60 次/release 30 次稳定）；发现并规避 pinned executor
+  v0.5.0-7 `receive_for` 在 FK 约束失败语句复用场景的作业不可见/进程异常
+  终止问题（改用轮询环，调研备选 ⑧；配合 M2-04 的错误语句逐出），非能力
+  缺口不进 9.4 台账。ASAN/UBSAN 随本 PR Linux CI；MinGW 限制沿用 M1-02
+  记录。详见 M2 里程碑文档 M2-05 验证记录。
+
 - 2026-09-23：`M2-03` 完成：persistence 薄 RAII 封装与迁移框架落地
   （`persistence/database`：`SqliteError`/`Database`/`Statement`/`Transaction`，
   open 期 pragma `journal_mode=WAL`、`synchronous=NORMAL`、`foreign_keys=ON`、

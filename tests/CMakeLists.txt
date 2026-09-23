@@ -158,3 +158,17 @@ target_link_libraries(test_persistence_repository PRIVATE
     aki_persistence)
 add_test(NAME test_persistence_repository COMMAND test_persistence_repository)
 set_tests_properties(test_persistence_repository PROPERTIES LABELS "unit")
+
+# M2-05：DatabaseWorker 单测（blocking worker 首次启用，DOD-02 六项 = 退出-2）。
+# 链接 aki_app（ExecutorOwner）与 aki_persistence（PRIVATE executor/sqlite 由
+# 本测试目标经 aki_app/executor 传播补足）；包含注册侧接线头（executor 类型
+# 在接线层，RULE-10 守卫公开面不含之）。
+add_executable(test_database_worker unit/test_database_worker.cpp)
+target_compile_features(test_database_worker PRIVATE cxx_std_20)
+aki_apply_warnings(test_database_worker PRIVATE)
+target_link_libraries(test_database_worker PRIVATE
+    Catch2::Catch2WithMain
+    aki_persistence
+    aki_app)
+add_test(NAME test_database_worker COMMAND test_database_worker)
+set_tests_properties(test_database_worker PROPERTIES LABELS "unit")

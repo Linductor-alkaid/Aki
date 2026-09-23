@@ -23,6 +23,9 @@ public:
 
     StatementCache(const StatementCache&) = delete;
     StatementCache& operator=(const StatementCache&) = delete;
+    // 可移动（持有 Database* 与可移动容器；移动后源为空壳，仅可析构）。
+    StatementCache(StatementCache&&) noexcept = default;
+    StatementCache& operator=(StatementCache&&) noexcept = default;
 
     // 命中：reset + clear bindings 后返回复用；未命中：prepare 并入缓存
     // （满时先 LRU 逐出）。返回的引用在下一次 get() 前有效。
