@@ -238,6 +238,85 @@ Transfer 至少包含
 状态。聊天窗口用文件卡片展示当前会话中的任务，同时提供独立的 Transfers
 页面查看正在进行和已经结束的传输。
 
+### 7.1 传输集成契约（M4 契约，M4-01）
+
+本小节固化传输的应用层集成契约，供 M4-02~05 直接实现（沿第 11.1 节先例；
+引擎语义以 DEC-004/DEC-006 为准）。
+
+**① TransferManager 职责切分（DEC-008 模式扩展）**：TransferManager 只写
+transfers Store；出站四接口（发起/暂停/恢复/取消）与入站文件事件在其单飞
+排空泵上下文串行处理；传输会话为长任务（`submit_cancellable` + StopToken，
+`EXEC-05`），`TaskHandle` 按业务稳定 ID（TransferId）显式持有（`EXEC-07`，
+DEC-008 传输会话类语义）；有界收件箱 + 排空泵沿 DEC-008 模式。发送侧链路：
+`start_file_transfer` → heyaki `push_file`（本地 `.part` 分块写入经
+DatabaseWorker 承载，见 ③）→ 文件观察事件 → typed 更新。接收侧：对端
+push 的分块由 heyaki 接收根落盘，`Committed` 事件后 Aki 从接收根合并到
+`DEC-004` 存储布局。暂停/恢复：`pause_file_transfer`/`resume_file_transfer`
+驱动状态机 `Transferring ↔ Paused`；heyaki 侧分块进度保持（断点续传），
+Aki 侧 `.part` 与已落库进度保持。取消：`cancel_file_transfer` →
+`Cancelled` 终态 + `.part` 幂等删除作业（M2-06 discard 作业组）。
+
+**② 传输 typed 更新 → DB 作业映射（§11.1 ① 补充）**：在既有
+`UpsertTransfer`/`UpdateTransferProgress`/`CompleteTransfer` 之上，
+`Transferring ↔ Paused` 与取消路径不新增独立 DB 作业类型——状态推进经
+`UpsertTransfer`（整行 upsert 幂等）承载，进度经 `UpdateTransferProgress`
+（部分列更新）承载；`.part` 生命周期经既有 M2-06 作业组
+（Completed 终态组 / discard 删除组）承载。暂停/恢复的**请求路径**不经
+DB：`pause_file_transfer` / `resume_file_transfer` 指令仅作用于内存会话
+状态与 heyaki 传输，不产生 DB 作业；**指令导致的状态推进本身经既有作业
+承载**——`paused` 与恢复后的 `Transferring` 推进按本节 ⑤ 的映射入队
+`UpsertTransfer` 作业（进度列已持久化，恢复后从 `transferred` 列续传），
+与 §11.1 ① 的 TRANSFER 作业模型一致。失败语义沿 §11.1 ①：入队拒绝与执行
+失败可观测，不回滚内存态。
+
+**③ `.part` 写入在 blocking worker 的承载与通道容量复核（DEC-009 触发
+条款履行）**：文件分块写入作为 DatabaseWorker 作业（与 DB 作业共享单一
+blocking worker 通道，容量 256）。批上限重算（64×n≤256 模型）：文件分块
+作业为长作业（单块可达 MiB 级 IO），纳入后 owner drain 批 64 × 每更新至
+多 2 个 DB 作业的既有模型需按「DB 作业 + 分块作业共享通道」重估——结论：
+分块作业由传输会话长任务直接顺序写入 `.part`（不经 DatabaseWorker 通道），
+仅进度列更新与终态作业组经通道（每块一个 `UpdateTransferProgress` 有界批，
+由传输会话聚合后批量提交，频率 ≤ 每 tick 一次）；由此通道批上限维持
+64×2≤256 不变，大文件长作业（单块 IO 秒级）仅占用 blocking worker 执行
+时长、不影响通道排队深度，对 drain 预算（2s）的影响为「至多等待一个在飞
+分块作业完成」，在预算内。**此为 M4-01 复核结论**：分块 IO 不经 DB 通道。
+
+**④ BLAKE3 wire 校验与 SHA-256 存储哈希的关系（澄清结论）**：heyaki 传输
+协议在 wire 层以 BLAKE3（manifest 32B + 每分块 32B，file.hpp）做传输完整
+性校验（`verifying` 阶段 whole-file digest + fsync + rename）；`DEC-004`
+存储哈希为接收方对最终落盘文件的全量流式 SHA-256（M2-06 终态作业组回写
+`stored_sha256`）。两者层次不同、互不替代：BLAKE3 校验「传输过程中字节
+未损坏」，SHA-256 校验「落盘后的存储内容」——接收方在 heyaki `Committed`
+之后对已落盘文件计算 SHA-256 并回写，**无冲突**，不需要统一决策。发送方
+SHA-256 在发送前对源文件计算（M4-04），随文件 metadata 携带，接收方校验
+时对账。
+
+**⑤ DEC-006 映射 7 实现级细化**：`start_file_transfer` →
+`push_file(peer, root, logical_name, source_path, transfer_id)`
+（transfer_id 由应用以业务稳定 ID 提供，支持断点续传）。参数来源（2026-09-24
+评审定案，DOD-04 设计先行——SPI 修订沿 M3-05 第 10 方法先例，M4-02 落地）：
+`source_path` 为发送侧本地文件路径，经出站 SPI 签名扩展传入（§8.1：
+`start_file_transfer(receiver, TransferId, FileMetadata, source_path)`，
+`source_path` 为 `std::filesystem::path`）；**不进入对端可见的
+`FileMetadata`**——该结构随消息载荷发给对端，携带发送方本地文件系统路径
+即信息外泄（`FileMetadata` 面向 M4-04 另补 `stored_sha256` 等对端可校验
+字段）；`root` 为 heyaki 逻辑根，由组合根经存储配置注入 Adapter 选项（非
+SPI 参数，Aki 侧固定使用会话默认文件根）；`logical_name` ←
+`FileMetadata.name`；
+`pause_transfer` → `pause_file_transfer`；`resume_transfer` →
+`resume_file_transfer`；`cancel_transfer` → `cancel_file_transfer`；
+`set_file_event_observer` → 状态映射：`transferring`（含 bytes_done 变化）→
+`UpdateTransferProgress`；`paused` → `UpsertTransfer`（`Paused`；对端
+驱动——含断线自动暂停，可发生于接收侧——经 sink 第 11 方法
+`on_transfer_paused(TransferId)` 投递，§8.1；本地暂停确认后同此映射，
+不新增 AppEvent 主路径类型，状态可见于 Store 快照）；
+`committed` → `CompleteTransfer`（`Completed`，M2-06 终态作业组）；
+`failed` → `CompleteTransfer`（`Failed`，事件 error 入观测日志）；
+`cancelled` → `CompleteTransfer`（`Cancelled`，`.part` 删除作业组）；
+`probing`/`offered`/`verifying` 中间态 → 映射 `Negotiating`/`Transferring`
+推进（不单独持久化）。`pull_file`（接收方向拉取）M4 暂不接入（接收侧以
+push 接收为主），接口预留。
+
 ## 8. 应用结构
 
 网络能力继续由 Heyaki 提供，包括设备身份、发现、信令、P2P 建链、Relay 和
@@ -291,7 +370,11 @@ executor 类型（`RULE-10`）；heyaki 层仅依赖第 3~7 节领域类型，�
 - `start_file_transfer(receiver, TransferId, FileMetadata)` /
   `pause_transfer` / `resume_transfer` / `cancel_transfer(TransferId)`：文件传输
   接口面（第 7 节）。M4 前仅签名与 TransferId 语义——一个 `TransferId` 对应一个
-  传输会话，不可重复启动；文件本体不经本接口传输（`RULE-05`）。
+  传输会话，不可重复启动；文件本体不经本接口传输（`RULE-05`）。M4 SPI 修订
+  （2026-09-24 评审定案，设计先行沿第 10 方法先例，M4-02 落地；M3 代码保持
+  M1 签名）：`start_file_transfer` 增补第四参数
+  `std::filesystem::path source_path`（发送侧本地文件路径，第 7.1 节 ⑤ 参数
+  来源定案；不进入对端可见的 `FileMetadata`）。
 
 入站（Adapter → 应用）经 `HeyakiAdapterSink` 纯虚接口投递，方法与第 10 节 9 类事件
 一一对应（`on_device_discovered` / `on_device_connected` / `on_device_disconnected` /
@@ -303,7 +386,12 @@ executor 类型（`RULE-10`）；heyaki 层仅依赖第 3~7 节领域类型，�
 message)`——出站文本的投递回报终态失败面（DEC-006 映射 4 的
 `send_failed` / `peer_rejected` / `ack_timeout` / `session_closed`）；协议
 `acked` 仍走 `on_message_delivered`，映射为 `SetDeliveryState(Failed)`（终态，
-`RULE-08`），不产生主路径事件。
+`RULE-08`），不产生主路径事件。M4 起追加第 11 个方法
+`on_transfer_paused(TransferId)`（2026-09-24 评审定案，设计先行，M4-05 落地）
+——对端驱动的传输暂停投递面：heyaki `paused` 相位含**断线自动暂停**、
+可发生于接收侧（`file.hpp`，`FileTransferPhase::paused`），无此方法则
+`paused → UpsertTransfer(Paused)` 对端驱动时无投递路径；映射
+`UpsertTransfer`（`Paused`），不新增 AppEvent 主路径类型。
 
 纪律：Adapter 回调只做有界校验与投递（`EXEC-02`），业务处理一律在 Manager 的执行
 上下文（M1-05）；事件从 Sink 到 Application State 的桥接由应用层完成——Sink 实现把

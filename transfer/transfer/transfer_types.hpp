@@ -22,7 +22,9 @@ struct TransferId {
 };
 
 // 文件 metadata（设计第 7/11 节）。文件本体不经消息通道传输（RULE-05）；
-// hash、本地存储路径等字段在 M2/M4 引入持久化与真实数据链路时补充。
+// hash 等对端可校验字段在 M2/M4 引入持久化与真实数据链路时补充。发送侧
+// 本地存储路径不经本类型（本结构随消息载荷对端可见，携带本地路径即信息
+// 外泄）——经出站 SPI 参数传递（设计 §7.1⑤/§8.1，2026-09-24 定案）。
 struct FileMetadata {
     std::string name;
     std::uint64_t size_bytes = 0;

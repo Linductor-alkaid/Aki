@@ -1,6 +1,6 @@
 # M4：图片消息与文件传输
 
-> 状态：Planned
+> 状态：In Progress
 > 负责人：Linductor
 > 所属计划：[Aki 实施总计划](aki-implementation-plan.md)
 > 前置：M3（`M3-01`~`M3-09` 工作项已完成并经 #29 收口审计；退出-1/退出-3 为
@@ -83,10 +83,24 @@
 
 ## 工作项
 
-- [ ] `M4-01` 设计先行：第 7 节传输集成契约小节固化（TransferManager 职责、
+- [x] `M4-01` 设计先行：第 7 节传输集成契约小节固化（TransferManager 职责、
   传输 typed 更新→作业映射、BLAKE3/SHA-256 关系澄清、`.part` 写入 blocking
   worker 承载与通道预算复核、DEC-006 映射 7 实现级细化）；偏差先更新设计/
-  决策再合代码（M1-08 纪律）。
+  决策再合代码（M1-08 纪律）。（2026-09-24：设计 §7.1「传输集成契约（M4
+  契约，M4-01）」固化五条——① TransferManager 职责切分（DEC-008 模式扩展：
+  出站四接口/入站文件事件泵上串行、长任务 submit_cancellable + StopToken、
+  TaskHandle 按业务稳定 ID、发送侧 .part 分块写入/接收侧 heyaki 根合并、
+  暂停恢复进度与 .part 保持、取消幂等删除作业组）；② 传输 typed 更新→作业
+  映射补充（暂停/恢复/取消不新增独立作业类型，状态推进经 UpsertTransfer
+  幂等、进度经 UpdateTransferProgress、.part 生命周期经 M2-06 既有作业组）；
+  ③ 容量预算复核结论（DEC-009 触发条款履行）：分块 IO 由传输会话长任务
+  直接顺序写 .part、不经 DatabaseWorker 通道，批上限维持 64×2≤256 不变，
+  大文件长作业仅占 blocking worker 执行时长、drain 预算（2s）内；④ BLAKE3
+  wire 校验与 SHA-256 存储哈希层次澄清：wire 完整性 vs 落盘存储内容、互不
+  替代、无冲突（不立统一决策）；⑤ DEC-006 映射 7 实现级细化（push/pause/
+  resume/cancel + FileTransferPhase 八态→Aki 状态映射逐条 + pull_file
+  预留）+ §8.1 传输四接口真实语义声明。纯文档变更，无产品代码。详见验证
+  记录。）
 - [ ] `M4-02` `transfer/manager/` TransferManager：传输会话七状态机全覆盖
   （合法/非法转移、终态幂等）、`submit_cancellable` + StopToken 任务承载、
   有界收件箱 + 排空泵、按业务稳定 ID 持有句柄。
@@ -143,3 +157,62 @@
 ## 验证记录
 
 （尚无记录；自 `M4-01` 起按工程规范 6.1/6.3 追加。）
+
+- 2026-09-24（`M4-01`，设计先行，纯文档变更，无产品代码——沿 M2-01/M3-02
+  先例；Windows 11 工作站；依据 pinned heyaki `include/heyaki/file.hpp`/
+  `node.hpp` 静态调研）：
+  - 范围：[设计第 7.1 节](../design/aki_design.md)（新增「传输集成契约
+    （M4 契约，M4-01）」五条：① TransferManager 职责切分；② 传输 typed
+    更新→DB 作业映射补充；③ `.part` 承载与通道容量复核结论；④ BLAKE3/
+    SHA-256 层次澄清；⑤ DEC-006 映射 7 实现级细化 + `pull_file` 预留）、
+    [DEC-006](../decisions/DEC-006-heyaki-api-contract.md)（映射 7 实现级
+    细化回填 + §7.1 交叉引用）。
+  - 依据：[DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)
+    （.part/SHA-256/终态作业组）、[DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)
+    （Manager 模式/取消/宿主关闭）、[DEC-009](../decisions/DEC-009-appstate-write-path.md)
+    （容量预算复核触发条款）；设计第 7 节（七状态机/文件卡片）、第 8.1 节
+    （传输四接口 M4 前签名语义）、第 6 节（Image 类型）、第 14 节
+    （transfer/manager 落点）；总计划 `SCOPE-07`/`SCOPE-08`、`RULE-05`/
+    `RULE-08`/`RULE-09`/`RULE-10`、`EXEC-04`/`EXEC-05`、`DOD-04`/`DOD-05`。
+    heyaki API 锚点：`file.hpp`（FileTransferPhase 八态 probing/offered/
+    transferring/verifying/paused/committed/failed/cancelled、
+    FileTransferEvent.bytes_done/bytes_total、FileManifestBody.blake3 32B、
+    每分块 blake3 32B）、`node.hpp`（push_file 含 transfer_id 断点续传
+    参数、pause/resume/cancel_file_transfer、set_file_event_observer、
+    pull_file）。
+  - 一致性自查（验收 ①）：§7.1 与 §11.1①（传输写路径既有映射）——
+    新增映射仅补充暂停/恢复/取消的承载方式（UpsertTransfer 幂等 + 既有
+    作业组），不引入新作业类型/新公开契约，与 DEC-009 写路径排除项一致；
+    与 DEC-004（.part/SHA-256/终态作业组）一致；与 DEC-006 映射 7 一致
+    （细化而非冲突）；与 §8.1（传输四接口 M4 前签名语义）一致——真实
+    语义声明在 §7.1 ①，M4-02 起按此实现。
+    2026-09-24 评审修正：「不引入新公开契约」表述作废——§7.1② 原文
+    「暂停/恢复…不产生 DB 作业」与同节 ⑤/DEC-006 映射 7（paused →
+    UpsertTransfer）自相矛盾，且 heyaki `paused` 相位（含断线自动暂停、
+    可发生于接收侧）无入站投递路径、`source_path`/`root` 在已声明契约中
+    无来源。定案（DOD-04 设计先行，沿第 10 方法先例，见 §7.1②⑤、§8.1、
+    DEC-006 映射 7）：① 暂停/恢复请求路径不经 DB，状态推进经既有
+    `UpsertTransfer` 承载（「不引入新作业类型」半边仍成立）；② 出站 SPI
+    签名扩展 `start_file_transfer(receiver, TransferId, FileMetadata,
+    std::filesystem::path source_path)`（source_path 不进对端可见
+    FileMetadata）；③ sink 第 11 方法 `on_transfer_paused(TransferId)`；
+    ④ `root` 由组合根经存储配置注入 Adapter（非 SPI 参数）。此为公开
+    契约修订的显式声明，M4-02（签名）/M4-05（第 11 方法路由）落地。
+  - BLAKE3/SHA-256 澄清结论（验收 ②）：无冲突，不立统一决策——BLAKE3
+    为 wire 层传输完整性校验（manifest + 每分块，heyaki `verifying` 阶段
+    whole-file digest + fsync + rename）；SHA-256 为 `DEC-004` 存储哈希
+    （落盘后全量流式计算回写 `stored_sha256`）。层次不同互不替代；接收方
+    在 heyaki `Committed` 之后对落盘文件计算 SHA-256 回写，发送方 M4-04 发送
+    前计算随 metadata 携带。
+  - 容量预算复核结论（验收 ③，DEC-009 触发条款履行，含计算过程）：
+    DatabaseWorker 通道 256 批上限模型 64×n≤256 的 n=2（DB 作业）不变；
+    文件分块 IO 由传输会话长任务直接顺序写 `.part`、不经 DatabaseWorker
+    通道（避免长 IO 作业占位通道排队深度），仅进度列更新（会话聚合批量、
+    ≤每 tick 一次）与终态作业组经通道。大文件长作业影响 = blocking worker
+    执行时长占用（至多等待一个在飞分块完成），在 drain 预算（2s）内。
+  - 链接核验（本会话执行）：变更文档相对链接 62 条逐一核实 →
+    `links checked: 62, broken: 0`。
+  - 限制：纯文档先行契约，实现随 M4-02~05；实现若与本契约偏差，按 M1-08
+    纪律先更新 §7.1 再合代码。
+  - 同步：本里程碑（M4-01 勾选、本记录、状态 In Progress）、总计划当前
+    状态。

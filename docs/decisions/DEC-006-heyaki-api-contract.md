@@ -79,7 +79,30 @@ M3 要以 pinned `third_party/heyaki` 替换 `FakeHeyakiAdapter`（[DEC-002](DEC
      turn_*→`Relay`、unknown→`Unknown`。
   6. 会话重建：`restart_session` 同 SessionId、epoch+1、接口变化自动触发——
      `RULE-06`「路径切换不新建会话」的直接依据（`SCOPE-11`）。
-  7. 传输四接口（M4 预留）：`push_file`/`pause`/`resume`/`cancel` +
+  7. 传输四接口（M4 实现级细化，M4-01；2026-09-24 评审定案参数来源与
+     paused 投递面，DOD-04 设计先行沿第 10 方法先例）：`start_file_transfer` →
+     `push_file(peer, root, logical_name, source_path, transfer_id)`
+     （transfer_id 由应用以业务稳定 ID 提供，支持断点续传；`source_path`
+     为发送侧本地文件路径，经 SPI 签名扩展传入——
+     `start_file_transfer(receiver, TransferId, FileMetadata,
+     std::filesystem::path source_path)`，不进入对端可见的 `FileMetadata`；
+     `root` 为 heyaki 逻辑根，由组合根经存储配置注入 Adapter 选项，非 SPI
+     参数；`logical_name` ← `FileMetadata.name`）；
+     `pause_transfer` → `pause_file_transfer`；`resume_transfer` →
+     `resume_file_transfer`；`cancel_transfer` → `cancel_file_transfer`；
+     `set_file_event_observer` → 状态映射：`transferring`（bytes_done 变化）→
+     `UpdateTransferProgress`；`paused` → `UpsertTransfer`（`Paused`；对端
+     驱动——含断线自动暂停，可发生于接收侧——经 sink 第 11 方法
+     `on_transfer_paused(TransferId)` 投递，M4-05 落地；本地暂停确认后同此
+     映射）；
+     `committed` → `CompleteTransfer`（`Completed`）；`failed` →
+     `CompleteTransfer`（`Failed`）；`cancelled` → `CompleteTransfer`
+     （`Cancelled`，`.part` 删除作业组）；`probing`/`offered`/`verifying`
+     中间态 → `Negotiating`/`Transferring` 推进不单独持久化；
+     `pull_file`（拉取方向）M4 暂不接入（接口预留）。设计侧契约见设计
+     §7.1（M4-01 固化：含 BLAKE3 wire 校验与 SHA-256 存储哈希层次澄清、
+     分块 IO 不经 DatabaseWorker 通道的承载结论）。原条目：
+     `push_file`/`pause`/`resume`/`cancel` +
      `set_file_event_observer` → `on_transfer_*`。
   - 回调线程：Node 回调在 executor 上下文触发（api.md），与 `EXEC-02`
     「有界校验 + 投递」对齐；业务 handler 一律在 Manager 执行上下文。
