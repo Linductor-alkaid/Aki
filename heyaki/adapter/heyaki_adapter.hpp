@@ -34,6 +34,12 @@ public:
     virtual bool on_message_received(aki::conversation::Message message) = 0;
     virtual bool on_message_delivered(aki::conversation::ConversationId conversation,
         aki::conversation::MessageId message) = 0;
+    // 出站文本的投递回报终态失败面（M3-05；DEC-006 映射 4 的 send_failed /
+    // peer_rejected / ack_timeout / session_closed）；协议 acked 走
+    // on_message_delivered。映射 SetDeliveryState(Failed)（终态，RULE-08）。
+    virtual bool on_message_send_failed(
+        aki::conversation::ConversationId conversation,
+        aki::conversation::MessageId message) = 0;
     virtual bool on_transfer_started(aki::transfer::Transfer transfer) = 0;
     virtual bool on_transfer_progress(aki::transfer::TransferId transfer,
         std::uint64_t transferred, std::uint64_t total) = 0;

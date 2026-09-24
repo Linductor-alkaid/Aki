@@ -33,6 +33,11 @@ struct MessageDeliveredWork {
     aki::conversation::MessageId message;
 };
 
+struct MessageDeliveryFailedWork {
+    aki::conversation::ConversationId conversation;
+    aki::conversation::MessageId message;
+};
+
 struct SendTextWork {
     aki::device::DeviceId to;
     aki::conversation::MessageId message_id;
@@ -41,12 +46,23 @@ struct SendTextWork {
 
 using MessageManagerWork = std::variant<MessageReceivedWork,
     MessageDeliveredWork,
+    MessageDeliveryFailedWork,
     SendTextWork>;
 
 // 构造选项置于命名空间作用域（同 AppStateOwnerOptions 处理，GCC 纪律）。
 struct MessageManagerOptions {
     ManagerPumpOptions pump{};
     aki::device::DeviceId local_device;  // 出站消息的 sender。
+    // 会话 id 派生前缀（与 ConversationManagerOptions::conversation_id_prefix
+    // 一致；DEC-009 ②：UpsertMessage 归属的权威解析——对端设备 → 会话）。
+    std::string conversation_id_prefix = "conv-";
+
+    // 对端设备 → 会话 id（ensure_conversation 的既有 id 方案）。
+    [[nodiscard]] aki::conversation::ConversationId conversation_for(
+        const aki::device::DeviceId& remote) const noexcept {
+        return aki::conversation::ConversationId{
+            conversation_id_prefix + remote.value};
+    }
 };
 
 class MessageManager {
@@ -68,6 +84,14 @@ public:
 
     [[nodiscard]] bool enqueue_message_received(aki::conversation::Message message) {
         return pump_.enqueue(MessageReceivedWork{std::move(message)});
+    }
+
+    // 出站投递回报终态失败（DEC-006 映射 4）：Failed 终态（幂等，RULE-08）。
+    [[nodiscard]] bool enqueue_message_send_failed(
+        aki::conversation::ConversationId conversation,
+        aki::conversation::MessageId message) {
+        return pump_.enqueue(MessageDeliveryFailedWork{
+            std::move(conversation), std::move(message)});
     }
 
     [[nodiscard]] bool enqueue_message_delivered(aki::conversation::ConversationId conversation,
@@ -101,10 +125,13 @@ private:
         if (work.message.id.empty()) {
             return false;
         }
-        // 收到的消息在本地记录为 Delivered（设计第 6 节）。
+        // 收到的消息在本地记录为 Delivered（设计第 6 节）；会话归属由
+        // sender 派生（DEC-009 ②；会话须已由 ensure_conversation 建立，
+        // 未知会话经 owner FK 前置校验拒绝可观测）。
         work.message.state = aki::conversation::DeliveryState::Delivered;
         const bool posted = post_event(MessageReceivedEvent{work.message});
-        const bool applied = state_owner_.submit_update(UpsertMessage{work.message});
+        const bool applied = state_owner_.submit_update(UpsertMessage{
+            work.message, options_.conversation_for(work.message.sender)});
         return posted && applied;
     }
 
@@ -117,6 +144,16 @@ private:
         const bool applied = state_owner_.submit_update(SetDeliveryState{
             work.message, aki::conversation::DeliveryState::Delivered});
         return posted && applied;
+    }
+
+    // DEC-006 映射 4：send_failed/peer_rejected/ack_timeout/session_closed →
+    // Failed 终态（无主路径事件；迟到回报不复活终态，RULE-08 owner 侧校验）。
+    bool handle(MessageDeliveryFailedWork& work) {
+        if (work.message.empty()) {
+            return false;
+        }
+        return state_owner_.submit_update(SetDeliveryState{
+            work.message, aki::conversation::DeliveryState::Failed});
     }
 
     bool handle(SendTextWork& work) {
@@ -137,7 +174,8 @@ private:
         // 是合法边）。真实投递回报经 on_message_delivered 推进（M3 起含中间态）。
         message.state = accepted ? aki::conversation::DeliveryState::Sent
                                  : aki::conversation::DeliveryState::Failed;
-        return state_owner_.submit_update(UpsertMessage{std::move(message)});
+        return state_owner_.submit_update(UpsertMessage{std::move(message),
+            options_.conversation_for(work.to)});
     }
 
     template <typename Payload>

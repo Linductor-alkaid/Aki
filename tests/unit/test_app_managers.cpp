@@ -1,7 +1,8 @@
 // M1-05：Device / Conversation / Message / Transfer Manager 骨架测试（DEC-008）。
 //
 // 覆盖（验收标准 ①②，设计第 8.3 节契约）：
-//   - 9 类 Sink 事件经 RouterSink 路由 → Manager 排空 → AppState 快照与必达
+//   - 10 类 Sink 方法（M3-05 DEC-006 映射 4 新增失败面 send_failed，不产
+//     主路径事件）经 RouterSink 路由 → Manager 排空 → AppState 快照与必达
 //     事件主路径 FIFO；connected/disconnected 扇出（DM presence + CM 会话推导，
 //     主路径事件只投递一次）；ensure_conversation 显式建会话；
 //   - 并发入队不丢（单飞泵丢失唤醒防护）；
@@ -12,7 +13,7 @@
 //     （独立 owner 排队软超时击杀排空任务且存量不丢）、shutdown（第 8.3 节
 //     关闭钩子顺序 → fully_stopped）；
 //   - 迟到事件不复活终态（RULE-08，退出-3）：迟到的进度/终态宣告、迟到的
-//     送达回报经 Manager 路由后被状态机应用层拒绝（updates_rejected）。
+//     送达/发送失败回报经 Manager 路由后被状态机应用层拒绝（updates_rejected）。
 //
 // 每个用例持有独立的 ExecutorOwner（AGENTS 规则 7/8；设计第 8.2 节落点说明：
 // 被测对象即组合根的一部分，EXEC-01 五步由用例显式驱动）。并发入队者经
@@ -227,6 +228,7 @@ struct BasicStack {
         if (message_options.local_device.empty()) {
             message_options.local_device = DeviceId{"local-1"};
         }
+
         if (transfer_options.pump.name.empty()) {
             transfer_options.pump.name = "aki.tm";
         }
@@ -313,7 +315,22 @@ struct MessageOnlyStack {
     };
 
     Host host;
-    AppStateOwner state_owner{};
+    // DEC-009 ②：无 ConversationManager 的最小组合——消息远端会话经初始
+    // 快照预置（FK 前置校验的权威来源，与 MM 默认前缀 conv- 一致）。
+    AppStateOwner state_owner{aki::app::AppStateOwnerOptions{},
+        [] {
+            aki::app::AppState state;
+            for (const auto& remote : {std::string{"alpha"},
+                     std::string{"beta"}}) {
+                aki::conversation::Conversation conversation;
+                conversation.id =
+                    aki::conversation::ConversationId{"conv-" + remote};
+                conversation.local_device = DeviceId{"local-1"};
+                conversation.remote_device = DeviceId{remote};
+                state.conversations.conversations.push_back(conversation);
+            }
+            return state;
+        }()};
     StubAdapter adapter{};
     std::optional<MessageManager> messages;
 };
@@ -356,9 +373,10 @@ void drain_until_idle(AppStateOwner& owner) {
 
 }  // namespace
 
-// ---- 用例 1：9 类事件路由、Store 归属、扇出与 FIFO（DOD-02 正常完成）----
+// ---- 用例 1：10 类 Sink 方法路由（失败面不产主路径事件）、Store 归属、
+// ---- 扇出与 FIFO（DOD-02 正常完成）----
 
-TEST_CASE("RouterSink routes the nine events to per-domain stores in FIFO order",
+TEST_CASE("RouterSink routes the ten sink methods to per-domain stores in FIFO order",
     "[unit][managers][dod02]") {
     AppStack stack;
     auto& owner = stack.state_owner;
@@ -430,6 +448,10 @@ TEST_CASE("RouterSink routes the nine events to per-domain stores in FIFO order"
     }
 
     // ⑤ message received：收到的消息本地记录 Delivered（设计第 6 节）。
+    // DEC-009 ②：消息 FK 前置校验——先 ensure sender 的会话。
+    REQUIRE(stack.conversations->ensure_conversation(
+        DeviceId{"local-1"}, DeviceId{"alpha"}));
+    settle();
     REQUIRE(fake.inject_message_received(make_message("m-in")));
     settle();
     {
@@ -440,6 +462,9 @@ TEST_CASE("RouterSink routes the nine events to per-domain stores in FIFO order"
     }
 
     // ⑥ send_text（MM 出站）：Adapter admission 成功 → 本地 Sent。
+    REQUIRE(stack.conversations->ensure_conversation(
+        DeviceId{"local-1"}, DeviceId{"beta"}));
+    settle();
     REQUIRE(stack.messages->send_text(DeviceId{"beta"}, MessageId{"m-out"}, "hello"));
     settle();
     {
@@ -469,6 +494,28 @@ TEST_CASE("RouterSink routes the nine events to per-domain stores in FIFO order"
                 REQUIRE(message.state == DeliveryState::Delivered);
             }
         }
+    }
+
+    // send_failed（sink 第 10 方法，DEC-006 映射 4 失败面）：RouterSink →
+    // MM.enqueue_message_send_failed → SetDeliveryState(Failed)（Sent ->
+    // Failed 合法边）。Fake 无此注入面（仅实现出站 Adapter），经 Sink 直驱；
+    // 该路由不产生主路径事件（末尾 FIFO 空断言为证）。
+    REQUIRE(stack.messages->send_text(DeviceId{"beta"}, MessageId{"m-fail"}, "hello"));
+    settle();
+    REQUIRE(stack.router->on_message_send_failed(
+        ConversationId{"conv-beta"}, MessageId{"m-fail"}));
+    settle();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        bool seen = false;
+        for (const auto& message : snapshot.value.messages.messages) {
+            if (message.id == MessageId{"m-fail"}) {
+                seen = true;
+                REQUIRE(message.state == DeliveryState::Failed);
+            }
+        }
+        REQUIRE(seen);
     }
 
     // ⑦ transfer started/progress/completed（合法边 Transferring -> Completed）。
@@ -537,6 +584,10 @@ TEST_CASE("Concurrent senders never lose a work item (single-flight pump)",
     auto& messages = *stack.messages;
     auto& executor = stack.host.executor_owner.executor();
 
+    // DEC-009 ②：出站消息远端会话先行（FK 前置校验）。
+    REQUIRE(stack.conversations->ensure_conversation(
+        DeviceId{"local-1"}, DeviceId{"beta"}));
+
     constexpr int kSenders = 4;
     constexpr int kPerSender = 25;
     std::atomic<int> rejected{0};
@@ -589,6 +640,7 @@ TEST_CASE("DOD-02 task exception on the manager drain path is visible and self-h
     auto& messages = *stack.messages;
     auto& executor = stack.host.executor_owner.executor();
 
+
     const auto exceptions_before = executor.get_failure_status().task_exception_count;
 
     // 第一条消息：排空任务在 handler 内抛出（Adapter 异常穿透，泵不吞）；
@@ -633,6 +685,12 @@ TEST_CASE("DOD-02 submit rejection: admission limit and inbox backpressure are v
         AppStack stack{std::move(host_options)};
         auto& owner = stack.state_owner;
         auto& messages = *stack.messages;
+
+        // DEC-009 ②：出站消息远端会话先行，并排空 CM 泵（保持本用例的
+        // 「干净 executor + 单准入槽」前提）。
+        REQUIRE(stack.conversations->ensure_conversation(
+            DeviceId{"local-1"}, DeviceId{"beta"}));
+        REQUIRE(stack.conversations->flush(2s));
 
         // 饱和唯一准入槽位：排空任务的提交立即以 CapacityExhaustedException 就绪
         // （future 即时就绪，下一次消费时计数并自愈——拒绝可见，不静默）。
@@ -825,6 +883,8 @@ TEST_CASE("DOD-02 timeout: queued drain killed by soft timeout self-heals withou
     auto& messages = *stack.messages;
     auto& executor = stack.host.executor_owner.executor();
 
+
+
     const auto timeout_before = executor.get_failure_status().timeout_count;
 
     // 饱和唯一 worker：排空任务排队超过 task_timeout_ms → 被软超时击杀（永不
@@ -993,6 +1053,7 @@ TEST_CASE("Late delivery report cannot revive a failed message (RULE-08)",
     auto& owner = stack.state_owner;
     auto& messages = *stack.messages;
 
+
     // Adapter 拒绝发送 → 本地记录 Failed（终态，Queued -> Failed 合法边）。
     REQUIRE(messages.send_text(DeviceId{"beta"}, MessageId{"m-f"}, "x"));
     REQUIRE(messages.flush(2s));
@@ -1013,6 +1074,68 @@ TEST_CASE("Late delivery report cannot revive a failed message (RULE-08)",
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.messages.messages.front().state == DeliveryState::Failed);
     REQUIRE(owner.stats().updates_rejected == 1);
+
+    const auto report = stack.host.executor_owner.shutdown();
+    REQUIRE(report.fully_stopped());
+}
+
+// DEC-006 映射 4 失败回报面：MM.enqueue_message_send_failed →
+// SetDeliveryState(Failed)（Sent -> Failed 合法边）；终态重复回报幂等 no-op；
+// 迟到回报不复活 Delivered（RULE-08：handler 仅通道 admission，拒绝经
+// owner updates_rejected 增量观测）；空载荷 handler 有界校验拒绝可见。
+TEST_CASE("Send-failure report maps to Failed and a late report cannot revive Delivered (RULE-08)",
+    "[unit][managers][late-events]") {
+    MessageOnlyStack stack;
+    auto& owner = stack.state_owner;
+    auto& messages = *stack.messages;
+
+    // 正向映射：Sent -> Failed。
+    REQUIRE(messages.send_text(DeviceId{"beta"}, MessageId{"m-s"}, "x"));
+    REQUIRE(messages.enqueue_message_send_failed(
+        ConversationId{"conv-beta"}, MessageId{"m-s"}));
+    REQUIRE(messages.flush(2s));
+    drain_until_idle(owner);
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.messages.messages.size() == 1);
+        REQUIRE(snapshot.value.messages.messages.front().state == DeliveryState::Failed);
+        REQUIRE(owner.stats().updates_rejected == 0);
+    }
+
+    // 终态幂等：Failed 上的重复失败回报 = 幂等 no-op（接受，不拒绝）。
+    REQUIRE(messages.enqueue_message_send_failed(
+        ConversationId{"conv-beta"}, MessageId{"m-s"}));
+    REQUIRE(messages.flush(2s));
+    drain_until_idle(owner);
+    REQUIRE(owner.stats().updates_rejected == 0);
+
+    // 迟到的失败回报不得复活 Delivered：Delivered -> Failed 非法，admission
+    // 成功但状态机应用层拒绝（updates_rejected 增量，状态保持 Delivered）。
+    REQUIRE(messages.send_text(DeviceId{"beta"}, MessageId{"m-d"}, "x"));
+    REQUIRE(messages.enqueue_message_delivered(ConversationId{"conv-beta"}, MessageId{"m-d"}));
+    REQUIRE(messages.flush(2s));
+    drain_until_idle(owner);
+    const auto rejected_before = owner.stats().updates_rejected;
+    REQUIRE(messages.enqueue_message_send_failed(
+        ConversationId{"conv-beta"}, MessageId{"m-d"}));
+    REQUIRE(messages.flush(2s));
+    drain_until_idle(owner);
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        for (const auto& message : snapshot.value.messages.messages) {
+            if (message.id == MessageId{"m-d"}) {
+                REQUIRE(message.state == DeliveryState::Delivered);
+            }
+        }
+        REQUIRE(owner.stats().updates_rejected == rejected_before + 1);
+    }
+
+    // 空 message id：入队 admission 成功，handler 有界校验拒绝（可观测）。
+    REQUIRE(messages.enqueue_message_send_failed(ConversationId{"conv-beta"}, MessageId{""}));
+    REQUIRE(messages.flush(2s));
+    REQUIRE(messages.stats().handler_rejections == 1);
 
     const auto report = stack.host.executor_owner.shutdown();
     REQUIRE(report.fully_stopped());

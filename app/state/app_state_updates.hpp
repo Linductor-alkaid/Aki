@@ -23,6 +23,9 @@ struct UpsertConversation {
 
 struct UpsertMessage {
     aki::conversation::Message message;
+    // 会话归属（DEC-009 ②，M3-05 落地）：MESSAGE 行 FK 的权威来源；owner
+    // 前置校验该会话必须已在 ConversationStore（未知会话拒绝可观测）。
+    aki::conversation::ConversationId conversation;
 };
 
 struct UpsertTransfer {

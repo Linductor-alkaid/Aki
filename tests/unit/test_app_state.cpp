@@ -197,7 +197,11 @@ TEST_CASE("Single-writer drain publishes one consistent snapshot per batch",
     // 未 drain 前，admission 不等于已生效：快照仍是初始状态。
     REQUIRE(owner.submit_update(UpsertDevice{make_device("dev-1")}));
     REQUIRE(owner.submit_update(UpsertDevice{make_device("dev-2", TrustState::Pending)}));
-    REQUIRE(owner.submit_update(UpsertMessage{make_message("msg-1", DeliveryState::Queued)}));
+    REQUIRE(owner.submit_update(aki::app::UpsertConversation{
+        make_conversation("conv-a", ConversationState::Active)}));
+    REQUIRE(owner.submit_update(UpsertMessage{
+        make_message("msg-1", DeliveryState::Queued),
+        ConversationId{"conv-a"}}));
     const std::uint64_t before = owner.snapshot_sequence();
 
     owner.drain();
@@ -208,7 +212,7 @@ TEST_CASE("Single-writer drain publishes one consistent snapshot per batch",
     REQUIRE(snapshot.value.devices.devices.size() == 2);
     REQUIRE(snapshot.value.messages.messages.size() == 1);
     REQUIRE(owner.stats().snapshots_published == 1);  // 每批次只发布一次
-    REQUIRE(owner.stats().updates_applied == 3);
+    REQUIRE(owner.stats().updates_applied == 4);
     REQUIRE(owner.stats().updates_rejected == 0);
 
     // sequence 去重：load_newer_than 对旧序列取到新快照，对最新序列返回 false。
@@ -487,17 +491,26 @@ TEST_CASE("Late events cannot revive terminal entities (RULE-08)",
     }
 
     SECTION("late delivery cannot revive a failed message") {
-        REQUIRE(owner.submit_update(UpsertMessage{make_message("m-1", DeliveryState::Sent)}));
-        REQUIRE(owner.submit_update(UpsertMessage{make_message("m-1", DeliveryState::Failed)}));
+        REQUIRE(owner.submit_update(aki::app::UpsertConversation{
+            make_conversation("conv-a", ConversationState::Active)}));
+        REQUIRE(owner.submit_update(UpsertMessage{
+            make_message("m-1", DeliveryState::Sent), ConversationId{"conv-a"}}));
+        REQUIRE(owner.submit_update(UpsertMessage{
+            make_message("m-1", DeliveryState::Failed), ConversationId{"conv-a"}}));
         // 终态重复宣告：幂等 no-op，合法。
-        REQUIRE(owner.submit_update(UpsertMessage{make_message("m-1", DeliveryState::Failed)}));
-        REQUIRE(owner.submit_update(UpsertMessage{make_message("m-1", DeliveryState::Queued)}));
+        REQUIRE(owner.submit_update(UpsertMessage{
+            make_message("m-1", DeliveryState::Failed), ConversationId{"conv-a"}}));
+        // Queued 回退被状态机拒绝（Delivered/Failed 为终态）：入队成功，
+        // 拒绝发生在应用时（本用例头注的 admission 语义）。
+        REQUIRE(owner.submit_update(UpsertMessage{
+            make_message("m-1", DeliveryState::Queued), ConversationId{"conv-a"}}));
         owner.drain();
+        REQUIRE(owner.stats().updates_rejected >= 1);
 
         executor::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.messages.messages.front().state == DeliveryState::Failed);
-        REQUIRE(owner.stats().updates_applied == 3);
+        REQUIRE(owner.stats().updates_applied == 4);
         REQUIRE(owner.stats().updates_rejected == 1);
     }
 
@@ -711,6 +724,30 @@ TEST_CASE("Post-accept enqueue rejection is double-counted",
     REQUIRE(sink_rejected == 2);                  // 处理器侧
     REQUIRE(control->rejected_count() == 2);      // control 侧（双可见）
     REQUIRE(owner.stats().post_accept_failures == 0);  // 拒绝不是异常
+}
+
+// DEC-009 ②：UpsertMessage 会话归属 FK 前置校验——未知会话拒绝可观测。
+TEST_CASE("UpsertMessage with unknown conversation is rejected by the owner",
+    "[unit][app_state][dec009]") {
+    aki::app::AppStateOwnerOptions options;
+    aki::app::AppStateOwner owner{options};
+
+    // 会话未建立：消息更新被 FK 前置校验拒绝（通道 admission 与生效分离）。
+    REQUIRE(owner.submit_update(UpsertMessage{
+        make_message("m-x", DeliveryState::Delivered),
+        ConversationId{"conv-missing"}}));
+    owner.drain();
+    REQUIRE(owner.stats().updates_rejected == 1);
+    REQUIRE(owner.stats().updates_applied == 0);
+
+    // 会话就位后同一消息被接受。
+    REQUIRE(owner.submit_update(aki::app::UpsertConversation{
+        make_conversation("conv-missing", ConversationState::Active)}));
+    REQUIRE(owner.submit_update(UpsertMessage{
+        make_message("m-x", DeliveryState::Delivered),
+        ConversationId{"conv-missing"}}));
+    owner.drain();
+    REQUIRE(owner.stats().updates_applied == 2);
 }
 
 // 5)：幂等 no-op 接受同样入队，并被作业侧幂等吸收（终态列更新对已终态行

@@ -193,10 +193,31 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
 - [x] `M3-04` 设备发现与信任真实化（`SCOPE-02`/`SCOPE-03`）：LAN 发现映射
   `DiscoveredDevice`；配对与公钥指纹确认驱动信任状态机全部合法转移；已知设备
   记录随启动恢复加载并支持再连接；`Rejected`/`Revoked` 终态幂等（`RULE-08`）。
-- [ ] `M3-05` Conversation 建链与文本消息真实化（`SCOPE-05`/`SCOPE-06`）：会话
+- [x] `M3-05` Conversation 建链与文本消息真实化（`SCOPE-05`/`SCOPE-06`）：会话
   经 Heyaki Session 建立；`send_text_message` 真实实现（admission 拒绝可见，
   `RULE-09`）；接收与送达回报驱动 `DeliveryState` 正向链与终态；消息历史经
-  `M3-02` 固化的写路径实时持久化，重启恢复一致。
+  `M3-02` 固化的写路径实时持久化，重启恢复一致。（2026-09-24：DEC-009 ②
+  正式落地——`UpsertMessage` 载荷新增 `conversation` 归属字段 + owner FK
+  前置校验（会话须已在 ConversationStore，未知拒绝可观测），全仓聚合初始
+  化修正（message_manager/test_app_state/test_heyaki_adapter），M3-03 宿主
+  捕获簿记移除；SPI 新增第 10 方法 `on_message_send_failed`（设计 §8.1
+  先行修订：方法清单 + 路由表行）+ RouterSink/MM
+  `SetDeliveryState(Failed)` 映射（2026-09-24 评审修正：Fake 仅实现出站
+  Adapter 不实现 Sink，原「Fake 映射/no-op 实现」表述失实——失败面断言
+  落点为 test_heyaki_adapter.cpp 的 BridgeSink 测试桥接）；NodeSession
+  消息面（send_text：
+  MessageEnvelope{type="aki.text", delivery_mode=peer_acked}，MessageId 双射
+  以 to_string/parse_message_id 规范字符串为准（hym1_ 前缀编码，DEC-006
+  措辞澄清），set_message_handlers 入站/ack 映射 queued/acked/failed）；
+  `tests/unit/test_heyaki_message.cpp`：双射/信封往返（网络无关 unit
+  二进制，11 断言过；2026-09-24 评审拆分自回环文件——[skip] 受控退出不得
+  掩盖同二进制既有失败）+ `tests/integration/test_message_loopback.cpp`
+  双节点收发回环。失败面路由测试驱动（2026-09-24 评审补齐）：
+  test_app_managers RouterSink 第 10 路由 + MM `enqueue_message_send_failed`
+  用例、test_heyaki_adapter BridgeSink `on_message_send_failed` 用例。
+  **如实降级**：本机防火墙拦截 TLS 入站（沿 M3-04），收发端到端以 [skip]
+  证据路径通过并登记补跑条件。MSVC debug/release ctest 24/24 零回归
+  （评审修正后复测）。详见验证记录。）
 - [ ] `M3-06` Presence 与连接路径（`SCOPE-10`）：连接/断开事件维护
   `PresenceState` 与 `ConversationState`；连接路径变化（LAN / P2P / Relay）经
   第 10.1 节 LatestMailbox 语义发布，路径切换不新建会话（`RULE-06`）。
@@ -620,3 +641,83 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
     补跑证据。补跑条件更新：LAN 双端真机环境 + heyaki 侧对 dispatch 生效后
     握手停滞的排查（疑似上游缺陷，按规范报告不擅自改 third_party）。
   - 同步：本里程碑（M3-04 勾选、本记录）、总计划当前状态。
+
+- 2026-09-24（`M3-05`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0 / OpenSSL 3.5.8）：
+  - 范围：`app/state/app_state_updates.hpp`（`UpsertMessage` 新增
+    `ConversationId conversation` 归属字段——DEC-009 ② 正式落地）、
+    `app/state/app_state_owner.hpp`（`apply_impl(UpsertMessage)` FK 前置
+    校验：会话须在 ConversationStore，未知拒绝计入 `updates_rejected`）、
+    `app/application/message_manager.hpp`（`conversation_for(remote)` 归属
+    解析（prefix + remote，与 CM 同方案）；入站/出站 UpsertMessage 带归属；
+    新增 `MessageDeliveryFailedWork` → `SetDeliveryState(Failed)`（DEC-006
+    映射 4 失败四态；无主路径事件））、`app/application/router_sink.hpp`
+    （`on_message_send_failed` 路由）、`heyaki/adapter/heyaki_adapter.hpp`
+    （sink 第 10 方法，设计 §8.1 已先行修订——方法清单 + 路由表行；
+    2026-09-24 评审修正：本范围原列 `heyaki/adapter/fake_heyaki_adapter.hpp`
+    （新方法 no-op 实现）失实——该文件未在本次改动中，Fake 仅实现出站
+    Adapter 不实现 Sink）、
+    `heyaki/session/runtime_node.hpp`（消息面：`send_text`（MessageEnvelope
+    {type="aki.text", delivery_mode=peer_acked}，aki MessageId 双射经
+    to_string/parse_message_id 规范字符串）、`set_message_handlers`（inbound
+    + ack 事件映射 queued/acked/failed））、`tests/integration/
+    test_message_loopback.cpp`（新建；2026-09-24 评审拆分：双射/信封往返
+    移入新建的 `tests/unit/test_heyaki_message.cpp` 网络无关 unit 二进制）、
+    `tests/unit/{test_app_state,
+    test_heyaki_adapter,test_app_managers}.cpp`（全仓聚合初始化修正 +
+    DEC-009 ② FK 拒绝用例；2026-09-24 评审补齐失败面路由测试驱动——
+    test_app_managers：RouterSink 第 10 路由 + MM `enqueue_message_send_failed`
+    用例，test_heyaki_adapter：BridgeSink `on_message_send_failed` 用例）、
+    根 main.cpp（M3-03 临时簿记
+    `message_conversation` 移除——处理器经载荷归属落库）、tests/CMakeLists。
+  - 依据：[DEC-009](../decisions/DEC-009-appstate-write-path.md)（② 会话
+    归属 + 写路径）、[DEC-006](../decisions/DEC-006-heyaki-api-contract.md)
+    （映射 4 与冻结常量；措辞澄清两处——MessageId 规范字符串形式）、
+    设计第 5/6/8.1/8.3/10.1/11.1① 节、[DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)
+    （send_text→MM、ensure 语义）、[DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)
+    （MESSAGE 行/仓储复用）；总计划 `SCOPE-05`/`SCOPE-06`、`RULE-02`/`RULE-03`/
+    `RULE-06`/`RULE-08`/`RULE-09`/`RULE-10`、`EXEC-02`/`EXEC-04`、
+    `DOD-02`/`DOD-03`/`DOD-05`。heyaki API 锚点：`message.hpp`
+    （MessageEnvelope/MessageDeliveryMode/MessageDeliveryEvent/encode/parse）、
+    `node.hpp`（send_message/set_message_inbound_handler/
+    set_message_ack_observer）、`ids.hpp`（MessageId 16B/parse_message_id）。
+  - 验证（树同前）：
+    - debug → `ctest --test-dir build/m3-01-debug -C Debug --timeout 300` →
+      **100% passed 23/23**；release 同构 → **23/23**（原 22 项零回归）。
+      2026-09-24 评审修正后复测（命令同上）：debug **24/24**、release
+      **24/24**（新增 `test_heyaki_message` unit 项；test_app_managers/
+      test_heyaki_adapter 内新增失败面用例）。
+    - 网络无关实测（2026-09-24 评审拆分后为 `test_heyaki_message` unit
+      二进制，11 断言过；拆分前为 `test_message_loopback` 首用例）：MessageId
+      双射往返（wire→aki→wire 字节一致；hym1_ 前缀）；裸 hex/任意串解码
+      nullopt；aki.text 信封 encode/parse 往返（type/mode/payload 无损）。
+    - DEC-009 ② FK 前置校验（test_app_state 新用例）：未知会话的消息更新
+      被拒（updates_rejected==1、applied==0）；会话就位后接受
+      （applied==2）。全仓聚合初始化修正后 23 项零回归（MM 收/发路径的
+      归属解析由 test_app_managers 消息用例经显式 ensure_conversation/
+      初始快照预置会话承载）。
+    - **如实降级（端到端收发未在本机走通）**：双节点回环在本机防火墙拦截
+      TLS 入站的环境下（沿 M3-04 实测），配对握手不可达——测试在发现成功
+      后于配对停滞点输出 `[skip] pairing handshake blocked (firewall):
+      messaging loopback not verified; rerun with inbound TCP allowed` 并
+      受控退出；收发端到端、消息序号 FIFO、迟到回报不复活等断言位于降级
+      路径之后未执行。补跑条件：防火墙放行测试可执行文件入站 TCP（或专用
+      测试网络/LAN 双端）后重跑 `test_message_loopback`。消息落库与重启
+      恢复（验收 ② 的持久化半边）由既有 `test_restart_recovery`（消息行 +
+      送达终态重启一致）与处理器写路径（M3-03 已验证）承载；conversation
+      归属列的 SQL 断言随回环补跑一并执行。
+  - 偏差（如实记录）：① SPI 面新增 `on_message_send_failed`（第 10 方法）——
+    M1 SPI 仅承载 acked（on_message_delivered），DEC-006 映射 4 的失败四态
+    需要独立失败面；已按 M1-08 纪律先改设计 §8.1（方法清单 + 路由表）再合
+    代码。② MessageId 双射的权威形式经实测澄清为 heyaki 规范字符串
+    （hym1_ 前缀），DEC-006 原文「16B 双射」的措辞已回填澄清（同 M3-03
+    修正先例）。
+  - 限制：收发端到端与 conversation 归属列恢复断言待防火墙放行/LAN 双端
+    环境补跑（[skip] 输出为证）；CI Linux 四档随本 PR 门禁（CI runner 亦
+    可能走 [skip] 路径，证据输出保留）。2026-09-24 评审修正（工程规范第 7
+    节「skip 不是成功证据」）：网络无关断言拆分至 `test_heyaki_message`
+    unit 二进制，不受 [skip] 退出影响；回环二进制仅剩单用例——REQUIRE
+    失败即中止当前用例（Catch2 语义），[skip] 受控退出点只在前置断言全部
+    通过时可达，不再可能掩盖既有失败（禁止在该文件 [skip] 门之前追加新
+    用例）。MR 闭环由后续环节执行，本记录不含 commit/CI 证据。
+  - 同步：本里程碑（M3-05 勾选、本记录）、总计划当前状态。
