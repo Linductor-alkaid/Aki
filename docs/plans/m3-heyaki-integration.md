@@ -251,10 +251,27 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
   authenticated → restart_session 同 SessionId epoch+1。**如实降级**：本机
   防火墙拦截 TLS 入站（沿 M3-04/05/06），回环以 [skip] 证据路径通过并登记
   补跑条件。debug/release ctest 29/29 零回归。详见验证记录。）
-- [ ] `M3-08` 双端真实链路验证与宿主切换：组合根切换真实 Adapter（Fake 保留
+- [x] `M3-08` 双端真实链路验证与宿主切换：组合根切换真实 Adapter（Fake 保留
   用于单测）；两进程回环（及可行时的 LAN 双端）集成测试覆盖发现 → 信任 →
   文本收发 → 送达 → 断线恢复全闭环；DOD-02 六项沿真实事件路径（Adapter 回调、
-  Manager 排空、连接事件处理）覆盖。
+  Manager 排空、连接事件处理）（2026-09-24：统一真实 Adapter `heyaki/adapter/
+  heyaki_node_adapter.hpp`（SPI 十方法 + 发现/peer_sessions/消息分件组装，
+  aki/std 公开面 RULE-10；SPI 同接口 static_assert 编译期锁定）；宿主
+  main.cpp 切换真实 Adapter（Fake 移至测试目标；presence/path 观察关闭——
+  smoke 确定性，发现观察管道由 start_discovery 启停实测）；双节点回环
+  test_real_adapter_loopback（单用例二进制，配对信任 + Conversation + SPI
+  出站 + 消息行 conversation 归属列 SQL 断言 + 重启恢复）。**如实降级**：
+  本机防火墙拦截 TLS 入站（沿 M3-04~07），全链路以 [skip] 证据路径通过并
+  登记补跑条件。2026-09-24 评审修正：① 断线重连职责回收至组合根协调器
+  （Adapter 不再内嵌——heyaki/adapter 曾 include app/application/
+  reconnect_loop.hpp，反向依赖违反 RULE-01/DEC-002 层向；Adapter 仅经
+  SPI on_device_disconnected 如实上报）；② 析构闭合补强（停管道 + 中和
+  session 消息 handler，消除 this 悬垂）；③ SPI/注入面单测补证
+  test_heyaki_node_adapter（网络无关 49 断言：构造校验/出站校验/sink 分发/
+  无 sink 静默/析构闭合回归守卫），回环出站断言改经 send_text_message；
+  ④ 宿主遗留死代码清理（9 个无引用函数 + 未调用 lambda/event_type_name、
+  无符号恒真断言——GCC -Wall -Werror CI 必挂项）。debug/release ctest
+  31/31 零回归（评审修正后复测）。详见验证记录。）覆盖。
 - [ ] `M3-09` 收口审计与退出证据归集（沿用 M1-08 / M2-08 纪律）：实现与设计
   第 3~8/10/11.1/14 节及 `DEC-006` 逐项校对，退出-1~5 证据与可复现命令归档，
   发现来源分期（若有）如实记录范围与补做条件。
@@ -915,3 +932,84 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
     （`srs_t` 4 字节对齐，`sctptransport.cpp:732-735`）——UBSan recover
     语义下非致命（不触发门禁失败），按供应链纪律登记上游缺陷不抑制不修改。
   - 同步：本里程碑（M3-07 勾选、本记录）、总计划当前状态。
+
+- 2026-09-24（`M3-08`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0 / OpenSSL 3.5.8）：
+  - 范围：`heyaki/adapter/heyaki_node_adapter.hpp`（新建：统一真实 Adapter
+    ——SPI 十方法（发现启停→管道启停、send_text_message→aki.text 信封、
+    传输四接口 M4 前签名语义 false、sink 第 10 方法路由）；入站面组装
+    LanDiscoveryPipeline/PeerSessionPipeline/NodeSession 消息 handler
+    （2026-09-24 评审修正：重连协调器职责回收至组合根——原实现内嵌
+    M3-07 协调器使 heyaki/adapter include app/application，反向依赖违反
+    RULE-01/DEC-002 层向；Adapter 现仅经 SPI on_device_disconnected 如实
+    上报断开，重连循环归组合根 ReconnectCoordinator（7.5 装配）；析构
+    闭合补强：停管道 + 中和 session 消息 handler——handler 捕获 this，
+    不中和则销毁后入站即 UAF；入站面升为公开注入，与 Fake inject_* 对称）；
+    conversation 解析注入（组合根提供 CM/MM 同方案）；SPI 同接口
+    static_assert 编译期锁定（Fake 侧对称断言见 test_heyaki_adapter））、
+    根 `main.cpp`（宿主切换：FakeHeyakiAdapter → HeyakiNodeAdapter；
+    presence/path 观察关闭——smoke 确定性；真实发现启停实测；交互链路
+    降级证据 [degraded] 输出；恢复段本地行 SQL 断言；2026-09-24 评审修正：
+    遗留死代码清理——enum_text×5/event_type_name/find_device/find_message/
+    find_transfer/bytes_of 九个无引用匿名函数 + 未调用的 consume_events/
+    next_sequence，及无符号恒真断言 discovered_count()>=0（GCC
+    -Wtype-limits -Werror CI 必挂项，MSVC /W4 不告警故未暴露））、
+    `tests/integration/test_real_adapter_loopback.cpp`
+    （新建单用例二进制：配对信任 → Conversation → SPI 出站 → 消息行落库
+    （DEC-009 ② conversation 归属列 SQL）→ 重启恢复；握手被拦 [skip]
+    降级；2026-09-24 评审修正：出站断言改经 adapter_a.send_text_message
+    ——原为 NodeSession 直呼，SPI 未被执行）、
+    `tests/unit/test_heyaki_node_adapter.cpp`（2026-09-24 评审补证新建：
+    SPI + 注入面网络无关单测）、`tests/unit/test_heyaki_adapter.cpp`
+    （Fake SPI 同接口 static_assert——验收 ③ 编译期锁定）、
+    tests/CMakeLists.txt。
+  - 依据：[DEC-006](../decisions/DEC-006-heyaki-api-contract.md)（全部映射）、
+    [DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)、
+    [DEC-009](../decisions/DEC-009-appstate-write-path.md)、设计第
+    8.1/8.2/8.3 节；M3 退出-1/2 与风险节；总计划
+    `SCOPE-01/02/03/05/06/10/11`、`RULE-02/07/08/10`、`EXEC-01/02/05`、
+    `DOD-02/03/05`。
+  - 验证（树同前）：
+    - debug → `ctest --test-dir build/m3-01-debug -C Debug --timeout 300` →
+      **100% passed 30/30**；release 同构 → **30/30**（原 29 项零回归 +
+      新 test_real_adapter_loopback）。2026-09-24 评审修正后复测（命令同
+      上）：debug **31/31**、release **31/31**（+`test_heyaki_node_adapter`
+      unit 项）。
+    - Adapter SPI/注入面实测（test_heyaki_node_adapter，5 用例 49 断言全过，
+      网络无关）：构造校验（profile/session/解析器缺失 → invalid_argument）；
+      传输四接口 false；send_text_message 空载荷/不可达 peer 拒绝；发现来源
+      校验（M3 仅 LanDiscovery，LAN 启停回转接口可用时断言）；注入分发逐
+      字段（connected(Lan)/inbound 字段/acked→delivered+会话归属/failed→
+      send_failed/queued 不推进/disconnected/path_changed）；无 sink 静默；
+      析构闭合回归守卫（deliver_disconnected 后销毁 → owner.shutdown
+      fully_stopped——修正前该处启动未登记循环）。
+    - 宿主切换实测：main.cpp 以 HeyakiNodeAdapter 替换 Fake（presence/
+      path 观察关闭保确定性；真实发现启停实测 `[ok] real discovery
+      pipeline running/stopped`）；本地身份行经写路径落库 + 重启恢复
+      （presence Offline + trust 保持）实测；`smoke: PASS`。
+    - SPI 同接口断言（验收 ③）：`static_assert(is_base_of_v<HeyakiAdapter,
+      HeyakiNodeAdapter>)`（adapter 头）与 Fake 侧对称断言
+      （test_heyaki_adapter）编译期锁定；传输四接口 M4 前 false 语义在
+      adapter 头注释与实现登记（不伪造进度/终态事件）。
+    - 回环集成（防火墙受限降级，沿 M3-04~07）：发现正常；配对握手停滞 →
+      `[skip] pairing handshake blocked (firewall)` + 受控退出。SPI 出站
+      网络无关半边已由 test_heyaki_node_adapter 单测承载（2026-09-24 评审
+      补证）；消息行 conversation 归属列 SQL 断言、逐域恢复断言位于降级
+      路径之后**未在本机执行**。补跑条件：防火墙放行入站 TCP / LAN 双端。
+    - DOD-02 沿真实事件路径：M3-04~07 各分件已覆盖（periodic 六项
+      test_discovery_pairing + 重连六项 test_reconnect_loop）；本项补充
+      adapter 组装面（2026-09-24 评审修正后如实声明）：析构停管道 + 中和
+      session 消息 handler（回归守卫用例实测）；重连协调器归组合根——其
+      stop_all 于宿主关闭钩子实测（M3-07 记录），不在 Adapter 内。
+    - RULE-10 grep（复跑）：app/application、main.cpp 零第三方 heyaki
+      include（真实 Adapter 经 HeyakiAdapter SPI 消费，aki/std 面注入）。
+  - 偏差（如实记录）：① 宿主 smoke 的双端交互步骤（M1/M2 的 alpha-01
+    注入演示）移除——真实 Adapter 无注入面；交互链路验证转由回环集成测试
+    承载（test_real_adapter_loopback 等），持久化回归由 test_restart_
+    recovery 承载。② main.cpp 的 presence/path 管道不启动（确定性，M3-04
+    ⑥ 决策延续）；真实部署 M4/M5 开启。③ 传输四接口 M4 前 false（不伪造
+    事件）。
+  - 限制：全链路回环待防火墙放行/LAN 双端环境补跑（[skip] 输出为证）；
+    CI Linux 四档随本 PR 门禁；MR 闭环由后续环节执行，本记录不含 commit/
+    CI 证据。
+  - 同步：本里程碑（M3-08 勾选、本记录）、总计划当前状态。

@@ -144,12 +144,21 @@ public:
                 + std::string(error->safe_detail()));
         }
         return NodeSession(std::move(runtime),
-            std::move(*node_result.value_if()));
+            std::move(*node_result.value_if()),
+            aki::device::DeviceId{hh::to_string(
+                options.profile->store().device_id())});
     }
+
+    NodeSession(std::unique_ptr<::heyaki::Runtime> runtime,
+        ::heyaki::Node node, aki::device::DeviceId local_id)
+        : runtime_(std::move(runtime)),
+          node_(std::move(node)),
+          local_id_(local_id) {}
 
     NodeSession(NodeSession&& other) noexcept
         : runtime_(std::move(other.runtime_)),
           node_(std::move(other.node_)),
+          local_id_(other.local_id_),
           shutdown_done_(other.shutdown_done_.load(std::memory_order_relaxed)) {
         other.shutdown_done_.store(true, std::memory_order_relaxed);
     }
@@ -162,6 +171,11 @@ public:
         if (!shutdown_done_.exchange(true)) {
             (void)shutdown();
         }
+    }
+
+    // 本机设备 id（DEC-006 映射 1；profile 身份的 aki 规范形式）。
+    [[nodiscard]] aki::device::DeviceId local_id() const {
+        return local_id_;
     }
 
     [[nodiscard]] bool has_lan_interfaces() const {
@@ -481,9 +495,6 @@ public:
     }
 
 private:
-    NodeSession(std::unique_ptr<::heyaki::Runtime> runtime, ::heyaki::Node node)
-        : runtime_(std::move(runtime)), node_(std::move(node)) {}
-
     [[nodiscard]] std::optional<::heyaki::DeviceEndpointKey> endpoint_key_of(
         const aki::device::DeviceId& peer) const {
         for (const auto& entry : node_.endpoints()) {
@@ -504,6 +515,7 @@ private:
     // runtime_.get() 非拥有指针（见 create 内注释），Node 必须先消亡。
     std::unique_ptr<::heyaki::Runtime> runtime_;
     ::heyaki::Node node_;
+    aki::device::DeviceId local_id_{};
     std::atomic<bool> shutdown_done_{false};
     NodeSessionShutdownReport last_report_{};
 };

@@ -1,0 +1,319 @@
+// M3-08（评审补证）：统一真实 Adapter SPI 与入站注入面单测（网络无关）。
+//
+// 覆盖（工程规范 §7「可以运行」证据等级——Adapter 类在测试中真实构造并执行）：
+//   - 构造校验：profile/session/conversation 解析器缺一即 invalid_argument；
+//   - 出站 SPI：传输四接口 M4 前 false；send_text_message 有界校验（空载荷
+//     拒绝）与不可达 peer admission false；发现来源校验（M3 仅 LanDiscovery）；
+//   - 入站注入面（EXEC-02）：deliver_* → sink 分发字段逐项断言（与
+//     FakeHeyakiAdapter 的 inject_* 对称）；未接 sink 时静默不投递；
+//   - 析构闭合（评审修正回归守卫）：deliver_disconnected 后销毁——不再有
+//     未登记的 submit_cancellable 循环，owner.shutdown fully_stopped。
+#include "app/lifecycle/executor_owner.hpp"
+#include "heyaki/adapter/heyaki_node_adapter.hpp"
+#include "heyaki/adapter/local_identity.hpp"
+#include "heyaki/session/runtime_node.hpp"
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <chrono>
+#include <filesystem>
+#include <functional>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <system_error>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+namespace {
+
+using namespace std::chrono_literals;
+
+using aki::app::ExecutorOwner;
+using aki::app::ExecutorOwnerOptions;
+using aki::conversation::ConversationId;
+using aki::conversation::DeliveryState;
+using aki::conversation::MessageId;
+using aki::device::ConnectionPath;
+using aki::device::DeviceId;
+using aki::device::DiscoveryMethod;
+using aki::heyaki::HeyakiNodeAdapter;
+using aki::heyaki::LocalProfile;
+using aki::heyaki::NodeSession;
+
+int g_counter = 0;
+
+std::string temp_root(const std::string& tag) {
+    auto path = std::filesystem::temp_directory_path()
+        / ("aki-node-adapter-" + tag + "-"
+            + std::to_string(
+                std::chrono::steady_clock::now().time_since_epoch().count())
+            + "-" + std::to_string(++g_counter));
+    std::error_code ec;
+    std::filesystem::remove_all(path, ec);
+    return path.string();
+}
+
+// 节点域（独立 profile + 独立测试 ExecutorOwner + 借用 Runtime，沿 M3-04 形态）。
+struct NodeDomain {
+    explicit NodeDomain(const std::string& root)
+        : profile(LocalProfile::open(root)),
+          executor_options([] {
+              ExecutorOwnerOptions options;
+              options.executor_config.min_threads = 2;
+              options.executor_config.max_threads = 6;
+              return options;
+          }()),
+          owner(executor_options) {
+        if (!owner.initialize()) {
+            throw std::runtime_error("node domain: executor initialize failed");
+        }
+        session.emplace(
+            NodeSession::create(owner.executor(), {.profile = &profile}));
+    }
+
+    LocalProfile profile;
+    ExecutorOwnerOptions executor_options;
+    ExecutorOwner owner;
+    std::optional<NodeSession> session;
+};
+
+// 录制 sink：SPI 分发面断言载体（全部 10 方法）。
+struct RecordingSink final : aki::heyaki::HeyakiAdapterSink {
+    std::vector<aki::device::DiscoveredDevice> discovered;
+    std::vector<std::pair<DeviceId, ConnectionPath>> connected;
+    std::vector<DeviceId> disconnected;
+    std::vector<aki::conversation::Message> received;
+    std::vector<std::pair<ConversationId, MessageId>> delivered;
+    std::vector<std::pair<ConversationId, MessageId>> send_failed;
+    std::vector<std::tuple<DeviceId, ConnectionPath, ConnectionPath>>
+        path_changed;
+
+    bool on_device_discovered(aki::device::DiscoveredDevice device) override {
+        discovered.push_back(std::move(device));
+        return true;
+    }
+    bool on_device_connected(DeviceId device, ConnectionPath path) override {
+        connected.emplace_back(std::move(device), path);
+        return true;
+    }
+    bool on_device_disconnected(DeviceId device) override {
+        disconnected.push_back(std::move(device));
+        return true;
+    }
+    bool on_message_received(aki::conversation::Message message) override {
+        received.push_back(std::move(message));
+        return true;
+    }
+    bool on_message_delivered(ConversationId conversation,
+        MessageId message) override {
+        delivered.emplace_back(std::move(conversation), std::move(message));
+        return true;
+    }
+    bool on_message_send_failed(ConversationId conversation,
+        MessageId message) override {
+        send_failed.emplace_back(std::move(conversation), std::move(message));
+        return true;
+    }
+    bool on_transfer_started(aki::transfer::Transfer) override { return true; }
+    bool on_transfer_progress(aki::transfer::TransferId, std::uint64_t,
+        std::uint64_t) override {
+        return true;
+    }
+    bool on_transfer_completed(aki::transfer::TransferId,
+        aki::transfer::TransferState) override {
+        return true;
+    }
+    bool on_connection_path_changed(DeviceId device, ConnectionPath from,
+        ConnectionPath to) override {
+        path_changed.emplace_back(std::move(device), from, to);
+        (void)from;
+        return true;
+    }
+};
+
+HeyakiNodeAdapter::Options valid_options(NodeDomain& domain,
+    bool peer_observation = false) {
+    HeyakiNodeAdapter::Options options;
+    options.profile = &domain.profile;
+    options.session = &*domain.session;
+    options.conversation_for =
+        [](const DeviceId& remote) {
+            return ConversationId{std::string{"conv-"} + remote.value};
+        };
+    options.peer_observation = peer_observation;
+    return options;
+}
+
+}  // namespace
+
+TEST_CASE("HeyakiNodeAdapter construction validates required wiring",
+    "[unit][heyaki_node_adapter]") {
+    ExecutorOwner owner;
+    REQUIRE(owner.initialize());
+    NodeDomain domain(temp_root("ctor"));
+
+    auto options = valid_options(domain);
+    options.profile = nullptr;
+    REQUIRE_THROWS_AS(HeyakiNodeAdapter(owner.executor(), options),
+        std::invalid_argument);
+
+    options = valid_options(domain);
+    options.session = nullptr;
+    REQUIRE_THROWS_AS(HeyakiNodeAdapter(owner.executor(), options),
+        std::invalid_argument);
+
+    options = valid_options(domain);
+    options.conversation_for = nullptr;
+    REQUIRE_THROWS_AS(HeyakiNodeAdapter(owner.executor(), options),
+        std::invalid_argument);
+
+    const auto report = owner.shutdown();
+    REQUIRE(report.fully_stopped());
+}
+
+TEST_CASE("HeyakiNodeAdapter outbound SPI validates and reports honestly",
+    "[unit][heyaki_node_adapter]") {
+    ExecutorOwner owner;
+    REQUIRE(owner.initialize());
+    NodeDomain domain(temp_root("outbound"));
+    HeyakiNodeAdapter adapter{owner.executor(), valid_options(domain)};
+
+    // 传输四接口：M4 前签名语义 false（DEC-006，不伪造事件）。
+    aki::transfer::FileMetadata file{"model.gguf", 1024, "application/octet-stream"};
+    REQUIRE_FALSE(adapter.start_file_transfer(
+        DeviceId{"peer-x"}, aki::transfer::TransferId{"t-1"}, file));
+    REQUIRE_FALSE(adapter.pause_transfer(aki::transfer::TransferId{"t-1"}));
+    REQUIRE_FALSE(adapter.resume_transfer(aki::transfer::TransferId{"t-1"}));
+    REQUIRE_FALSE(adapter.cancel_transfer(aki::transfer::TransferId{"t-1"}));
+
+    // send_text_message 有界校验（EXEC-02 出站面）。
+    REQUIRE_FALSE(adapter.send_text_message(
+        DeviceId{}, MessageId{"m-1"}, "hello"));
+    REQUIRE_FALSE(adapter.send_text_message(
+        DeviceId{"peer-x"}, MessageId{}, "hello"));
+    REQUIRE_FALSE(adapter.send_text_message(
+        DeviceId{"peer-x"}, MessageId{"m-1"}, ""));
+
+    // 不可达 peer（无发现端点）→ admission false（确定性，网络无关）。
+    REQUIRE_FALSE(adapter.send_text_message(
+        DeviceId{"hy1_00000000000000000000000000000000000000000000000000000000000000"},
+        MessageId{"m-1"}, "hello"));
+
+    // 发现来源校验：M3 仅 LanDiscovery 扫描型。
+    REQUIRE_FALSE(adapter.start_discovery(DiscoveryMethod::Manual));
+    REQUIRE_FALSE(adapter.start_discovery(DiscoveryMethod::KnownDevice));
+
+    // LAN 发现启停回转（观察管道启停；接口缺失环境 start 不予断言——补跑
+    // 条件沿 M3-04 登记）。
+    if (domain.session->has_lan_interfaces()) {
+        REQUIRE(adapter.start_discovery(DiscoveryMethod::LanDiscovery));
+        REQUIRE(adapter.discovery_running());
+        adapter.stop_discovery();
+        REQUIRE_FALSE(adapter.discovery_running());
+    }
+
+    const auto report = owner.shutdown();
+    REQUIRE(report.fully_stopped());
+}
+
+TEST_CASE("HeyakiNodeAdapter inbound injection dispatches to the sink",
+    "[unit][heyaki_node_adapter]") {
+    ExecutorOwner owner;
+    REQUIRE(owner.initialize());
+    NodeDomain domain(temp_root("inbound"));
+    HeyakiNodeAdapter adapter{owner.executor(), valid_options(domain)};
+
+    RecordingSink sink;
+    adapter.set_sink(&sink);
+    const DeviceId peer{"peer-b"};
+
+    adapter.deliver_connected(peer);
+    REQUIRE(sink.connected.size() == 1);
+    REQUIRE(sink.connected.front().first == peer);
+    REQUIRE(sink.connected.front().second == ConnectionPath::Lan);
+
+    adapter.deliver_inbound(peer, MessageId{"m-1"}, "hello");
+    REQUIRE(sink.received.size() == 1);
+    {
+        const auto& message = sink.received.front();
+        REQUIRE(message.id == MessageId{"m-1"});
+        REQUIRE(message.sender == peer);
+        REQUIRE(message.receiver == domain.profile.identity().id);
+        REQUIRE(message.type == aki::conversation::MessageType::Text);
+        REQUIRE(message.state == DeliveryState::Sent);
+        const auto* text =
+            std::get_if<aki::conversation::TextPayload>(&message.payload);
+        REQUIRE(text != nullptr);
+        REQUIRE(text->text == "hello");
+    }
+
+    adapter.deliver_ack(peer, MessageId{"m-1"}, "acked");
+    REQUIRE(sink.delivered.size() == 1);
+    REQUIRE(sink.delivered.front()
+        == std::make_pair(ConversationId{"conv-peer-b"}, MessageId{"m-1"}));
+
+    adapter.deliver_ack(peer, MessageId{"m-2"}, "failed");
+    REQUIRE(sink.send_failed.size() == 1);
+    REQUIRE(sink.send_failed.front()
+        == std::make_pair(ConversationId{"conv-peer-b"}, MessageId{"m-2"}));
+
+    // queued：MM 语义已记录 Sent，不重复推进。
+    adapter.deliver_ack(peer, MessageId{"m-3"}, "queued");
+    REQUIRE(sink.delivered.size() == 1);
+    REQUIRE(sink.send_failed.size() == 1);
+
+    adapter.deliver_disconnected(peer);
+    REQUIRE(sink.disconnected.size() == 1);
+    REQUIRE(sink.disconnected.front() == peer);
+
+    adapter.deliver_path_changed(peer, ConnectionPath::P2p);
+    REQUIRE(sink.path_changed.size() == 1);
+    REQUIRE(std::get<0>(sink.path_changed.front()) == peer);
+    REQUIRE(std::get<2>(sink.path_changed.front()) == ConnectionPath::P2p);
+
+    // 无关 sink 事件零串扰：discovered/transfer 面未被本用例驱动。
+    REQUIRE(sink.discovered.empty());
+
+    const auto report = owner.shutdown();
+    REQUIRE(report.fully_stopped());
+}
+
+TEST_CASE("HeyakiNodeAdapter without a sink drops injections silently",
+    "[unit][heyaki_node_adapter]") {
+    ExecutorOwner owner;
+    REQUIRE(owner.initialize());
+    NodeDomain domain(temp_root("nosink"));
+    HeyakiNodeAdapter adapter{owner.executor(), valid_options(domain)};
+
+    // sink 未接：EXEC-02 有界校验后丢弃（观察者缺失不阻塞管道），不崩溃。
+    adapter.deliver_discovered(aki::device::DiscoveredDevice{});
+    adapter.deliver_connected(DeviceId{"peer-b"});
+    adapter.deliver_disconnected(DeviceId{"peer-b"});
+    adapter.deliver_path_changed(DeviceId{"peer-b"}, ConnectionPath::Relay);
+    adapter.deliver_inbound(DeviceId{"peer-b"}, MessageId{"m-1"}, "hello");
+    adapter.deliver_ack(DeviceId{"peer-b"}, MessageId{"m-1"}, "acked");
+
+    const auto report = owner.shutdown();
+    REQUIRE(report.fully_stopped());
+}
+
+TEST_CASE("HeyakiNodeAdapter destructor closes the session handler path "
+    "(disconnect cleanup regression guard)",
+    "[unit][heyaki_node_adapter]") {
+    ExecutorOwner owner;
+    REQUIRE(owner.initialize());
+    NodeDomain domain(temp_root("dtor"));
+
+    {
+        HeyakiNodeAdapter adapter{owner.executor(), valid_options(domain)};
+        adapter.deliver_disconnected(DeviceId{"peer-b"});
+        // 作用域结束：析构停管道 + 中和 session 消息 handler（this 捕获
+        // 生命周期闭合）。修正前该处会启动未登记的 submit_cancellable
+        // 重连循环——stop_all 无法取消、shutdown 后仍触碰 session（UAF）。
+    }
+
+    const auto report = owner.shutdown();
+    REQUIRE(report.fully_stopped());
+}
