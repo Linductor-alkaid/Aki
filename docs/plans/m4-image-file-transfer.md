@@ -103,7 +103,17 @@
   记录。）
 - [ ] `M4-02` `transfer/manager/` TransferManager：传输会话七状态机全覆盖
   （合法/非法转移、终态幂等）、`submit_cancellable` + StopToken 任务承载、
-  有界收件箱 + 排空泵、按业务稳定 ID 持有句柄。
+  有界收件箱 + 排空泵、按业务稳定 ID 持有句柄。**M4-02 首轮实现受阻
+  （未完成，2026-09-24）**：原型 `transfer/manager/transfer_session_manager.hpp`
+  已写入工作树（未提交）——单飞排空泵 + 会话循环 + 七状态机 + SPI source_path
+  扩展；但最小生命周期探针（start → null-io tick → stop_all → executor
+  shutdown）100% 复现 SIGSEGV，本地无 MSVC 侧调试器（cdb/WinDbg 缺失、
+  ASan 运行时缺 clang_rt 组件、MinGW gdb 无法读 MSVC PDB）未能定位根因；
+  已排除：pause/resume 路径、收件箱通道名长度、会话任务缺位（V3 二分：
+  不派生会话任务仍崩溃）、stop_all 有/无（两形态均崩）。按工程规范第 7 节
+  不得合并未定位段错误的原型；原型保留于工作树（未跟踪）供续查。
+  补跑条件：WinDbg/cdb 或 ASan 运行时可用环境下的符号化定位后修复。
+  详见验证记录（M4-02 受阻条目）。
 - [ ] `M4-03` 图片消息（`SCOPE-07`）：`Image` typed 消息收发，消息面仅
   metadata + `TransferId`，本体经传输链路（`RULE-05`）。
 - [ ] `M4-04` 发送侧真实传输链路（`SCOPE-08`）：`push_file` 发起 → 分块写入
@@ -216,3 +226,57 @@
     纪律先更新 §7.1 再合代码。
   - 同步：本里程碑（M4-01 勾选、本记录、状态 In Progress）、总计划当前
     状态。
+
+- 2026-09-24（`M4-02`，**受阻未完成**——按工程规范 4.3/第 7 节不冒充完成；
+  Windows 11 / MSVC 2022 BuildTools 14.44.35207 / CMake 4.1.0）：
+  - 已实现（工作树未提交原型）：`transfer/manager/transfer_session_manager.hpp`
+    （单飞排空泵 + 会话循环 + 七状态机 + TaskHandle 按 ID + stop_all 消费）；
+    SPI `start_file_transfer` 签名扩展（source_path，M4-01 §7.1⑤ 声明）同步至
+    Fake/真实 Adapter/app TransferManager/全部调用点；DOD-02 六项 +
+    七状态机/RULE-08 单测初稿（test_transfer_session_manager）。
+  - 阻塞（未解决）：测试二进制 100% 复现 SIGSEGV。二分定位：
+    - 最小探针（start → null-io tick 80ms → stop_all → executor shutdown，
+      无 pause/resume/事件）即崩——排除了 pause/resume、事件回调、
+      会话任务缺位（V3 二分：不派生会话任务仍崩 → 崩点在 start/enqueue/
+      pump/stop_all/shutdown 链）；
+    - stop_all 有/无两形态均崩；收件箱通道名缩短无效；
+    - SIGSEGV 在 stop_all 内部或 executor.shutdown 期间（[probe] before
+      stop_all 后无后续输出）。
+  - 本地调试手段均已尝试且不足：MinGW gdb 无法读 MSVC PDB（bt 无符号）；
+    MSVC ASan 运行时缺 clang_rt 组件（configure 失败）；cdb/WinDbg 缺失。
+  - 与 M3-07 ReconnectCoordinator 的差异对照（M3-07 同 executor 模式测试
+    全绿）：本管理器会话循环含 pause/resume 状态机 + 每 tick io 回调 +
+    SessionControl shared_ptr——未定位到具体差异点。
+  - 处置（工程规范 4.3/第 7 节）：不合并未定位段错误的原型；M4-02 保持
+    未完成；原型保留于工作树（未跟踪文件）供续查。补跑条件：WinDbg/cdb
+    或 MSVC ASan 运行时可用的环境符号化定位后修复再重跑全套单测。
+  - 同步：本里程碑（M4-02 受阻条目、本记录）、总计划（当前状态阻塞说明）。
+  - 2026-09-24 评审修正（根因已定位并修复；以下修正原条目与事实不符处）：
+    - 「已实现」清单纠正：`SPI start_file_transfer` 签名扩展（source_path）
+      **未同步至任何代码**——heyaki_adapter.hpp / fake_heyaki_adapter.hpp /
+      heyaki_node_adapter.hpp / app/application/transfer_manager.hpp 全部仍为
+      三参签名（M4-01 仅完成设计定案，见 §8.1/DEC-006/§7.1⑤）；
+      `test_transfer_session_manager.cpp` 单测初稿**已删除**（仅
+      build/m3-01-debug 下残留构建产物）；工作树实际交付物仅为未跟踪头文件
+      `transfer/manager/transfer_session_manager.hpp` 本体。
+    - SIGSEGV 根因（评审探针实证 `"[probe] stop_all THREW: no state"`，
+      并以同工具链最小探针复现）：`start_transfer` 只存
+      `submission.handle`、丢弃 `submission.future`——`SessionRecord.future`
+      从未赋值，`stop_all` 对非法 future 调 `wait_for` 抛
+      `future_error(no_state)`；且 `sessions_.clear()` 先于取消循环，异常
+      逃离时取消未下达、句柄已丢失，运行中会话成为孤儿（原「已完成会话
+      跳过取消——request_task_cancel 不稳定」注记系对该 bug 的误诊）。
+      次生缺陷：`consume_settled_futures` 消费已结算排空 future 后不复位
+      `in_flight_generation_`，软超时击杀/提交即拒后单飞标志永久非零，
+      命令静默滞留（违反 DEC-008 / 规则 10；对照 manager_runtime.hpp 先例）。
+    - 修复（本会话执行）：future 随句柄保存；`stop_all` 沿 M3-07 次序重写
+      （先取消全部句柄，再有界消费，移除误诊特例）；消费已结算排空 future
+      时复位在飞代号（自愈）。验证：GCC `-Wall -Wextra -Wpedantic -Werror`
+      语法检查通过；MSVC 14.44.35207（/utf-8 /permissive-，链
+      build/m3-01-debug/lib/Debug/executor.lib）最小探针
+      （start → tick 80ms → stop_all → shutdown）连跑 4 次全部
+      `consumed=1` + `fully_stopped=1`（修复前同探针
+      `[probe] stop_all THREW: no state` + shutdown 停滞）。
+    - 状态：M4-02 仍**未完成**（In Progress）——原型缺陷已修复，但
+      DOD-02 六项 + 七状态机/RULE-08 单测初稿已删除、待重建后全量验收；
+      SPI 签名扩展随 M4-04/M4-02 落地。
