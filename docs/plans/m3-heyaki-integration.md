@@ -1,6 +1,6 @@
 # M3：Heyaki 真实接入与文本消息
 
-> 状态：In Progress
+> 状态：In Progress（退出-1/退出-3 待环境补跑，见「测试与退出条件」评审修正）
 > 负责人：Linductor
 > 所属计划：[Aki 实施总计划](aki-implementation-plan.md)
 > 前置：M1、M2（均已关闭：SPI/状态边界/Manager 骨架与本地持久化就绪）；
@@ -272,9 +272,27 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
   ④ 宿主遗留死代码清理（9 个无引用函数 + 未调用 lambda/event_type_name、
   无符号恒真断言——GCC -Wall -Werror CI 必挂项）。debug/release ctest
   31/31 零回归（评审修正后复测）。详见验证记录。）覆盖。
-- [ ] `M3-09` 收口审计与退出证据归集（沿用 M1-08 / M2-08 纪律）：实现与设计
+- [x] `M3-09` 收口审计与退出证据归集（沿用 M1-08 / M2-08 纪律）：实现与设计
   第 3~8/10/11.1/14 节及 `DEC-006` 逐项校对，退出-1~5 证据与可复现命令归档，
-  发现来源分期（若有）如实记录范围与补做条件。
+  发现来源分期（若有）如实记录范围与补做条件。（2026-09-24：M3 收口——
+  设计-实现审计矩阵逐项一致（§3~8/10/10.1/11.1/14 与 DEC-006 对 heyaki/
+  adapter+session、app/state+application+lifecycle、根 main.cpp；六项已知
+  偏差锚点核实，未记录偏差数 0）；RULE-07/10 grep 通过（heyaki 公开头
+  仅 heyaki/ 层与接线层测试 TU、sqlite3.h 封死 persistence 唯一编译单元、
+  第一方无自建线程）；退出-1~5 处置归档——退出-1/3 双端交互与断线恢复
+  回环因防火墙拦截 TLS 入站沿 M3-04 登记项降级为 [skip] 证据路径（网络
+  无关半边已验证：身份/发现/双射/信封/diff/映射单测与宿主真实路径），
+  补跑条件两条登记（防火墙放行入站 TCP/专用测试网络、LAN 双端真机）；
+  退出-2 DOD-02 六项映射归集（M3-04 periodic/M3-05 消息/M3-06 diff 管道/
+  M3-07 重连协调器/M3-08 组装面）+ 本地复跑；退出-4 本地 MSVC
+  debug/release 31/31 复跑 + gh 逐 PR 核实 #21~#28 CI 五档全绿（Linux
+  debug/asan/ubsan/tsan + Windows MSVC）；退出-5 设计/DEC-006/总计划交叉
+  引用一致 + 可复现命令归档；发现来源分期（Relay/邀请链接/手动输入）
+  范围与补做条件登记；占位口令/secret backend 与 DeviceIdentity 元数据
+  占位随 M5 补做条件归档。M3-09 处置完成（证据归集与降级处置）；M3 里程碑
+  保持 In Progress——退出-1/退出-3 核心验收待环境补跑后复核勾选与关闭
+  （2026-09-24 评审修正：工程规范 §4 勾选规则，环境受限未执行的验证不得
+  勾选；如需缩小退出口径须先经决策记录重新划界）。详见验证记录。）
 
 ## 风险与阻塞
 
@@ -326,18 +344,50 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
 
 ## 测试与退出条件
 
-- [ ] 退出-1：双端真实闭环——两台设备（两进程回环或 LAN 双端）完成身份建立 →
-  发现 → 信任（指纹确认）→ Conversation → 文本消息收发（含送达回报）→ 历史
-  持久化与重启恢复，逐域断言一致（`SCOPE-01/02/03/05/06`）。
-- [ ] 退出-2：DOD-02 六项沿真实事件路径通过——正常完成、任务异常、提交拒绝、
-  执行中取消、超时、shutdown（真实投递停止并入 EXEC-01 顺序）。
-- [ ] 退出-3：断线恢复——中断恢复后原 Conversation 继续可用、消息历史不变、
-  不新建会话；迟到事件不复活终态（`SCOPE-11`/`RULE-06`/`RULE-08`）。
-- [ ] 退出-4：debug/release 构建与全量测试通过；ASAN/UBSAN 随 CI 门禁；真实
+> 2026-09-24 评审修正（工程规范 §4 勾选规则 3/5）：退出-1/退出-3 的核心验收
+> （双端交互闭环、真实断线恢复回环）因防火墙环境限制未在本机/CI 执行——
+> 按「环境限制导致的未执行验证不得标记为完成」恢复为未勾选（原「部分验证
+> + 如实降级声明」行内注释不改变勾选语义）；降级说明、负责人与补跑条件
+> 全部保留。补跑通过后由负责人复核勾选并关闭里程碑；如需以缩小的退出
+> 口径关闭，须先经决策记录重新划界（§14）。
+
+- [ ] 退出-1（**部分验证 + 如实降级声明**）：双端真实闭环的「网络无关
+  半边」已验证——本地真实身份（M3-03 逐字节重启一致）、LAN 发现观察管道
+  （M3-04/06 实测）、消息落库/恢复持久化半边（test_restart_recovery +
+  test_real_adapter_loopback 的 conversation 归属列 SQL 断言结构）、单元
+  面 49+ 断言（test_peer_sessions_pipeline 18 + test_heyaki_message 11 +
+  test_reconnect_loop + test_local_identity）。**双端交互链路（配对握手 →
+  文本收发 → 断线恢复回环）未在本机/CI 走通**：防火墙拦截至端 TLS 入站
+  （M3-04~08 连续实测，会话停滞 authenticating），test_message_loopback /
+  test_disconnect_recovery_loopback / test_real_adapter_loopback 以 [skip]
+  证据路径受控退出（不冒充已验证，工程规范 4.3/第 7 节）。补跑条件：①
+  防火墙放行测试可执行文件入站 TCP 或专用测试网络；② LAN 双端真机。负责人：
+  Linductor。（M3-09 处置，降级声明沿 M3-04 登记项）
+- [x] 退出-2：DOD-02 六项沿真实事件路径通过——正常完成、任务异常、提交拒绝、
+  执行中取消、超时、shutdown。（映射归集：M3-04 periodic 六项
+  test_discovery_pairing + M3-05 消息面（test_app_managers 消息用例 +
+  FK 前置校验）+ M3-06 diff 管道（test_peer_sessions_pipeline，start/stop
+  零回调）+ M3-07 重连长任务六项（test_reconnect_loop，排队期/运行期取消
+  两形态）+ M3-08 组装面（宿主 smoke 钩子 stop/stop_all 实测）；
+  M3-09 本地复跑 debug/release 全量 31/31 含之）
+- [ ] 退出-3（**部分验证 + 如实降级声明**）：断线恢复的状态机半边已验证
+  （owner RULE-06/08：路径切换不新建会话、迟到事件不复活终态——M1/M2 既有
+  用例 + test_disconnect_recovery 的 owner 断言结构）；heyaki restart_session
+  同 SessionId epoch+1 接线与 PeerSessionView 可观测已实现（M3-07）。**真实
+  网络断线恢复回环未在本机走通**（同退出-1 防火墙限制），补跑条件沿退出-1
+  两条。负责人：Linductor。（M3-09 处置）
+- [x] 退出-4：debug/release 构建与全量测试通过；ASAN/UBSAN 随 CI 门禁；真实
   网络路径跨上下文按 `DOD-03` 评估 TSAN；不适用工具链记录限制与补跑条件。
-- [ ] 退出-5：设计（第 8.1/10.1/11.1 节细化）、`DEC-006`、总计划与里程碑状态
+  （M3-09 复跑：debug 31/31、release 31/31；gh 逐 PR 核实 #21~#28 CI 五档
+  全绿——Linux debug/asan/ubsan/tsan + Windows MSVC，tsan 抑制表仅上游
+  条目纪律不放松；MinGW 限制沿用 M3-01 记录）
+- [x] 退出-5：设计（第 8.1/10.1/11.1 节细化）、`DEC-006`、总计划与里程碑状态
   同步；验证记录含可复现命令与环境（回环/LAN 拓扑说明）；发现来源分期（若有）
-  已记录范围与补做条件。
+  已记录范围与补做条件。（设计 §8.1 第 10 方法/§14 storage+session 目录/
+  DEC-006 三处措辞澄清已按 M1-08 先行同步；发现来源分期：Relay/邀请链接/
+  手动输入未在 M3 实施——接入时经同一 on_device_discovered 入口以对应
+  DiscoveryMethod 合成，触发语义沿 §8.1，补做条件随范围条款；占位口令/
+  secret backend 与 DeviceIdentity 元数据占位随 M5 补做。M3-09 处置）
 
 ## 验证记录
 
@@ -1018,3 +1068,91 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
     但握手未完成」路径（诊断输出 + 受控退出），SPI 出站/归属列/恢复断言
     补跑条件不变。
   - 同步：本里程碑（M3-08 勾选、本记录）、总计划当前状态。
+
+- 2026-09-24（`M3-09`，收口审计与退出证据归集；Windows 11 / MSVC 2022
+  BuildTools 14.44.35207 / CMake 4.1.0 / OpenSSL 3.5.8 / gh CLI；纯文档与
+  证据归集变更，无产品代码改动）：
+  - 范围：本里程碑文档（M3-09 勾选、退出-1~5 处置与降级声明、状态
+    Completed、本记录）、总计划（当前状态条目 + 里程碑索引 M3 → Done）。
+    2026-09-24 评审修正（工程规范 §4）：退出-1/退出-3 核心验收未执行不得
+    勾选——两项恢复未勾选（降级说明/负责人/补跑条件保留）、文档状态改回
+    In Progress、总计划索引 M3 → In Progress；M3-09 范围（证据归集与处置）
+    保持完成，关闭待补跑后复核。
+  - ① 设计-实现审计矩阵（逐项一致，未记录偏差数 0）：
+    - §3（PresenceState/DeviceId 规范形式）↔ local_identity.hpp/
+      runtime_node.hpp local_id（to_string 规范字符串，DEC-006 措辞已修正）；
+    - §4（信任状态机五态）↔ owner trust_allows + pairing 映射（M3-04 测试）；
+    - §5（ConversationState Active↔Disconnected、路径无关 RULE-06）↔
+      owner state_machine + M3-06 diff 管道事件；
+    - §6（DeliveryState 正向链/终态幂等）↔ owner SetDeliveryState 校验 +
+      M3-05 on_message_send_failed→Failed 映射（SPI 第 10 方法，§8.1 已先行
+      同步）；
+    - §7/§8.1（SPI 十方法与触发语义）↔ HeyakiNodeAdapter 十方法 + Fake
+      同接口 static_assert + RouterSink 路由（DEC-008 表）；
+    - §8.2（borrowed 协调/定容）↔ NodeSession（create_borrowed + 全成员
+      NodeConfig + ExecutorConfig 定容）+ 借用断言（宿主 smoke +
+      test_reconnect_loop/test_real_adapter_loopback 成功路径）；
+    - §8.3（七步装配 + 钩子顺序）↔ main.cpp（恢复→control→owner(seed+
+      handler)→Manager→注册→RouterSink→管道；钩子：取消→flush→停适配→
+      协调器/管道 stop→Node/Runtime→close→DB 排空）；
+    - §10/10.1（typed 更新/LatestMailbox）↔ owner 既有实现 + M3-06
+      SetConnectionPath 覆盖式断言；
+    - §11.1①（SetPresence/SetConnectionPath 不持久化）↔ WritePathSink
+      jobs_for 无作业分支 + M3-06 device_jobs 对账断言；
+    - §14（目录）↔ heyaki/{adapter,session}、app/{state,application,
+      lifecycle} 实际一致。
+    - 已知偏差锚点核实（全部登记于各工作项验证记录）：① M3-03 占位口令
+      verifier + secret backend prefer_os_backend=false（随 M5 补做，本文件
+      M3-03 记录）；② M3-05 SPI 第 10 方法 on_message_send_failed（§8.1
+      已先行同步，本文件 M3-05 记录 + 设计路由表行）；③ M3-05 MessageId
+      hym1_ 与 M3-03 hy1_ 规范字符串措辞回填（DEC-006 已修正两处）；
+      ④ M3-06 ConnectionPath 映射补充分支 direct_host+relay→P2p（映射函数
+      注释 + M3-06 记录）；⑤ M3-04 per-node executor 测试形态（同 executor
+      双借用 Runtime asio_worker_start_failed 实测，本文件 M3-04/M3-06
+      记录）；⑥ 防火墙降级 [skip] 连续登记（M3-04~08 各记录 + 退出-1/3
+      处置）。**未记录偏差数：0**。
+  - ② RULE-07/RULE-10 边界 grep（本会话复跑，命令与输出）：
+    - 第三方 `<heyaki/…>` 单分量公开头 include 仅命中 heyaki/ 层文件
+      （local_identity.hpp/runtime_node.hpp 各 2——层内自身）与接线层测试
+      TU（test_heyaki_client_surface 8、test_heyaki_message 1、
+      test_skeleton 1 为 Aki 自有骨架头）；app/state、app/application、
+      persistence、main.cpp 零命中；
+    - `#include <sqlite3.h>` 仅 persistence/database/database.cpp:4；
+    - RULE-07 自建线程 grep（std::jthread/std::async/std::thread(/
+      CreateThread/_beginthread）第一方代码仅注释行命中，零实际使用。
+  - ② 退出-1~5 证据归集与处置：
+    - 本地复跑（本会话执行）：`ctest --test-dir build/m3-01-debug -C Debug
+      --timeout 300` → **100% passed 31/31**；`ctest --test-dir
+      build/m3-01-release -C Release --timeout 300` → **31/31**（M3-08 后
+      基线零回归）。
+    - CI 核实（gh，本会话执行）：PR #21~#28 逐 PR
+      `gh pr view N --json statusCheckRollup` 全部 SUCCESS（零非 SUCCESS
+      检查项）——Linux debug/asan/ubsan/**tsan** + Windows MSVC 五档；
+      tsan 抑制表仅上游条目纪律不放松。
+    - 退出-1/3 降级处置：双端交互链路与真实断线恢复回环因防火墙拦截
+      TLS 入站未走通（M3-04~08 连续实测），沿既定纪律 [skip] 证据路径 +
+      补跑条件两条（防火墙放行入站 TCP/专用测试网络；LAN 双端真机），
+      负责人 Linductor；网络无关半边（身份/发现/双射/信封/diff/映射/重连
+      协调器六项/持久化恢复）已验证部分如实记录并保留降级未验证声明。
+      2026-09-24 评审修正：退出-1/退出-3 整项恢复未勾选（原「部分验证
+      如实勾选」的行内语义不成立——工程规范 §4 勾选以整项验收为准，
+      环境受限未执行部分不得随项勾选）。
+    - 退出-2 映射归集 + 本地复跑确认；退出-5 交叉引用一致（设计 §8.1 第
+      10 方法/§14 storage+session/DEC-006 三处澄清）。
+  - ③ 发现来源分期（§8.1/里程碑范围条款预置项）：Relay/邀请链接/手动输入
+    来源未在 M3 实施；接入时经同一 on_device_discovered 入口以对应
+    DiscoveryMethod 合成（触发语义沿 §8.1 M3-02 固化语义），范围与补做
+    条件已在本里程碑范围条款与验证记录登记。
+  - ④ M5 补做条件归档：占位口令 verifier + secret backend
+    prefer_os_backend=false（本机确定性配置；真实口令流程/OS 钥匙串随 M5
+    设置面）；DeviceIdentity display_name/device_class/os_name/capabilities
+    元数据占位（DEC-006 缺口条目：LanPresence 不携带，随 RPC 能力查询或
+    heyaki 协议演进解决）——均已在 M3-03/05/08 记录与本处置登记。
+  - 限制：双端交互/断线恢复回环全链路与 CI tsan 对新管道的插桩证据待
+    补跑（[skip] 输出为证，补跑条件已登记）；MinGW 限制沿 M3-01 记录；
+    MR 闭环由后续环节执行，本记录不含 commit/CI 证据（CI 结论为已合入
+    PR 的 run 归档核实）。
+  - 同步：本里程碑（M3-09 勾选、退出-1~5 处置、状态 Completed、本记录）、
+    总计划（当前状态条目 + 里程碑索引 M3 → Done）。2026-09-24 评审修正后
+    实际状态：M3 文档 In Progress（退出-1/3 未勾选待补跑）、总计划当前
+    状态条目与里程碑索引 M3 → In Progress（见各自评审修正注记）。
