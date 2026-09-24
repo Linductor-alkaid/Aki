@@ -273,12 +273,10 @@ DeviceIdentity make_local_device_identity(const LocalIdentity& identity,
 // 复用 §11.1 ① + update_jobs 工厂；SetPresence/SetConnectionPath 不持久化。
 // 入队拒绝经 enqueue_rejected 与 control->rejected_count 双可见（RULE-09）；
 // 处理器异常由 owner 全捕获（post_accept_failures），此处不需自兜底。
-// UpsertMessage 的会话归属暂由宿主捕获（message_conversation，ensure_conversation
-// 后赋值）——DEC-009 ② 的载荷扩展随 M3-05 消息批次落地，届时移除该簿记。
+// UpsertMessage 的会话归属自 M3-05 起随更新载荷携带（DEC-009 ②）。
 struct WritePathSink {
     std::shared_ptr<DatabaseWorkerControl> control;
     std::shared_ptr<FileStore> store;
-    ConversationId message_conversation;
     std::vector<std::future<void>> futures;
     std::uint64_t admitted = 0;
     std::uint64_t enqueue_rejected = 0;
@@ -314,7 +312,7 @@ private:
                                        aki::app::UpsertMessage>) {
                     jobs.push_back(
                         aki::persistence::make_message_upsert_job(
-                            concrete.message, message_conversation));
+                            concrete.message, concrete.conversation));
                 } else if constexpr (std::is_same_v<Update,
                                        aki::app::UpsertTransfer>) {
                     jobs.push_back(
@@ -439,7 +437,7 @@ int run_demo(const std::string& run_root) {
     //    owner 上下文 = 主线程，单写者，RULE-02/EXEC-03）。
     // 全成员显式初始化：GCC -Wmissing-field-initializers（CI Linux -Werror）
     // 对省略尾随成员的聚合初始化告警（CI run 35905251211 实测；MSVC 不告警）。
-    WritePathSink sink{db, recovery.store, ConversationId{}, {}, 0, 0};
+    WritePathSink sink{db, recovery.store, {}, 0, 0};
     AppStateOwner state_owner{AppStateOwnerOptions{},
         app_state_from(recovery.state),
         [&sink](const AppStateUpdate& update) { sink(update); }};
@@ -631,9 +629,7 @@ int run_demo(const std::string& run_root) {
             report(conversation.state == ConversationState::Active,
                 "conversation state == Active ("
                     + enum_text(conversation.state) + ")");
-            // UpsertMessage 会话归属的过渡簿记（DEC-009 ② 载荷扩展前的宿主
-            // 捕获；M3-05 消息批次收编）。
-            sink.message_conversation = conversation.id;
+
         }
     }
     report(messages.send_text(DeviceId{"alpha-01"}, MessageId{"m-1"}, "hello alpha"),

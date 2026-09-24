@@ -7,6 +7,8 @@
 //     状态更新，设计第 8.1 节）；
 //   - 注入连接路径变化 → LatestMailbox 更新；
 //   - 注入消息 → 必达事件主路径 FIFO 可见；
+//   - 发送失败回报（SPI 第 10 方法）经 BridgeSink 映射 SetDeliveryState(Failed)
+//     （DEC-006 映射 4；迟到回报不复活终态，RULE-08）；
 //   - 终态/取消后注入迟到事件被状态机应用层拒绝（RULE-08）；
 //   - DOD-02 六项沿注入管线覆盖：正常完成、任务异常、提交拒绝、执行中取消、
 //     超时、shutdown（owner 通道自身的关闭/排空语义详见 test_app_state）。
@@ -133,13 +135,31 @@ public:
     }
 
     bool on_message_received(Message message) override {
+        // 测试桥接：会话按需 ensure（幂等 upsert），再提交带归属的消息
+        //（DEC-009 ② FK 前置校验要求会话先在）。
+        aki::conversation::Conversation conversation;
+        conversation.id = ConversationId{"conv-test"};
+        conversation.local_device = DeviceId{"local"};
+        conversation.remote_device = message.sender;
+        (void)owner_.submit_update(
+            aki::app::UpsertConversation{conversation});
         const bool posted = post(MessageReceivedEvent{message});
-        const bool applied = owner_.submit_update(UpsertMessage{std::move(message)});
+        const bool applied = owner_.submit_update(UpsertMessage{
+            std::move(message), ConversationId{"conv-test"}});
         return posted && applied;
     }
 
     bool on_message_delivered(ConversationId conversation, MessageId message) override {
         return post(MessageDeliveredEvent{std::move(conversation), std::move(message)});
+    }
+
+    bool on_message_send_failed(ConversationId conversation, MessageId message) override {
+        // 测试桥接：失败回报映射 SetDeliveryState(Failed)（终态，RULE-08）。
+        (void)conversation;
+        const bool applied = owner_.submit_update(
+            aki::app::SetDeliveryState{std::move(message),
+                aki::conversation::DeliveryState::Failed});
+        return applied;
     }
 
     bool on_transfer_started(Transfer transfer) override {
@@ -370,6 +390,60 @@ TEST_CASE("Late injected events cannot revive terminal entities (RULE-08)",
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.front().trust_state == TrustState::Revoked);
         REQUIRE(owner.stats().updates_rejected == 1);
+    }
+}
+
+TEST_CASE("Send-failure report maps to SetDeliveryState(Failed) on the bridge (DEC-006 mapping 4)",
+    "[unit][heyaki_adapter]") {
+    AppStateOwner owner;
+    BridgeSink bridge(owner);
+
+    // 预置：会话 conv-test + Sent 消息 m-1（DEC-009 ② FK 前置校验要求会话先在）。
+    aki::conversation::Conversation conversation;
+    conversation.id = ConversationId{"conv-test"};
+    conversation.local_device = DeviceId{"local"};
+    conversation.remote_device = DeviceId{"alpha"};
+    REQUIRE(owner.submit_update(aki::app::UpsertConversation{conversation}));
+    REQUIRE(owner.submit_update(
+        UpsertMessage{make_message("m-1", DeliveryState::Sent),
+            ConversationId{"conv-test"}}));
+    owner.drain();
+
+    // 失败回报面（sink 第 10 方法）：BridgeSink → SetDeliveryState(Failed)
+    //（Sent -> Failed 合法边；无主路径事件）。Fake 无此注入面，经 Sink 直驱。
+    REQUIRE(bridge.on_message_send_failed(ConversationId{"conv-test"}, MessageId{"m-1"}));
+    owner.drain();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.messages.messages.size() == 1);
+        REQUIRE(snapshot.value.messages.messages.front().state == DeliveryState::Failed);
+    }
+
+    // 终态幂等：Failed 上的重复失败回报 = 幂等 no-op（接受，不拒绝）。
+    const auto rejected_before_repeat = owner.stats().updates_rejected;
+    REQUIRE(bridge.on_message_send_failed(ConversationId{"conv-test"}, MessageId{"m-1"}));
+    owner.drain();
+    REQUIRE(owner.stats().updates_rejected == rejected_before_repeat);
+
+    // 迟到的失败回报不得复活 Delivered（RULE-08）：Sink 投递成功（admission），
+    // 状态机应用层拒绝（updates_rejected 增量，Delivered -> Failed 非法）。
+    REQUIRE(owner.submit_update(
+        UpsertMessage{make_message("m-2", DeliveryState::Delivered),
+            ConversationId{"conv-test"}}));
+    owner.drain();
+    const auto rejected_before_late = owner.stats().updates_rejected;
+    REQUIRE(bridge.on_message_send_failed(ConversationId{"conv-test"}, MessageId{"m-2"}));
+    owner.drain();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        for (const auto& message : snapshot.value.messages.messages) {
+            if (message.id == MessageId{"m-2"}) {
+                REQUIRE(message.state == DeliveryState::Delivered);
+            }
+        }
+        REQUIRE(owner.stats().updates_rejected == rejected_before_late + 1);
     }
 }
 

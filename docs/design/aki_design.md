@@ -299,7 +299,11 @@ executor 类型（`RULE-10`）；heyaki 层仅依赖第 3~7 节领域类型，�
 `on_transfer_progress` / `on_transfer_completed` / `on_connection_path_changed`），
 返回值表示投递是否被接受（校验失败或下游背压拒绝可见）。其中
 `on_transfer_completed` 的 `final_state` 仅取 `Completed` / `Failed` / `Cancelled`
-（第 10.1 节）。
+（第 10.1 节）。M3-05 起追加第 10 个方法 `on_message_send_failed(conversation,
+message)`——出站文本的投递回报终态失败面（DEC-006 映射 4 的
+`send_failed` / `peer_rejected` / `ack_timeout` / `session_closed`）；协议
+`acked` 仍走 `on_message_delivered`，映射为 `SetDeliveryState(Failed)`（终态，
+`RULE-08`），不产生主路径事件。
 
 纪律：Adapter 回调只做有界校验与投递（`EXEC-02`），业务处理一律在 Manager 的执行
 上下文（M1-05）；事件从 Sink 到 Application State 的桥接由应用层完成——Sink 实现把
@@ -425,6 +429,7 @@ Store 所有权：
 | `on_device_disconnected` | DM：`SetPresence(Offline)`；CM 扇出：已建会话则 `UpsertConversation → Disconnected` | DeviceDisconnected（仅 DM 投递一次） |
 | `on_message_received` | MM：`UpsertMessage`（收到的消息本地记录为 `Delivered`，第 6 节） | MessageReceived |
 | `on_message_delivered` | MM：`SetDeliveryState(Delivered)` | MessageDelivered |
+| `on_message_send_failed`（M3-05） | MM：`SetDeliveryState(Failed)` | —（Failed 为终态，RULE-08；无主路径事件） |
 | `on_transfer_started` | TM：`UpsertTransfer` | TransferStarted |
 | `on_transfer_progress` | TM：`UpdateTransferProgress` | TransferProgress |
 | `on_transfer_completed` | TM：`CompleteTransfer(final_state)` | TransferCompleted |

@@ -22,6 +22,7 @@
 // lan_discovery.hpp）。
 #pragma once
 
+#include "conversation/message/message_types.hpp"
 #include "device/device/device_types.hpp"
 #include "heyaki/adapter/local_identity.hpp"
 
@@ -292,6 +293,108 @@ public:
             }
         }
         return true;
+    }
+
+    // ---- M3-05：文本消息面（DEC-006 映射 4；aki/std 公开面）----
+
+    // aki MessageId ↔ heyaki MessageId 双射（DEC-006 冻结常量）：权威形式为
+    // heyaki::to_string / parse_message_id 的规范字符串（hym1_ 前缀编码）；
+    // 解码失败为 nullopt——调用方按 admission 拒绝处理（RULE-09）。
+    [[nodiscard]] static std::optional<::heyaki::MessageId> to_heyaki_message_id(
+        const aki::conversation::MessageId& message_id) {
+        auto decoded = ::heyaki::parse_message_id(message_id.value);
+        if (!decoded || decoded.error != ::heyaki::IdentifierDecodeError::none) {
+            return std::nullopt;
+        }
+        return decoded.value;
+    }
+
+    [[nodiscard]] static aki::conversation::MessageId to_aki_message_id(
+        const ::heyaki::MessageId& message_id) {
+        return aki::conversation::MessageId{::heyaki::to_string(message_id)};
+    }
+
+    // 出站文本（DEC-006 映射 4）：MessageEnvelope{message_id = aki MessageId
+    // 16B 双射, type = "aki.text", delivery_mode = peer_acked}；Result 失败
+    //（peer_offline / 会话缺失等）返回 false——SPI false + 拒绝可见（RULE-09），
+    // 终态结果经 set_message_handlers 的 ack 回调异步到达。
+    [[nodiscard]] bool send_text(const aki::device::DeviceId& peer,
+        const aki::conversation::MessageId& message_id,
+        std::string_view text) {
+        auto key = endpoint_key_of(peer);
+        if (!key.has_value()) {
+            return false;
+        }
+        auto wire_id = to_heyaki_message_id(message_id);
+        if (!wire_id.has_value()) {
+            return false;  // 非 16B hex：编码契约违反，admission 拒绝
+        }
+        ::heyaki::MessageEnvelope envelope;
+        envelope.message_id = *wire_id;
+        envelope.type = "aki.text";  // DEC-006 冻结常量
+        envelope.delivery_mode =
+            ::heyaki::MessageDeliveryMode::peer_acked;
+        const auto* data = reinterpret_cast<const std::byte*>(text.data());
+        envelope.payload.assign(data, data + text.size());
+        auto sent = node_.send_message(*key, std::move(envelope));
+        return sent.has_value();
+    }
+
+    // 入站与投递回报（DEC-006 映射 4；Node 上下文回调，消费方有界处理 +
+    // 投递，EXEC-02）：
+    //   inbound：协议层已去重 + ACK 应答后的消息（text 为 payload 字节串）；
+    //   ack event 映射：queued→queued、acked→acked、send_failed/peer_rejected/
+    //   ack_timeout/session_closed→failed（aki DeliveryState 语义域）。
+    void set_message_handlers(
+        std::function<void(const aki::device::DeviceId& peer,
+            const aki::conversation::MessageId& message_id,
+            const std::string& text)>
+            inbound,
+        std::function<void(const aki::device::DeviceId& peer,
+            const aki::conversation::MessageId& message_id,
+            const std::string& event)>
+            ack) {
+        node_.set_message_inbound_handler(
+            [inbound = std::move(inbound)](
+                const ::heyaki::DeviceEndpointKey& peer,
+                const ::heyaki::MessageEnvelope& envelope) {
+                if (!inbound) {
+                    return;
+                }
+                const std::string text(
+                    reinterpret_cast<const char*>(envelope.payload.data()),
+                    envelope.payload.size());
+                inbound(
+                    aki::device::DeviceId{
+                        ::heyaki::to_string(peer.device_id)},
+                    to_aki_message_id(envelope.message_id), text);
+            });
+        node_.set_message_ack_observer(
+            [ack = std::move(ack)](const ::heyaki::DeviceEndpointKey& peer,
+                const ::heyaki::MessageId& message_id,
+                ::heyaki::MessageDeliveryEvent event,
+                const std::optional<::heyaki::Error>&) {
+                if (!ack) {
+                    return;
+                }
+                const char* mapped = "failed";
+                switch (event) {
+                    case ::heyaki::MessageDeliveryEvent::queued:
+                        mapped = "queued";
+                        break;
+                    case ::heyaki::MessageDeliveryEvent::acked:
+                        mapped = "acked";
+                        break;
+                    case ::heyaki::MessageDeliveryEvent::send_failed:
+                    case ::heyaki::MessageDeliveryEvent::peer_rejected:
+                    case ::heyaki::MessageDeliveryEvent::ack_timeout:
+                    case ::heyaki::MessageDeliveryEvent::session_closed:
+                        mapped = "failed";
+                        break;
+                }
+                ack(aki::device::DeviceId{::heyaki::to_string(peer.device_id)},
+                    to_aki_message_id(message_id), mapped);
+            });
     }
 
     // 关闭（幂等）：Node::shutdown → Runtime::shutdown。borrowed 模式下

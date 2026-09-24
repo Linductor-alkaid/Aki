@@ -56,6 +56,12 @@ public:
         return messages_.enqueue_message_delivered(std::move(conversation), std::move(message));
     }
 
+    bool on_message_send_failed(aki::conversation::ConversationId conversation,
+        aki::conversation::MessageId message) override {
+        return messages_.enqueue_message_send_failed(
+            std::move(conversation), std::move(message));
+    }
+
     bool on_transfer_started(aki::transfer::Transfer transfer) override {
         return transfers_.enqueue_transfer_started(std::move(transfer));
     }

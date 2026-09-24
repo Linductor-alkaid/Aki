@@ -343,6 +343,18 @@ private:
     }
 
     bool apply_impl(const UpsertMessage& upsert) {
+        // DEC-009 ②：会话归属 FK 前置校验——载荷会话必须已在 ConversationStore
+        //（未知会话拒绝并可观测，不落库孤儿行）。
+        bool conversation_known = false;
+        for (const auto& conversation : current_.conversations.conversations) {
+            if (conversation.id == upsert.conversation) {
+                conversation_known = true;
+                break;
+            }
+        }
+        if (!conversation_known) {
+            return false;
+        }
         auto& messages = current_.messages.messages;
         for (auto& existing : messages) {
             if (!(existing.id == upsert.message.id)) {

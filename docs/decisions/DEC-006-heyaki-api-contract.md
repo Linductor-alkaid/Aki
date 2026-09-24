@@ -65,7 +65,9 @@ M3 要以 pinned `third_party/heyaki` 替换 `FakeHeyakiAdapter`（[DEC-002](DEC
      数据 = `LanEndpointSnapshot.identity_public_key`（Ed25519 32B）。配对申请
      scope：`message.send`（前缀通配语义，api.md scope 节）。
   4. 文本消息：`send_text_message` → `send_message(peer, MessageEnvelope{
-     message_id=aki MessageId 16B 双射, type="aki.text", delivery_mode=
+     message_id=aki MessageId 16B 双射（规范字符串形式：`to_string` /
+     `parse_message_id`，`hym1_` 前缀编码——M3-05 实测澄清，非裸 hex）,
+     type="aki.text", delivery_mode=
      peer_acked})`；`Result` 失败（如 peer_offline）→ SPI 返回 false 可见
      （`RULE-09`）；`DeliveryState` 映射 queued→`Sent`、acked→`Delivered`（经
      `on_message_delivered`）、send_failed/peer_rejected/ack_timeout/

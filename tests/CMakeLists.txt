@@ -264,3 +264,32 @@ target_link_libraries(test_discovery_pairing PRIVATE
 aki_deploy_openssl_dlls(test_discovery_pairing)
 add_test(NAME test_discovery_pairing COMMAND test_discovery_pairing)
 set_tests_properties(test_discovery_pairing PROPERTIES LABELS "integration")
+
+# M3-05：文本消息真实化（DEC-006 映射 4；双节点回环；防火墙受限环境按 M3-04
+# 先例 [skip] 降级，证据输出保留）。
+add_executable(test_message_loopback integration/test_message_loopback.cpp)
+target_compile_features(test_message_loopback PRIVATE cxx_std_20)
+aki_apply_warnings(test_message_loopback PRIVATE)
+target_link_libraries(test_message_loopback PRIVATE
+    Catch2::Catch2WithMain
+    aki_app
+    aki_heyaki
+    heyaki::client)
+aki_deploy_openssl_dlls(test_message_loopback)
+add_test(NAME test_message_loopback COMMAND test_message_loopback)
+set_tests_properties(test_message_loopback PROPERTIES LABELS "integration")
+
+# M3-05（评审拆分）：MessageId 双射 + aki.text 信封往返（DEC-006 冻结；网络
+# 无关）。独立 unit 二进制：回环二进制的 [skip] 受控退出不得掩盖同二进制内
+# 既有失败（工程规范第 7 节），网络无关断言在此始终完整执行。
+add_executable(test_heyaki_message unit/test_heyaki_message.cpp)
+target_compile_features(test_heyaki_message PRIVATE cxx_std_20)
+aki_apply_warnings(test_heyaki_message PRIVATE)
+target_link_libraries(test_heyaki_message PRIVATE
+    Catch2::Catch2WithMain
+    aki_app
+    aki_heyaki
+    heyaki::client)
+aki_deploy_openssl_dlls(test_heyaki_message)
+add_test(NAME test_heyaki_message COMMAND test_heyaki_message)
+set_tests_properties(test_heyaki_message PROPERTIES LABELS "unit")
