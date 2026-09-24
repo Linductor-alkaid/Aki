@@ -811,4 +811,14 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
   - 限制：连接/断开双扇出与路径回环断言待防火墙放行/LAN 双端环境补跑
     （[skip] 输出为证）；CI Linux 四档随本 PR 门禁；MR 闭环由后续环节执行，
     本记录不含 commit/CI 证据。
+  - CI 闭环补记（MR 闭环环节，如实）：CI 第 1 轮（run 35943203897）两档
+    失败——① tsan 档 test_message_loopback 首报 usrsctp（libdatachannel
+    vendored 依赖）内部数据竞争 `sctp_output.c:7581 sctp_toss_old_cookies`
+    （双节点 DTLS/SCTP 会话建立首次真实过 TSAN；上游 C 代码非 TSAN-clean）：
+    按 AGENTS 供应链纪律不改 third_party，新增 `cmake/tsan-suppressions.supp`
+    （仅上游条目，第一方竞争禁止入表）并经 ci.yml TSAN_OPTIONS 生效；
+    ② asan 档 test_peer_sessions_loopback:210 配对等待硬失败（会话已到
+    pairing_restricted 未走降级路径）——沿 M3-04/M3-05 降级纪律扩展覆盖
+    「已提交配对但握手未完成」（诊断输出 + 受控退出），presence/path 断言
+    补跑条件不变。
   - 同步：本里程碑（M3-06 勾选、本记录）、总计划当前状态。

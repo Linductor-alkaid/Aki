@@ -1,0 +1,13 @@
+# ThreadSanitizer 抑制表（M3-06，CI run 35943203897 实测建档）。
+#
+# 范围：仅限上游 vendored 依赖内部的数据竞争——按 AGENTS.md 供应链纪律，
+# third_party 代码不修改；上游缺陷以抑制表收口并在里程碑验证记录留档
+# （补跑条件：上游修复后移除对应条目）。第一方（aki:: 命名空间与 app/、
+# heyaki/、persistence/、main.cpp、tests/）不在此列：任何第一方竞争报告
+# 都必须修复，不得加入本表。
+#
+# usrsctp（third_party/heyaki/third_party/libdatachannel/deps/usrsctp）：
+# 上游 C 代码非 TSAN-clean。首报 sctp_output.c:7581 sctp_toss_old_cookies
+# （test_message_loopback 双节点 DTLS/SCTP 会话建立路径）。
+race:sctp_
+race:usrsctp_
