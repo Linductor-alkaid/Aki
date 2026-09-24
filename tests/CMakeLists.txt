@@ -327,6 +327,35 @@ add_test(NAME test_disconnect_recovery_loopback
     COMMAND test_disconnect_recovery_loopback)
 set_tests_properties(test_disconnect_recovery_loopback PROPERTIES LABELS "integration")
 
+# M3-08：真实 Adapter SPI 全闭环回环（DEC-006 映射 1~4/6；宿主切换验证面）。
+# 单用例二进制（[skip] 纪律同 M3-05/06/07）。
+add_executable(test_real_adapter_loopback integration/test_real_adapter_loopback.cpp)
+target_compile_features(test_real_adapter_loopback PRIVATE cxx_std_20)
+aki_apply_warnings(test_real_adapter_loopback PRIVATE)
+target_link_libraries(test_real_adapter_loopback PRIVATE
+    Catch2::Catch2WithMain
+    aki_persistence
+    aki_app
+    aki_heyaki
+    heyaki::client)
+aki_deploy_openssl_dlls(test_real_adapter_loopback)
+add_test(NAME test_real_adapter_loopback COMMAND test_real_adapter_loopback)
+set_tests_properties(test_real_adapter_loopback PROPERTIES LABELS "integration")
+
+# M3-08（评审补证）：统一真实 Adapter SPI + 入站注入面单元测试（网络无关：
+# 构造校验/出站校验/sink 分发/析构闭合——Adapter 类在测试中真实构造执行）。
+add_executable(test_heyaki_node_adapter unit/test_heyaki_node_adapter.cpp)
+target_compile_features(test_heyaki_node_adapter PRIVATE cxx_std_20)
+aki_apply_warnings(test_heyaki_node_adapter PRIVATE)
+target_link_libraries(test_heyaki_node_adapter PRIVATE
+    Catch2::Catch2WithMain
+    aki_app
+    aki_heyaki
+    heyaki::client)
+aki_deploy_openssl_dlls(test_heyaki_node_adapter)
+add_test(NAME test_heyaki_node_adapter COMMAND test_heyaki_node_adapter)
+set_tests_properties(test_heyaki_node_adapter PROPERTIES LABELS "unit")
+
 # M3-06：peer_sessions diff 管道单元测试（网络无关：ConnectionPath 映射 +
 # authenticated↔closed 转移；管道层 DOD-02 沿 M3-04 periodic 六项）。
 add_executable(test_peer_sessions_pipeline unit/test_peer_sessions_pipeline.cpp)

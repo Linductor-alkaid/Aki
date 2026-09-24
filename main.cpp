@@ -1,6 +1,7 @@
 // Aki console 冒烟宿主（M1-06 起为设计第 8.3 节组合根的最小进程内实现；
-// M3-03 起按 §8.3 七步装配序运行：本地真实身份 + DEC-009 接受后处理器写路径，
-// v0.3.0 验收载体 / M3 退出-1 前置）。
+// M3-08 起切换为真实 Adapter（HeyakiNodeAdapter，DEC-006 全映射）：本地
+// 真实身份 + LAN 发现观察管道 + DEC-009 写路径 + 持久化重启恢复。防火墙
+// 受限环境的双端交互链路由回环集成测试承载（[skip]+补跑条件，见 M3 记录）。
 //
 // 进程内 Executor owner 自 M1-06 起为正式 ExecutorOwner（设计第 8.2 节落点说明，
 // AGENTS 规则 7/8）：Manager 排空泵、传输会话与 DatabaseWorker（blocking worker，
@@ -20,22 +21,20 @@
 //   末尾 AppStateOwner.close() 之后排空 DatabaseWorker，§11.1 ③）→ 重开恢复
 //   逐域断言一致 + 本地身份二次加载逐字节一致（SCOPE-01/09）。
 //
-// 演示脚本：两台假设备（本机真实 heyaki 身份 / alpha-01 经 FakeHeyakiAdapter
-// inject_* 编程式注入）完成"发现 -> 信任（Pending -> Trusted）-> 文本消息
-// （send_text + delivered/received）-> 传输历史（t-1 Completed 含文件本体作业组 /
-// t-2 Cancelled）-> 断开 -> 重连"，经 DoubleBuffer 一致快照与序列号排序的必达
-// 事件主路径逐步断言。真实 heyaki 接入（LAN 发现/配对/收发）自 M3-04/05/08
-// 分批替换注入面；本版本落点是身份真实化与写路径正式化。
+// 演示脚本（M3-08 宿主切换后）：本机真实 heyaki 身份 + LAN 发现观察管道
+// 启停 + 持久化重启恢复（本地行逐域一致）。双端交互链路（发现对端/配对/
+// 收发/断线恢复）由回环集成测试承载（防火墙受限环境 [skip]+补跑条件，
+// 沿 M3-04 登记项）。FakeHeyakiAdapter 保留用于单元测试（DEC-002/M1 纪律）。
 //
-// 确定性：inject_* 与出站命令全部由主线程串行驱动（FakeHeyakiAdapter 的宿主
-// 串行化契约，EXEC-02），每步经 flush（有界预算）+ owner drain 推进到静止后再
-// 断言，不依赖时序；数据根为每次运行独立子目录（默认基址 resolve_data_root()，
-// argv[1] 可覆盖），同一可执行文件连续多次运行输出一致；成功后清理运行目录，
-// 失败保留供诊断。
+// 确定性：主线程串行驱动 + 每步 flush（有界预算）+ owner drain 推进到静止
+// 后断言；数据根为每次运行独立子目录（默认基址 resolve_data_root()，
+// argv[1] 可覆盖），同一可执行文件连续多次运行输出一致；成功后清理运行
+// 目录，失败保留供诊断。
 #include "app/application/router_sink.hpp"
 #include "app/lifecycle/executor_owner.hpp"
 #include "app/state/app_state_owner.hpp"
-#include "heyaki/adapter/fake_heyaki_adapter.hpp"
+#include "heyaki/adapter/heyaki_node_adapter.hpp"
+#include "heyaki/adapter/fake_heyaki_adapter.hpp"  // M4 前仅测试目标使用
 #include "heyaki/adapter/local_identity.hpp"
 #include "heyaki/adapter/peer_sessions_pipeline.hpp"
 #include "app/application/reconnect_loop.hpp"
@@ -113,7 +112,7 @@ using aki::device::DiscoveredDevice;
 using aki::device::DiscoveryMethod;
 using aki::device::PresenceState;
 using aki::device::TrustState;
-using aki::heyaki::FakeHeyakiAdapter;
+using aki::heyaki::HeyakiNodeAdapter;
 using aki::heyaki::LocalIdentity;
 using aki::heyaki::provision_local_identity;
 using aki::persistence::DatabaseWorkerControl;
@@ -139,57 +138,6 @@ void report(bool ok, const std::string& what) {
     }
 }
 
-std::string enum_text(PresenceState state) {
-    return std::string(aki::device::to_string(state));
-}
-
-std::string enum_text(TrustState state) {
-    return std::string(aki::device::to_string(state));
-}
-
-std::string enum_text(ConversationState state) {
-    return std::string(aki::conversation::to_string(state));
-}
-
-std::string enum_text(DeliveryState state) {
-    return std::string(aki::conversation::to_string(state));
-}
-
-std::string enum_text(TransferState state) {
-    return std::string(aki::transfer::to_string(state));
-}
-
-const char* event_type_name(const AppEvent& event) {
-    if (std::holds_alternative<DeviceDiscoveredEvent>(event.payload)) {
-        return "DeviceDiscovered";
-    }
-    if (std::holds_alternative<DeviceConnectedEvent>(event.payload)) {
-        return "DeviceConnected";
-    }
-    if (std::holds_alternative<DeviceDisconnectedEvent>(event.payload)) {
-        return "DeviceDisconnected";
-    }
-    if (std::holds_alternative<MessageReceivedEvent>(event.payload)) {
-        return "MessageReceived";
-    }
-    if (std::holds_alternative<MessageDeliveredEvent>(event.payload)) {
-        return "MessageDelivered";
-    }
-    if (std::holds_alternative<aki::app::TransferStartedEvent>(event.payload)) {
-        return "TransferStarted";
-    }
-    if (std::holds_alternative<aki::app::TransferProgressEvent>(event.payload)) {
-        return "TransferProgress";
-    }
-    if (std::holds_alternative<aki::app::TransferCompletedEvent>(event.payload)) {
-        return "TransferCompleted";
-    }
-    if (std::holds_alternative<ConnectionPathChangedEvent>(event.payload)) {
-        return "ConnectionPathChanged";
-    }
-    return "Unknown";
-}
-
 // DoubleBuffer try_load 槽位忙时可重试（消费侧契约，设计第 10.1 节）。
 bool load_snapshot(AppStateOwner& state_owner,
     executor::comm::Snapshot<AppState>& out) {
@@ -212,38 +160,6 @@ bool wait_until(const std::function<bool()>& predicate,
         std::this_thread::yield();
     }
     return true;
-}
-
-const DeviceIdentity* find_device(
-    const AppState& state, const DeviceId& id) {
-    for (const auto& device : state.devices.devices) {
-        if (device.id == id) {
-            return &device;
-        }
-    }
-    return nullptr;
-}
-
-const Message* find_message(const AppState& state, const MessageId& id) {
-    for (const auto& message : state.messages.messages) {
-        if (message.id == id) {
-            return &message;
-        }
-    }
-    return nullptr;
-}
-
-const Transfer* find_transfer(const AppState& state, const TransferId& id) {
-    for (const auto& transfer : state.transfers.transfers) {
-        if (transfer.id == id) {
-            return &transfer;
-        }
-    }
-    return nullptr;
-}
-
-std::span<const std::byte> bytes_of(const std::string& text) {
-    return {reinterpret_cast<const std::byte*>(text.data()), text.size()};
 }
 
 // 本地身份 → DeviceIdentity（DEC-006 映射 1）：id = 规范 hex；公钥 32 字节；
@@ -371,11 +287,9 @@ AppState app_state_from(const aki::persistence::RecoveredData& data) {
 
 int run_demo(const std::string& run_root) {
     std::printf(
-        "aki 0.1.0 (M3 smoke: local identity + discovery -> trust -> messaging"
-        " -> transfer history -> restart recovery)\n");
-    std::printf(
-        "devices: this host (real heyaki identity) / alpha-01"
-        " (FakeHeyakiAdapter)\n");
+        "aki 0.1.0 (M3 smoke: real adapter - local identity + LAN discovery"
+        " + persistence restart recovery)\n");
+    std::printf("devices: this host (real heyaki identity)\n");
     std::printf("data root: %s\n", run_root.c_str());
 
     // ---- 组合根（设计第 8.3 节七步 + 第 11.1 节 ②，DEC-009）----
@@ -454,9 +368,19 @@ int run_demo(const std::string& run_root) {
                    recovery.state.devices)}),
         "local identity submitted (UpsertDevice via post-accept handler)");
 
-    // 5) FakeHeyakiAdapter 与四 Manager（构造注入 executor、owner、adapter 与
-    //    容量预算）。
-    FakeHeyakiAdapter adapter;
+    // 5) 真实 Adapter（M3-08 宿主切换；HeyakiNodeAdapter 组装发现观察管道、
+    //    peer_sessions diff 管道、消息面与重连协调器；conversation 解析注入
+    //    CM/MM 同方案）；presence/path 观察关闭（smoke 确定性，见 M3-04/06
+    //    记录），发现观察管道由 start_discovery 启停。
+    HeyakiNodeAdapter adapter{executor_owner.executor(),
+        {.profile = &profile,
+            .session = node_session.get(),
+            .conversation_for =
+                [](const DeviceId& remote) {
+                    return aki::conversation::ConversationId{
+                        std::string{"conv-"} + remote.value};
+                },
+            .peer_observation = false}};
 
     ManagerPumpOptions device_pump;
     device_pump.name = "aki.dm";
@@ -558,348 +482,30 @@ int run_demo(const std::string& run_root) {
         }
     };
 
-    // 必达事件主路径：按 owner 分配的单调序列号逐条消费并核对 FIFO 顺序
-    // （设计第 10.1 节）。
-    std::uint64_t next_sequence = 1;
-    const auto consume_events = [&] {
-        std::vector<AppEvent> events;
-        AppEvent event;
-        while (state_owner.try_receive_event(event)) {
-            events.push_back(std::move(event));
-        }
-        for (const auto& received : events) {
-            report(received.sequence == next_sequence,
-                "event sequence " + std::to_string(received.sequence) + " == "
-                    + std::to_string(next_sequence) + " ("
-                    + event_type_name(received) + ")");
-            ++next_sequence;
-        }
-        return events;
-    };
-
-    // ---- 步骤 1/6：发现（discovered + connected）----
-    std::printf("\n[step 1/6] discovery\n");
+    // ---- 真实链路段（M3-08 宿主切换）----
+    // 防火墙受限环境（M3-04 登记项）：对端 TLS 入站被拦 → 双端交互（发现
+    // 对端/配对/收发）不可达。宿主 smoke 收敛为可确定性验证的真实路径：
+    // 本地身份（已落库）+ 真实发现启停（观察管道启动证据）+ 受控关闭 +
+    // 重启恢复；发现→信任→收发交互链路由 test_message_loopback /
+    // test_disconnect_recovery_loopback / test_discovery_pairing_loopback
+    // 承载（可用环境全链路，受限环境 [skip] + 补跑条件）。
+    std::printf("\n[real discovery] start/stop (observation pipeline)\n");
     quiesce();  // 本地身份 UpsertDevice 落库（经处理器入队）。
 
-    report(devices.start_discovery(DiscoveryMethod::LanDiscovery),
-        "start_discovery(LanDiscovery) accepted");
+    report(adapter.start_discovery(DiscoveryMethod::LanDiscovery),
+        "start_discovery(LanDiscovery) accepted (real pipeline)");
     quiesce();
-    report(adapter.discovery_running(), "adapter discovery running");
+    report(adapter.discovery_running(), "real discovery pipeline running");
 
-    DeviceIdentity alpha;
-    alpha.id = DeviceId{"alpha-01"};
-    alpha.display_name = "alpha-01";
-    alpha.device_class = DeviceClass::Desktop;
-    alpha.os_name = "Linux";
-    alpha.trust_state = TrustState::Unknown;
-    alpha.presence = PresenceState::Online;
-    DiscoveredDevice discovered;
-    discovered.identity = alpha;
-    discovered.method = DiscoveryMethod::LanDiscovery;
-    report(adapter.inject_device_discovered(discovered),
-        "inject_device_discovered(alpha-01)");
-    report(adapter.inject_device_connected(DeviceId{"alpha-01"}, ConnectionPath::Lan),
-        "inject_device_connected(alpha-01, LAN)");
+    adapter.stop_discovery();
     quiesce();
+    report(!adapter.discovery_running(), "real discovery pipeline stopped");
 
-    {
-        executor::comm::Snapshot<AppState> snapshot;
-        report(load_snapshot(state_owner, snapshot), "snapshot readable");
-        const DeviceIdentity* device =
-            find_device(snapshot.value, DeviceId{"alpha-01"});
-        report(device != nullptr, "device store has alpha-01");
-        if (device != nullptr) {
-            report(device->trust_state == TrustState::Unknown,
-                "trust_state == Unknown");
-            report(device->presence == PresenceState::Online,
-                "presence == Online (" + enum_text(device->presence) + ")");
-        }
-        const DeviceIdentity* local =
-            find_device(snapshot.value, identity.id);
-        report(local != nullptr && local->public_key == identity.public_key,
-            "device store has local identity (public key bound)");
-    }
-    {
-        auto events = consume_events();
-        report(events.size() == 2, "two events on the main path");
-        if (events.size() == 2) {
-            report(std::holds_alternative<DeviceDiscoveredEvent>(events[0].payload),
-                "event 1 is DeviceDiscovered");
-            report(std::holds_alternative<DeviceConnectedEvent>(events[1].payload),
-                "event 2 is DeviceConnected");
-        }
-    }
-
-    // ---- 步骤 2/6：信任（Pending -> Trusted，用户流程模拟）----
-    std::printf("\n[step 2/6] trust (Pending -> Trusted)\n");
-    DeviceIdentity pending = alpha;
-    pending.trust_state = TrustState::Pending;
-    report(state_owner.submit_update(UpsertDevice{pending}),
-        "trust: Unknown -> Pending accepted by trust state machine");
-    quiesce();
-    DeviceIdentity trusted = alpha;
-    trusted.trust_state = TrustState::Trusted;
-    report(state_owner.submit_update(UpsertDevice{trusted}),
-        "trust: Pending -> Trusted accepted by trust state machine");
-    quiesce();
-    {
-        executor::comm::Snapshot<AppState> snapshot;
-        report(load_snapshot(state_owner, snapshot), "snapshot readable");
-        const DeviceIdentity* device =
-            find_device(snapshot.value, DeviceId{"alpha-01"});
-        report(device != nullptr && device->trust_state == TrustState::Trusted,
-            "trust_state == Trusted (" + std::string(
-                device != nullptr ? enum_text(device->trust_state) : "missing")
-                + ")");
-    }
-    consume_events();  // 信任更新不产生主路径事件。
-
-    // ---- 步骤 3/6：会话 + 文本消息（send_text + delivered/received）----
-    std::printf("\n[step 3/6] conversation + text messaging\n");
-    report(conversations.ensure_conversation(identity.id, DeviceId{"alpha-01"}),
-        "ensure_conversation(local, alpha-01)");
-    quiesce();
-    {
-        executor::comm::Snapshot<AppState> snapshot;
-        report(load_snapshot(state_owner, snapshot), "snapshot readable");
-        report(snapshot.value.conversations.conversations.size() == 1,
-            "one conversation");
-        if (snapshot.value.conversations.conversations.size() == 1) {
-            const auto& conversation = snapshot.value.conversations.conversations.front();
-            report(conversation.id == ConversationId{"conv-alpha-01"},
-                "conversation id == conv-alpha-01");
-            report(conversation.state == ConversationState::Active,
-                "conversation state == Active ("
-                    + enum_text(conversation.state) + ")");
-
-        }
-    }
-    report(messages.send_text(DeviceId{"alpha-01"}, MessageId{"m-1"}, "hello alpha"),
-        "send_text(m-1, \"hello alpha\") accepted");
-    quiesce();
-    report(adapter.inject_message_delivered(
-               ConversationId{"conv-alpha-01"}, MessageId{"m-1"}),
-        "inject_message_delivered(m-1)");
-    quiesce();
-    Message reply;
-    reply.id = MessageId{"m-2"};
-    reply.sender = DeviceId{"alpha-01"};
-    reply.receiver = identity.id;
-    reply.type = MessageType::Text;
-    reply.state = DeliveryState::Sent;  // Manager 收到事件后强制记录 Delivered。
-    reply.payload = TextPayload{"hello local"};
-    report(adapter.inject_message_received(reply), "inject_message_received(m-2)");
-    quiesce();
-
-    {
-        executor::comm::Snapshot<AppState> snapshot;
-        report(load_snapshot(state_owner, snapshot), "snapshot readable");
-        report(snapshot.value.messages.messages.size() == 2, "two messages stored");
-        const Message* sent = find_message(snapshot.value, MessageId{"m-1"});
-        report(sent != nullptr && sent->state == DeliveryState::Delivered,
-            "m-1: Sent -> Delivered ("
-                + std::string(sent != nullptr ? enum_text(sent->state) : "missing")
-                + ")");
-        const Message* received = find_message(snapshot.value, MessageId{"m-2"});
-        report(received != nullptr && received->state == DeliveryState::Delivered,
-            "m-2: received recorded as Delivered ("
-                + std::string(received != nullptr ? enum_text(received->state)
-                                                  : "missing")
-                + ")");
-        report(adapter.sent_texts().size() == 1,
-            "adapter observed one outbound text");
-    }
-    {
-        // 主路径 FIFO 顺序：delivered(m-1) 先于 received(m-2)。
-        auto events = consume_events();
-        report(events.size() == 2, "two events on the main path");
-        if (events.size() == 2) {
-            const auto& delivered = events[0];
-            report(std::holds_alternative<MessageDeliveredEvent>(delivered.payload),
-                "event 3 is MessageDelivered");
-            if (std::holds_alternative<MessageDeliveredEvent>(delivered.payload)) {
-                report(std::get<MessageDeliveredEvent>(delivered.payload).message
-                        == MessageId{"m-1"},
-                    "delivered event carries m-1");
-            }
-            const auto& received = events[1];
-            report(std::holds_alternative<MessageReceivedEvent>(received.payload),
-                "event 4 is MessageReceived");
-            if (std::holds_alternative<MessageReceivedEvent>(received.payload)) {
-                report(std::get<MessageReceivedEvent>(received.payload).message.id
-                        == MessageId{"m-2"},
-                    "received event carries m-2");
-            }
-        }
-    }
-
-    // ---- 步骤 4/6：断开（disconnected）----
-    std::printf("\n[step 4/6] disconnect\n");
-    report(adapter.inject_device_disconnected(DeviceId{"alpha-01"}),
-        "inject_device_disconnected(alpha-01)");
-    quiesce();
-    {
-        executor::comm::Snapshot<AppState> snapshot;
-        report(load_snapshot(state_owner, snapshot), "snapshot readable");
-        const DeviceIdentity* device =
-            find_device(snapshot.value, DeviceId{"alpha-01"});
-        report(device != nullptr && device->presence == PresenceState::Offline,
-            "presence == Offline ("
-                + std::string(device != nullptr ? enum_text(device->presence)
-                                                : "missing")
-                + ")");
-        report(snapshot.value.conversations.conversations.size() == 1
-                && snapshot.value.conversations.conversations.front().state
-                    == ConversationState::Disconnected,
-            "conversation state == Disconnected");
-        report(snapshot.value.messages.messages.size() == 2,
-            "message history kept across disconnect");
-    }
-    {
-        auto events = consume_events();
-        report(events.size() == 1, "one event on the main path");
-        if (events.size() == 1) {
-            report(std::holds_alternative<DeviceDisconnectedEvent>(events[0].payload),
-                "event 5 is DeviceDisconnected");
-        }
-    }
-
-    // ---- 步骤 5/6：重连（connected -> Active，同一会话与历史保持，RULE-06）----
-    std::printf("\n[step 5/6] reconnect\n");
-    report(adapter.inject_device_connected(DeviceId{"alpha-01"}, ConnectionPath::P2p),
-        "inject_device_connected(alpha-01, P2P)");
-    quiesce();
-    {
-        executor::comm::Snapshot<AppState> snapshot;
-        report(load_snapshot(state_owner, snapshot), "snapshot readable");
-        const DeviceIdentity* device =
-            find_device(snapshot.value, DeviceId{"alpha-01"});
-        report(device != nullptr && device->presence == PresenceState::Online,
-            "presence == Online ("
-                + std::string(device != nullptr ? enum_text(device->presence)
-                                                : "missing")
-                + ")");
-        report(snapshot.value.conversations.conversations.size() == 1,
-            "no new conversation created (RULE-06)");
-        if (snapshot.value.conversations.conversations.size() == 1) {
-            const auto& conversation = snapshot.value.conversations.conversations.front();
-            report(conversation.id == ConversationId{"conv-alpha-01"},
-                "same conversation id conv-alpha-01");
-            report(conversation.state == ConversationState::Active,
-                "conversation state == Active ("
-                    + enum_text(conversation.state) + ")");
-        }
-        report(snapshot.value.messages.messages.size() == 2,
-            "message history unchanged across reconnect");
-    }
-    {
-        auto events = consume_events();
-        report(events.size() == 1, "one event on the main path");
-        if (events.size() == 1) {
-            report(std::holds_alternative<DeviceConnectedEvent>(events[0].payload),
-                "event 6 is DeviceConnected");
-        }
-    }
-
-    // ---- 步骤 6/6：传输历史（t-1 Completed 含文件本体 / t-2 Cancelled）----
-    std::printf("\n[step 6/6] transfer history (completed with file + cancelled)\n");
-    const std::string t1_payload =
-        "restart-recovery payload for transfer t-1 (host byte source)";
-    Transfer t1;
-    t1.id = TransferId{"t-1"};
-    t1.sender = identity.id;
-    t1.receiver = DeviceId{"alpha-01"};
-    t1.file = aki::transfer::FileMetadata{"notes.txt", t1_payload.size(),
-        "text/plain"};
-    // 新行 upsert 无转移校验（owner 侧），但 Completed 终态必须经合法边
-    // Transferring -> Completed 到达（Queued -> Completed 会被状态机拒绝）。
-    t1.state = TransferState::Transferring;
-    report(adapter.inject_transfer_started(t1), "inject_transfer_started(t-1)");
-    quiesce();
-    {
-        executor::comm::Snapshot<AppState> snapshot;
-        report(load_snapshot(state_owner, snapshot), "snapshot readable");
-        const Transfer* row = find_transfer(snapshot.value, TransferId{"t-1"});
-        report(row != nullptr && row->state == TransferState::Transferring,
-            "t-1 recorded (Transferring)");
-    }
-    // 字节源驱动 .part（M2-06 纪律：真实数据链路 M4）。
-    recovery.store->write_part("t-1", bytes_of(t1_payload));
-    report(adapter.inject_transfer_progress(TransferId{"t-1"}, t1_payload.size(),
-                t1_payload.size()),
-        "inject_transfer_progress(t-1)");
-    quiesce();
-    {
-        executor::comm::Snapshot<AppState> snapshot;
-        report(load_snapshot(state_owner, snapshot), "snapshot readable");
-        const Transfer* row = find_transfer(snapshot.value, TransferId{"t-1"});
-        report(row != nullptr && row->transferred == t1_payload.size()
-                && row->total == t1_payload.size(),
-            "t-1 progress recorded");
-    }
-    report(adapter.inject_transfer_completed(TransferId{"t-1"},
-                TransferState::Completed),
-        "inject_transfer_completed(t-1, Completed)");
-    quiesce();
-    {
-        executor::comm::Snapshot<AppState> snapshot;
-        report(load_snapshot(state_owner, snapshot), "snapshot readable");
-        const Transfer* row = find_transfer(snapshot.value, TransferId{"t-1"});
-        report(row != nullptr && row->state == TransferState::Completed,
-            "t-1: -> Completed ("
-                + std::string(row != nullptr ? enum_text(row->state) : "missing")
-                + ")");
-    }
-
-    Transfer t2;
-    t2.id = TransferId{"t-2"};
-    t2.sender = DeviceId{"alpha-01"};
-    t2.receiver = identity.id;
-    t2.file = aki::transfer::FileMetadata{"aborted.bin", 4096,
-        "application/octet-stream"};
-    t2.state = TransferState::Queued;
-    report(adapter.inject_transfer_started(t2), "inject_transfer_started(t-2)");
-    quiesce();
-    {
-        executor::comm::Snapshot<AppState> snapshot;
-        report(load_snapshot(state_owner, snapshot), "snapshot readable");
-        const Transfer* row = find_transfer(snapshot.value, TransferId{"t-2"});
-        report(row != nullptr, "t-2 recorded (Queued)");
-    }
-    report(adapter.inject_transfer_completed(TransferId{"t-2"},
-                TransferState::Cancelled),
-        "inject_transfer_completed(t-2, Cancelled)");
-    quiesce();
-    {
-        executor::comm::Snapshot<AppState> snapshot;
-        report(load_snapshot(state_owner, snapshot), "snapshot readable");
-        const Transfer* row = find_transfer(snapshot.value, TransferId{"t-2"});
-        report(row != nullptr && row->state == TransferState::Cancelled,
-            "t-2: -> Cancelled ("
-                + std::string(row != nullptr ? enum_text(row->state) : "missing")
-                + ")");
-    }
-    {
-        auto events = consume_events();
-        report(events.size() == 5, "five events on the main path");
-        if (events.size() == 5) {
-            report(std::holds_alternative<aki::app::TransferStartedEvent>(
-                       events[0].payload),
-                "event 7 is TransferStarted (t-1)");
-            report(std::holds_alternative<aki::app::TransferProgressEvent>(
-                       events[1].payload),
-                "event 8 is TransferProgress (t-1)");
-            report(std::holds_alternative<aki::app::TransferCompletedEvent>(
-                       events[2].payload),
-                "event 9 is TransferCompleted (t-1)");
-            report(std::holds_alternative<aki::app::TransferStartedEvent>(
-                       events[3].payload),
-                "event 10 is TransferStarted (t-2)");
-            report(std::holds_alternative<aki::app::TransferCompletedEvent>(
-                       events[4].payload),
-                "event 11 is TransferCompleted (t-2)");
-        }
-    }
+    // 交互链路降级证据（工程规范 4.3/7：不冒充已验证）。
+    std::printf(
+        "[degraded] two-end interaction (discover/pair/text/recover) not "
+        "verifiable behind the local firewall; covered by integration "
+        "loopback binaries with [skip] + rerun conditions\n");
 
     // 关闭前最终权威快照（session B 逐域一致性断言的期望值；presence 为易失
     // 状态，恢复后默认 Offline——§11.1 ①）。
@@ -911,6 +517,9 @@ int run_demo(const std::string& run_root) {
         for (auto& device : expected.devices.devices) {
             device.presence = PresenceState::Offline;
         }
+        report(expected.devices.devices.size() == 1
+                && expected.devices.devices.front().id == identity.id,
+            "device store holds exactly the local identity");
     }
 
     // ---- 受控关闭（设计第 8.3 节钩子顺序 -> EXEC-01 步骤 2~5）----
@@ -952,9 +561,6 @@ int run_demo(const std::string& run_root) {
             && shutdown_report.blocking_workers_stopped == 1,
         "one blocking worker requested and stopped (handle owned by ExecutorOwner)");
     report(state_owner.is_closed(), "AppStateOwner closed");
-    report(!adapter.inject_message_received(reply),
-        "injection after delivery stopped is rejected");
-
     // 复验写路径（DEC-009 ①）：已 admit 作业全部完成、无拒绝、无失败、处理器
     // 无异常（future 逐个消费，RULE-09：结果可见，不静默）。
     report(db->drain_completed(), "database worker drain completed");
@@ -1013,22 +619,20 @@ int run_demo(const std::string& run_root) {
         report(reopened.state.transfers
                 == expected.transfers.transfers,
             "transfer history consistent after restart");
-        // Completed 文件本体与回写位（M2-06 契约，经 SQL 断言）。
-        report(std::filesystem::exists(run_root + "/files/t-1/notes.txt"),
-            "completed file landed at files/t-1/notes.txt");
+        // 无对端交互（防火墙受限）：无传输/文件本体（传输链路 M4；
+        // 文件本体回写位由 test_restart_recovery 承载）。
+        report(reopened.state.transfers.empty(),
+            "no transfers without a paired peer (single-host smoke)");
         if (reopened.repositories != nullptr) {
-            aki::persistence::Statement stored =
+            aki::persistence::Statement local_row =
                 reopened.repositories->database.prepare(
-                    "SELECT stored_relative_path, stored_sha256,"
-                    " stored_size_bytes FROM transfer WHERE transfer_id = 't-1';");
-            const bool has_row = stored.step();
+                    "SELECT trust_state FROM device WHERE device_id = ?1;");
+            local_row.bind(1, identity.id.value);
+            const bool has_row = local_row.step();
             report(has_row
-                    && stored.column_text(0) == "files/t-1/notes.txt"
-                    && stored.column_text(1)
-                        == aki::persistence::sha256_hex(bytes_of(t1_payload))
-                    && static_cast<std::uint64_t>(stored.column_int64(2))
-                        == t1_payload.size(),
-                "t-1 stored_* writeback columns consistent (path + sha256 + size)");
+                    && static_cast<int>(local_row.column_int64(0))
+                        == static_cast<int>(TrustState::Unknown),
+                "local identity row consistent (trust_state as registered)");
         }
         // 播种对接复验（§11.1 ②）：恢复结果构造 AppStateOwner 初始快照立即可读。
         AppStateOwner reopened_owner{AppStateOwnerOptions{},

@@ -109,6 +109,8 @@ using aki::device::TrustState;
 using aki::heyaki::FakeHeyakiAdapter;
 using aki::heyaki::HeyakiAdapter;
 using aki::heyaki::HeyakiAdapterSink;
+static_assert(std::is_base_of_v<aki::heyaki::HeyakiAdapter, FakeHeyakiAdapter>,
+    "Fake must implement the M1 HeyakiAdapter SPI (same contract as the real adapter)");
 using aki::transfer::FileMetadata;
 using aki::transfer::Transfer;
 using aki::transfer::TransferId;
