@@ -237,9 +237,20 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
   （映射/diff 网络无关断言，沿 M3-05 评审拆分先例）。DOD-02 六项沿 periodic
   路径（M3-04 已立）+ 管道 start/stop。debug/release ctest 27/27 零回归
   （评审拆分后复测）。详见验证记录。）
-- [ ] `M3-07` 断线恢复（`SCOPE-11`）：网络中断恢复后原 Conversation 继续可用、
+- [x] `M3-07` 断线恢复（`SCOPE-11`）：网络中断恢复后原 Conversation 继续可用、
   历史不变；迟到事件不复活终态；重连路径的取消与超时语义闭合
-  （`EXEC-05`，长任务可解除阻塞）。
+  （`EXEC-05`，长任务可解除阻塞）。（2026-09-24：重连协调器
+  `app/application/reconnect_loop.hpp`（EXEC-05 长任务：submit_cancellable +
+  StopToken 可中断切片等待、有界 recovery_budget 超时如实计数、回调异常
+  future 结算 + callback_failures 计数、per-peer 单飞、stop_all 取消并消费
+  在途 future 零悬挂——DOD-02 六项网络无关单测 test_reconnect_loop 全过）；
+  NodeSession 增补 restart_session/close_lan 接线与 PeerSessionView 的
+  session_id/epoch 可观测（DEC-006 映射 6）；集成回环
+  test_disconnect_recovery_loopback（单用例二进制沿评审拆分纪律）：close_lan
+  强制断开 → diff 管道 disconnected → presence Offline → 协调器自动重连 →
+  authenticated → restart_session 同 SessionId epoch+1。**如实降级**：本机
+  防火墙拦截 TLS 入站（沿 M3-04/05/06），回环以 [skip] 证据路径通过并登记
+  补跑条件。debug/release ctest 29/29 零回归。详见验证记录。）
 - [ ] `M3-08` 双端真实链路验证与宿主切换：组合根切换真实 Adapter（Fake 保留
   用于单测）；两进程回环（及可行时的 LAN 双端）集成测试覆盖发现 → 信任 →
   文本收发 → 送达 → 断线恢复全闭环；DOD-02 六项沿真实事件路径（Adapter 回调、
@@ -822,3 +833,73 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
     「已提交配对但握手未完成」（诊断输出 + 受控退出），presence/path 断言
     补跑条件不变。
   - 同步：本里程碑（M3-06 勾选、本记录）、总计划当前状态。
+
+- 2026-09-24（`M3-07`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0 / OpenSSL 3.5.8）：
+  - 范围：`app/application/reconnect_loop.hpp`（新建：`ReconnectCoordinator`
+    ——per-peer 重连长任务（submit_cancellable + StopToken，EXEC-05）；
+    可中断切片等待（retry_interval 切片轮询 stop_token）；有界
+    recovery_budget 超时如实计数（budget_exhausted）；回调异常 future 结算
+    + callback_failures 计数（循环职责延续，不终止重连）；per-peer 单飞
+    （在途回归 false，终结记录就地消费后允许新一轮）；stop_all 取消全部 +
+    有界消费 future（DEC-008 宿主关闭纪律，零悬挂）；公开面 aki/std——
+    重连动作/恢复判定为注入回调（组合根经 NodeSession aki/std 方法绑定），
+    RULE-10）、`heyaki/session/runtime_node.hpp`（`restart_session`/
+    `close_lan` 接线 + `PeerSessionView` 增 session_id/session_epoch——
+    DEC-006 映射 6 可观测性）、`tests/unit/test_reconnect_loop.cpp`（新建：
+    DOD-02 六项沿重连长任务路径，注入回调网络无关）、
+    `tests/integration/test_disconnect_recovery_loopback.cpp`（新建单用例
+    二进制：close_lan 断开 → diff 管道 disconnected → presence Offline →
+    协调器自动重连 → authenticated → restart_session 同 SessionId epoch+1；
+    握手被拦 [skip] 降级）、tests/CMakeLists.txt。
+  - 依据：[DEC-006](../decisions/DEC-006-heyaki-api-contract.md)（映射 6：
+    restart_session 同 SessionId、epoch+1、接口变化自动触发）、
+    [DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)
+    （长任务 submit_cancellable 承载 + 宿主关闭先取消消费 future）、
+    [DEC-009](../decisions/DEC-009-appstate-write-path.md)（写路径不回滚内存
+    态）、设计第 5/6/8.3/10 节（RULE-06/08）；总计划 `SCOPE-11`、
+    `RULE-06`/`RULE-08`/`RULE-10`、`EXEC-05`/`EXEC-01`/`EXEC-02`、
+    `DOD-02`/`DOD-03`/`DOD-05`。heyaki API 锚点：`node.hpp`
+    （restart_session/close_lan、NodePeerSessionSnapshot.session_id/
+    session_epoch）、`session_restart.hpp` 语义（同 SessionId epoch+1）。
+  - 验证（树同前）：
+    - debug → `ctest --test-dir build/m3-01-debug -C Debug --timeout 300` →
+      **100% passed 29/29**；release 同构 → **29/29**（原 28 项零回归；含
+      M3-06 新增 test_peer_sessions_pipeline 与 M3-05 拆分的
+      test_heyaki_message）。
+    - DOD-02 六项沿重连长任务路径（test_reconnect_loop，7 用例网络无关，
+      含并发单飞竞态回归用例）：正常完成（首轮重连成功 → recovered，自终记录经
+      stop_all 消费）；任务异常（回调抛出 → future 结算 + callback_failures
+      计数、循环职责延续）；提交拒绝（同 peer 在途回归 false 单飞 + 终结
+      记录就地消费后允许新一轮）；执行中取消（stop_all → request_task_
+      cancel + future 消费零悬挂 + cancelled 计数）；超时（recovery_budget
+      耗尽 → budget_exhausted 如实退出）；shutdown（钩子内 stop_all==2 消费
+      + fully_stopped——排队期取消由 executor 结算、运行期取消经 StopToken
+      退出计数的两形态语义在断言中按实测放宽为 cancelled>=1）。
+      2026-09-24 评审修正（取消竞态闭合）：start() 的单飞检查/submit/登记
+      纳入同一临界区——原实现检查与登记之间释放锁，同 peer 并发 start 双双
+      通过检查后第二个 emplace 静默失败，handle/future 被丢弃产生 stop_all
+      永不取消/消费的失控循环（违反 AGENTS 规则 3）；补并发单飞用例
+      （8 racer 同 peer 竞态 → 仅一次获准 + stop_all 后零新尝试）。
+    - 集成回环（防火墙受限降级，沿 M3-04/05/06）：发现正常；配对握手停滞 →
+      `[skip] pairing handshake blocked (firewall): disconnect recovery
+      loopback not verified; rerun with inbound TCP allowed` + 受控退出。
+      close_lan 强制断开 → Disconnected → 协调器自动重连 → authenticated →
+      restart_session epoch+1 全链路位于降级路径之后**未在本机执行**。
+      补跑条件：防火墙放行入站 TCP / LAN 双端（沿 M3-04 登记项）。
+    - 宿主 smoke：协调器装配 + 关闭钩子 stop_all（`reconnect loops
+      cancelled and futures consumed` [ok]）实测，`smoke: PASS`。
+    - RULE-10 grep（复跑）：第三方 `<heyaki/…>` 单分量公开头 include 仅
+      heyaki/ 层文件与既有接线层测试 TU；app/application（重连协调器经注入
+      回调消费 aki/std 面）、main.cpp 零新增。
+  - 偏差（如实记录）：① 集成回环的「中断」以 `close_lan` 强制断开合成
+    （真实网络中断不可编程触发）；断线期间的迟到回报不复活终态断言位于
+    降级路径之后未在本机执行（owner 状态机 RULE-08 本体由 M1/M2 既有测试
+    覆盖）。② 重连循环的恢复判定 `session_authenticated` 不区分同/新
+    SessionId——heyaki restart_session 原地重建（同 SessionId epoch+1）与
+    重连均满足「原 Conversation 继续可用」；SessionId/epoch 断言经
+    PeerSessionView 显式覆盖。
+  - 限制：回环全链路待防火墙放行/LAN 双端环境补跑（[skip] 输出为证）；
+    CI Linux 四档随本 PR 门禁（CI runner 可能走 [skip]，证据输出保留）；
+    MR 闭环由后续环节执行，本记录不含 commit/CI 证据。
+  - 同步：本里程碑（M3-07 勾选、本记录）、总计划当前状态。

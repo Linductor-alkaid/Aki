@@ -311,6 +311,22 @@ aki_deploy_openssl_dlls(test_message_loopback)
 add_test(NAME test_message_loopback COMMAND test_message_loopback)
 set_tests_properties(test_message_loopback PROPERTIES LABELS "integration")
 
+# M3-07：断线恢复回环（DEC-006 映射 6；SCOPE-11；EXEC-05 重连长任务）。单
+# 用例二进制（[skip] 受控退出与失败隔离纪律沿 M3-05/M3-06 评审拆分）。
+add_executable(test_disconnect_recovery_loopback
+    integration/test_disconnect_recovery_loopback.cpp)
+target_compile_features(test_disconnect_recovery_loopback PRIVATE cxx_std_20)
+aki_apply_warnings(test_disconnect_recovery_loopback PRIVATE)
+target_link_libraries(test_disconnect_recovery_loopback PRIVATE
+    Catch2::Catch2WithMain
+    aki_app
+    aki_heyaki
+    heyaki::client)
+aki_deploy_openssl_dlls(test_disconnect_recovery_loopback)
+add_test(NAME test_disconnect_recovery_loopback
+    COMMAND test_disconnect_recovery_loopback)
+set_tests_properties(test_disconnect_recovery_loopback PROPERTIES LABELS "integration")
+
 # M3-06：peer_sessions diff 管道单元测试（网络无关：ConnectionPath 映射 +
 # authenticated↔closed 转移；管道层 DOD-02 沿 M3-04 periodic 六项）。
 add_executable(test_peer_sessions_pipeline unit/test_peer_sessions_pipeline.cpp)
@@ -323,6 +339,17 @@ target_link_libraries(test_peer_sessions_pipeline PRIVATE
     heyaki::client)
 add_test(NAME test_peer_sessions_pipeline COMMAND test_peer_sessions_pipeline)
 set_tests_properties(test_peer_sessions_pipeline PROPERTIES LABELS "unit")
+
+# M3-07：重连协调器单元测试（EXEC-05 长任务取消/超时闭合；DEC-008 宿主关闭
+# 纪律；DOD-02 六项沿重连长任务路径；注入回调，网络无关）。
+add_executable(test_reconnect_loop unit/test_reconnect_loop.cpp)
+target_compile_features(test_reconnect_loop PRIVATE cxx_std_20)
+aki_apply_warnings(test_reconnect_loop PRIVATE)
+target_link_libraries(test_reconnect_loop PRIVATE
+    Catch2::Catch2WithMain
+    aki_app)
+add_test(NAME test_reconnect_loop COMMAND test_reconnect_loop)
+set_tests_properties(test_reconnect_loop PROPERTIES LABELS "unit")
 
 # M3-05（评审拆分）：MessageId 双射 + aki.text 信封往返（DEC-006 冻结；网络
 # 无关）。独立 unit 二进制：回环二进制的 [skip] 受控退出不得掩盖同二进制内

@@ -212,6 +212,9 @@ public:
         int signaling_route = 0;  // SignalingRouteKind 数值
         bool authenticated = false;
         bool closed = false;
+        // DEC-006 映射 6：同 SessionId、epoch+1 的重建可观测性。
+        std::string session_id;   // heyaki::to_string(SessionId) 规范形式
+        std::uint64_t session_epoch = 1;
     };
 
     [[nodiscard]] std::vector<PeerSessionView> peer_session_views() const {
@@ -228,6 +231,8 @@ public:
                 session.state == ::heyaki::NodePeerSessionState::authenticated;
             view.closed =
                 session.state == ::heyaki::NodePeerSessionState::closed;
+            view.session_id = ::heyaki::to_string(session.session_id);
+            view.session_epoch = session.session_epoch;
             out.push_back(std::move(view));
         }
         return out;
@@ -267,6 +272,28 @@ public:
                         std::string(outcome.error_if()->safe_detail()));
                 }
             });
+    }
+
+    // 关闭与对端的会话（M3-07 断线恢复测试入口；对已认证会话强制断开）。
+    [[nodiscard]] bool close_lan(const aki::device::DeviceId& peer) {
+        auto key = endpoint_key_of(peer);
+        if (!key.has_value()) {
+            return false;
+        }
+        auto closed = node_.close_lan(*key);
+        return closed.has_value();
+    }
+
+    // DEC-006 映射 6：会话重建——同 SessionId、epoch+1（协议 1.2 原地
+    // 重协商；接口变化时 heyaki 亦自动触发）。仅对已认证会话有效，失败
+    //（会话缺失等）返回 false 可见（RULE-09）。
+    [[nodiscard]] bool restart_session(const aki::device::DeviceId& peer) {
+        auto key = endpoint_key_of(peer);
+        if (!key.has_value()) {
+            return false;
+        }
+        auto restarted = node_.restart_session(*key);
+        return restarted.has_value();
     }
 
     // 主动建链（LAN；pairing 前置——未信任对端会话进入 pairing_restricted）。
