@@ -38,6 +38,7 @@
 #include "heyaki/adapter/fake_heyaki_adapter.hpp"
 #include "heyaki/adapter/local_identity.hpp"
 #include "heyaki/adapter/peer_sessions_pipeline.hpp"
+#include "app/application/reconnect_loop.hpp"
 #include "heyaki/session/runtime_node.hpp"
 #include "persistence/database/database.hpp"
 #include "persistence/database/database_worker.hpp"
@@ -90,6 +91,8 @@ using aki::app::MessageDeliveredEvent;
 using aki::app::MessageManager;
 using aki::app::MessageManagerOptions;
 using aki::app::MessageReceivedEvent;
+using aki::app::ReconnectCoordinator;
+using aki::app::ReconnectCoordinatorOptions;
 using aki::app::RouterSink;
 using aki::app::TransferManager;
 using aki::app::TransferManagerOptions;
@@ -499,6 +502,8 @@ int run_demo(const std::string& run_root) {
     //      RouterSink：connected/disconnected → DM presence + CM 会话态，
     //      path 变化 → DM LatestMailbox）。构造不 start：smoke 确定性
     //     （真实 LAN 邻居会进入状态面），启动随 M3-08 组合切换。
+    auto reconnect = std::make_unique<aki::app::ReconnectCoordinator>(
+        executor_owner.executor(), ReconnectCoordinatorOptions{});
     auto peer_pipeline = std::make_unique<aki::heyaki::PeerSessionPipeline>(
         executor_owner.executor(), *node_session,
         aki::heyaki::PeerSessionEvents{
@@ -507,8 +512,23 @@ int run_demo(const std::string& run_root) {
                     (void)router.on_device_connected(peer, ConnectionPath::Lan);
                 },
             .on_disconnected =
-                [&router](const DeviceId& peer) {
+                [&](const DeviceId& peer) {
                     (void)router.on_device_disconnected(peer);
+                    // SCOPE-11：断开后启动有界重连循环（EXEC-05 长任务，
+                    // DEC-008 承载；恢复后原会话经 connect_lan 回到
+                    // authenticated，M3-06 管道 connected 事件回推 Active）。
+                    aki::app::ReconnectCoordinator::Attempt try_conn =
+                        [node_session_ptr = node_session.get(), peer]() {
+                            return node_session_ptr->connect_lan(peer);
+                        };
+                    aki::app::ReconnectCoordinator::RecoveryCheck is_auth =
+                        [node_session_ptr = node_session.get(), peer]() {
+                            return node_session_ptr->session_authenticated(
+                                peer);
+                        };
+                    aki::app::ReconnectCoordinator::PerPeerHooks hooks{
+                        std::move(try_conn), std::move(is_auth)};
+                    (void)reconnect->start(peer, hooks);
                 },
             .on_connection_path_changed =
                 [&router](const DeviceId& peer, ConnectionPath path) {
@@ -908,6 +928,10 @@ int run_demo(const std::string& run_root) {
         //      shutdown + Runtime::shutdown，EXEC-01 步骤 1 内、早于 owner
         //      步骤 2/3/5）。
         peer_pipeline->stop();
+        // 重连长任务先取消并消费在途 future（DEC-008/EXEC-01 步骤 1）。
+        const auto reconnect_consumed = reconnect->stop_all();
+        report(reconnect_consumed > 0 || reconnect->running_count() == 0,
+            "reconnect loops cancelled and futures consumed");
         const auto node_report = node_session->shutdown();
         report(node_report.node_stopped && node_report.runtime_stopped,
             "node session stopped (Node + borrowed Runtime)");
