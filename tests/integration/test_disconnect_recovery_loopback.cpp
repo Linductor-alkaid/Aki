@@ -258,7 +258,9 @@ TEST_CASE("Disconnect recovery: reconnect loop restores the session (SCOPE-11)",
 
     pipeline.stop();
     const auto consumed = coordinator.stop_all();
-    REQUIRE(consumed >= 0);
+    // 在途重连循环（本用例 1 个）应被取消并消费（DEC-008 零悬挂）；
+    // size_t 的 >= 0 恒真被 GCC -Wtype-limits 拒绝（run 35954858012）。
+    REQUIRE(consumed > 0);
     const auto node_report = side_a.shutdown();
     REQUIRE(node_report.node_stopped);
     REQUIRE_FALSE(node_report.runtime_executor_shutdown_performed);
