@@ -201,6 +201,38 @@ public:
         return out;
     }
 
+    // ---- M3-06：peer_sessions 观察面（aki/std 公开面）----
+    // state/data_path/signaling_route 为 heyaki 枚举的数值（映射语义见
+    // adapter 层 map_connection_path 与 DEC-006 映射 5；数值不跨层解释）。
+    struct PeerSessionView {
+        aki::device::DeviceId device_id;
+        std::string endpoint_id;
+        int state = 0;            // NodePeerSessionState 数值
+        int data_path = 0;        // NodeDataPathKind 数值
+        int signaling_route = 0;  // SignalingRouteKind 数值
+        bool authenticated = false;
+        bool closed = false;
+    };
+
+    [[nodiscard]] std::vector<PeerSessionView> peer_session_views() const {
+        std::vector<PeerSessionView> out;
+        for (const auto& session : node_.peer_sessions()) {
+            PeerSessionView view;
+            view.device_id =
+                aki::device::DeviceId{::heyaki::to_string(session.peer.device_id)};
+            view.endpoint_id = ::heyaki::to_string(session.peer.endpoint_id);
+            view.state = static_cast<int>(session.state);
+            view.data_path = static_cast<int>(session.data_path);
+            view.signaling_route = static_cast<int>(session.signaling_route);
+            view.authenticated =
+                session.state == ::heyaki::NodePeerSessionState::authenticated;
+            view.closed =
+                session.state == ::heyaki::NodePeerSessionState::closed;
+            out.push_back(std::move(view));
+        }
+        return out;
+    }
+
     // DEC-006 映射 3：pairing_restricted 会话存在 → Unknown→Pending 触发。
     [[nodiscard]] bool session_pairing_restricted(
         const aki::device::DeviceId& peer) const {

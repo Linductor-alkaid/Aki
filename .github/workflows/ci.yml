@@ -25,6 +25,13 @@ jobs:
       fail-fast: false
       matrix:
         preset: [debug, asan, ubsan, tsan]
+    env:
+      # TSAN 抑制表：usrsctp（libdatachannel vendored 依赖）内部数据竞争——
+      # 上游 C 代码非 TSAN-clean（CI run 35943203897 实测
+      # sctp_output.c:7581 sctp_toss_old_cookies），按供应链纪律不改
+      # third_party，以抑制表记录（M3 里程碑验证有档案）。非 tsan 预设的
+      # 二进制不读该变量，无影响。
+      TSAN_OPTIONS: suppressions=${{ github.workspace }}/cmake/tsan-suppressions.supp
     steps:
       - uses: actions/checkout@v4
         with:

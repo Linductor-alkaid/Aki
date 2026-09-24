@@ -249,21 +249,53 @@ aki_deploy_openssl_dlls(test_local_identity)
 add_test(NAME test_local_identity COMMAND test_local_identity)
 set_tests_properties(test_local_identity PROPERTIES LABELS "unit")
 
-# M3-04：设备发现与信任真实化（DEC-006 映射 2/3；双节点进程内回环；DOD-02
-# 沿 EXEC-04 timer / pairing observer 路径）。接口缺失环境输出 [skip]（回环
-# 补跑条件见里程碑验证记录）。
+# M3-04：DOD-02 六项沿 EXEC-04 timer 路径（executor 周期能力专项；网络无关）。
+# 2026-09-24 评审拆分：本二进制不含 [skip]/受控退出——同一二进制内多个各自
+# 可 std::_Exit(0) 的用例会互相掩盖既有失败、并使后行用例随机不可达（工程
+# 规范第 7 节）；回环用例各占独立单用例二进制（见下两项）。
 add_executable(test_discovery_pairing integration/test_discovery_pairing.cpp)
 target_compile_features(test_discovery_pairing PRIVATE cxx_std_20)
 aki_apply_warnings(test_discovery_pairing PRIVATE)
 target_link_libraries(test_discovery_pairing PRIVATE
     Catch2::Catch2WithMain
+    aki_app)
+add_test(NAME test_discovery_pairing COMMAND test_discovery_pairing)
+set_tests_properties(test_discovery_pairing PROPERTIES LABELS "integration")
+
+# M3-04：发现/信任双节点回环（DEC-006 映射 2/3）。单用例二进制：[skip] 受控
+# 退出（握手停滞会话阻塞 Node::shutdown，无法正常展开）只在前置断言全过时
+# 可达；接口缺失环境输出 [skip]（补跑条件见里程碑验证记录）。
+add_executable(test_discovery_pairing_loopback
+    integration/test_discovery_pairing_loopback.cpp)
+target_compile_features(test_discovery_pairing_loopback PRIVATE cxx_std_20)
+aki_apply_warnings(test_discovery_pairing_loopback PRIVATE)
+target_link_libraries(test_discovery_pairing_loopback PRIVATE
+    Catch2::Catch2WithMain
     aki_persistence
     aki_app
     aki_heyaki
     heyaki::client)
-aki_deploy_openssl_dlls(test_discovery_pairing)
-add_test(NAME test_discovery_pairing COMMAND test_discovery_pairing)
-set_tests_properties(test_discovery_pairing PROPERTIES LABELS "integration")
+aki_deploy_openssl_dlls(test_discovery_pairing_loopback)
+add_test(NAME test_discovery_pairing_loopback COMMAND test_discovery_pairing_loopback)
+set_tests_properties(test_discovery_pairing_loopback PROPERTIES LABELS "integration")
+
+# M3-06：peer_sessions 管道 presence/path 回环（DEC-006 映射 5；SCOPE-10）。
+# 2026-09-24 评审拆分自 test_discovery_pairing：单用例二进制，[skip] 受控
+# 退出不掩盖既有失败、回环证据不再随机不可达；映射/diff 网络无关断言见
+# test_peer_sessions_pipeline（unit）。
+add_executable(test_peer_sessions_loopback
+    integration/test_peer_sessions_loopback.cpp)
+target_compile_features(test_peer_sessions_loopback PRIVATE cxx_std_20)
+aki_apply_warnings(test_peer_sessions_loopback PRIVATE)
+target_link_libraries(test_peer_sessions_loopback PRIVATE
+    Catch2::Catch2WithMain
+    aki_persistence
+    aki_app
+    aki_heyaki
+    heyaki::client)
+aki_deploy_openssl_dlls(test_peer_sessions_loopback)
+add_test(NAME test_peer_sessions_loopback COMMAND test_peer_sessions_loopback)
+set_tests_properties(test_peer_sessions_loopback PROPERTIES LABELS "integration")
 
 # M3-05：文本消息真实化（DEC-006 映射 4；双节点回环；防火墙受限环境按 M3-04
 # 先例 [skip] 降级，证据输出保留）。
@@ -278,6 +310,19 @@ target_link_libraries(test_message_loopback PRIVATE
 aki_deploy_openssl_dlls(test_message_loopback)
 add_test(NAME test_message_loopback COMMAND test_message_loopback)
 set_tests_properties(test_message_loopback PROPERTIES LABELS "integration")
+
+# M3-06：peer_sessions diff 管道单元测试（网络无关：ConnectionPath 映射 +
+# authenticated↔closed 转移；管道层 DOD-02 沿 M3-04 periodic 六项）。
+add_executable(test_peer_sessions_pipeline unit/test_peer_sessions_pipeline.cpp)
+target_compile_features(test_peer_sessions_pipeline PRIVATE cxx_std_20)
+aki_apply_warnings(test_peer_sessions_pipeline PRIVATE)
+target_link_libraries(test_peer_sessions_pipeline PRIVATE
+    Catch2::Catch2WithMain
+    aki_app
+    aki_heyaki
+    heyaki::client)
+add_test(NAME test_peer_sessions_pipeline COMMAND test_peer_sessions_pipeline)
+set_tests_properties(test_peer_sessions_pipeline PROPERTIES LABELS "unit")
 
 # M3-05（评审拆分）：MessageId 双射 + aki.text 信封往返（DEC-006 冻结；网络
 # 无关）。独立 unit 二进制：回环二进制的 [skip] 受控退出不得掩盖同二进制内

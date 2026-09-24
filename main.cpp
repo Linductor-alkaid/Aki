@@ -37,6 +37,7 @@
 #include "app/state/app_state_owner.hpp"
 #include "heyaki/adapter/fake_heyaki_adapter.hpp"
 #include "heyaki/adapter/local_identity.hpp"
+#include "heyaki/adapter/peer_sessions_pipeline.hpp"
 #include "heyaki/session/runtime_node.hpp"
 #include "persistence/database/database.hpp"
 #include "persistence/database/database_worker.hpp"
@@ -494,6 +495,27 @@ int run_demo(const std::string& run_root) {
     RouterSink router{devices, conversations, messages, transfers};
     adapter.set_sink(&router);
 
+    // 7.5) peer_sessions diff 管道装配（M3-06；DEC-008 双 Manager 扇出经
+    //      RouterSink：connected/disconnected → DM presence + CM 会话态，
+    //      path 变化 → DM LatestMailbox）。构造不 start：smoke 确定性
+    //     （真实 LAN 邻居会进入状态面），启动随 M3-08 组合切换。
+    auto peer_pipeline = std::make_unique<aki::heyaki::PeerSessionPipeline>(
+        executor_owner.executor(), *node_session,
+        aki::heyaki::PeerSessionEvents{
+            .on_connected =
+                [&router](const DeviceId& peer) {
+                    (void)router.on_device_connected(peer, ConnectionPath::Lan);
+                },
+            .on_disconnected =
+                [&router](const DeviceId& peer) {
+                    (void)router.on_device_disconnected(peer);
+                },
+            .on_connection_path_changed =
+                [&router](const DeviceId& peer, ConnectionPath path) {
+                    (void)router.on_connection_path_changed(
+                        peer, ConnectionPath::Unknown, path);
+                }});
+
     // 每步推进到静止：flush 四个 Manager（有界预算，消费排空 future）+ 状态
     // owner drain 至水位不变（主线程即 owner 上下文；处理器在 drain 内按接受
     // 顺序入队 DB 作业，DEC-009 ①）。
@@ -882,8 +904,10 @@ int run_demo(const std::string& run_root) {
         (void)messages.flush(2s);
         adapter.set_sink(nullptr);             // ③ 停 Adapter 投递
         adapter.stop_discovery();
-        // ③.5 Heyaki 生产者停止（DEC-006/§8.3：Node::shutdown + Runtime::
-        //      shutdown，EXEC-01 步骤 1 内、早于 owner 步骤 2/3/5）。
+        // ③.5 Heyaki 生产者停止（DEC-006/§8.3：观察管道停止 + Node::
+        //      shutdown + Runtime::shutdown，EXEC-01 步骤 1 内、早于 owner
+        //      步骤 2/3/5）。
+        peer_pipeline->stop();
         const auto node_report = node_session->shutdown();
         report(node_report.node_stopped && node_report.runtime_stopped,
             "node session stopped (Node + borrowed Runtime)");

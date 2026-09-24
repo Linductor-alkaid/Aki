@@ -218,9 +218,25 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
   **如实降级**：本机防火墙拦截 TLS 入站（沿 M3-04），收发端到端以 [skip]
   证据路径通过并登记补跑条件。MSVC debug/release ctest 24/24 零回归
   （评审修正后复测）。详见验证记录。）
-- [ ] `M3-06` Presence 与连接路径（`SCOPE-10`）：连接/断开事件维护
+- [x] `M3-06` Presence 与连接路径（`SCOPE-10`）：连接/断开事件维护
   `PresenceState` 与 `ConversationState`；连接路径变化（LAN / P2P / Relay）经
-  第 10.1 节 LatestMailbox 语义发布，路径切换不新建会话（`RULE-06`）。
+  第 10.1 节 LatestMailbox 语义发布，路径切换不新建会话（`RULE-06`）。（2026-09-24：peer_sessions diff
+  管道落地——`heyaki/adapter/peer_sessions_pipeline.hpp`：`PeerSessionView`
+  （NodeSession 观察面，aki/std 公开面 RULE-10）+ `map_connection_path`
+  （DEC-006 映射 5 四值：direct_host+lan→Lan、direct_srflx→P2p、turn_*→
+  Relay、unknown→Unknown；direct_host+relay 信令→P2p）+ `diff_peer_sessions`
+  纯函数（authenticated↔closed 变化→connected/disconnected、路径变化→
+  connection_path_changed，网络无关可单测）+ `PeerSessionPipeline`
+  （EXEC-04 timer + TimerHandle 持有，stop 后零回调实测）；宿主 main.cpp
+  装配（RouterSink 双 Manager 扇出接线，构造不 start——smoke 确定性，启动
+  随 M3-08 切换）；集成回环为独立单用例二进制 `test_peer_sessions_loopback`
+  （2026-09-24 评审拆分：原追加于 test_discovery_pairing.cpp 同二进制，与其
+  M3-04 用例各自可 [skip] 受控退出——互相掩盖既有失败且执行顺序随机使回环
+  证据不可达（实测三连跑各仅其一执行）；沿 M3-05 先例拆分，[skip] 退出点只
+  在前置断言全过时可达）+ 独立 unit 二进制 `test_peer_sessions_pipeline`
+  （映射/diff 网络无关断言，沿 M3-05 评审拆分先例）。DOD-02 六项沿 periodic
+  路径（M3-04 已立）+ 管道 start/stop。debug/release ctest 27/27 零回归
+  （评审拆分后复测）。详见验证记录。）
 - [ ] `M3-07` 断线恢复（`SCOPE-11`）：网络中断恢复后原 Conversation 继续可用、
   历史不变；迟到事件不复活终态；重连路径的取消与超时语义闭合
   （`EXEC-05`，长任务可解除阻塞）。
@@ -721,3 +737,88 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
     通过时可达，不再可能掩盖既有失败（禁止在该文件 [skip] 门之前追加新
     用例）。MR 闭环由后续环节执行，本记录不含 commit/CI 证据。
   - 同步：本里程碑（M3-05 勾选、本记录）、总计划当前状态。
+
+- 2026-09-24（`M3-06`，Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0 / OpenSSL 3.5.8）：
+  - 范围：`heyaki/session/runtime_node.hpp`（`PeerSessionView` +
+    `peer_session_views()` 观察面：device_id/endpoint_id/state/data_path/
+    signaling_route（heyaki 枚举数值，语义封闭在本层文档）/authenticated/
+    closed——aki/std 公开面，RULE-10）、`heyaki/adapter/
+    peer_sessions_pipeline.hpp`（新建：`map_connection_path`（DEC-006 映射
+    5 四值 + direct_host+relay→P2p 补充分支）、`diff_peer_sessions` 纯函数
+    （connected/disconnected/connection_path_changed 三回调）、
+    `PeerSessionPipeline`（EXEC-04 timer + TimerHandle；stop 后零回调））、
+    根 `main.cpp`（管道装配于 RouterSink 之后：事件 → RouterSink 双 Manager
+    扇出（DM presence + CM 会话态、path→LatestMailbox）；构造不 start——
+    smoke 确定性，启动随 M3-08 组合切换；关闭钩子 ③.5 追加管道 stop）、
+    `tests/unit/test_peer_sessions_pipeline.cpp`（新建独立 unit 二进制：
+    映射四值 + diff 转移 + 中间态翻动不触发——网络无关，沿 M3-05 评审拆分
+    先例）、`tests/integration/test_peer_sessions_loopback.cpp`（新建独立
+    单用例集成二进制，2026-09-24 评审拆分自 test_discovery_pairing.cpp——
+    同二进制内 M3-04/M3-06 用例各自可 [skip] 受控退出，互相掩盖既有失败并
+    使回环证据随机不可达：M3-06 回环用例 authenticated → connected 事件 →
+    SetPresence Online；路径事件零 DB 作业断言；LatestMailbox 覆盖式仅最新；
+    stop 后零事件；恢复 presence 归一化 Offline + Trusted 行保留；握手被拦
+    环境 [skip] 降级；test_discovery_pairing.cpp 同步收窄为 DOD-02 专项
+    （无受控退出），M3-04 双节点回环拆出至
+    test_discovery_pairing_loopback.cpp）、tests/CMakeLists。
+  - 依据：[DEC-006](../decisions/DEC-006-heyaki-api-contract.md)（映射 5）、
+    设计第 3/5/8.1/8.3/10.1/11.1① 节（M3-02 固化触发语义；SetPresence/
+    SetConnectionPath 不持久化）、[DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)
+    （connected/disconnected 双扇出）、[DEC-009](../decisions/DEC-009-appstate-write-path.md)
+    （写路径排除项）；总计划 `SCOPE-10`、`RULE-02`/`RULE-06`/`RULE-08`/
+    `RULE-10`、`EXEC-02`/`EXEC-04`/`EXEC-07`、`DOD-02`/`DOD-03`/`DOD-05`；
+    executor-integration scheduling 卡（本会话已加载）。heyaki API 锚点：
+    `node.hpp`（NodePeerSessionSnapshot.peer/data_path/signaling_route、
+    NodeDataPathKind/SignalingRouteKind/NodePeerSessionState 枚举）。
+  - 验证（树同前）：
+    - debug → `ctest --test-dir build/m3-01-debug -C Debug --timeout 300` →
+      **100% passed 25/25**；release 同构 → **25/25**（原 23 项零回归 + 新
+      `test_peer_sessions_pipeline`（unit）+ M3-05 评审拆分的
+      `test_heyaki_message`）。2026-09-24 评审拆分后复测（命令同上）：
+      debug **27/27**、release **27/27**（test_discovery_pairing 一拆三：
+      DOD-02 专项 + `test_discovery_pairing_loopback` +
+      `test_peer_sessions_loopback`）。
+    - 网络无关实测（test_peer_sessions_pipeline，3 用例 18 断言全过）：
+      映射四值（direct_host+lan→Lan、direct_host+relay→P2p、direct_srflx→
+      P2p、turn_udp/tcp/tls→Relay、unknown→Unknown）；diff 转移
+      （authenticating 不触发 → authenticated 触发 connected → 路径变化
+      触发 connection_path_changed(Relay) → 缺失触发 disconnected → 重连
+      再 connected → closed 再 disconnected）；中间态翻动零事件。
+    - 集成回环（防火墙受限降级，沿 M3-04；2026-09-24 评审拆分后运行于
+      独立单用例二进制 `test_peer_sessions_loopback`——不再与 M3-04 用例
+      同二进制互抢受控退出，两个回环 ctest 项各自执行，27 项复测为证）：
+      发现正常；配对握手停滞 →
+      `[skip] pairing handshake blocked (firewall): presence/path loopback
+      not verified; rerun with inbound TCP allowed` + 受控退出。连接/
+      断开双扇出、路径映射回环、presence 归一化恢复断言位于降级路径之后
+      **未在本机执行**；其中「不持久化」半边由单元与既有覆盖承载：
+      映射排除 SetPresence/SetConnectionPath 作业（代码路径）+ 恢复
+      presence Offline 语义（test_restart_recovery 既有断言）。补跑条件：
+      防火墙放行入站 TCP / LAN 双端（沿 M3-04 登记项）。
+    - 宿主 smoke：管道构造（不 start）+ 关闭钩子 stop 实测，`smoke: PASS`。
+    - DOD-02 六项沿 periodic 路径：M3-04 `DOD-02 six items along the
+      periodic discovery path` 用例承载（同 EXEC-04 timer 机制），本项
+      管道 start/stop 语义在回环用例断言（running 状态、stop 后零事件）。
+    - RULE-10 grep（复跑）：第三方 `<heyaki/…>` 单分量公开头 include 仅
+      heyaki/ 层文件与既有接线层测试 TU；app/application、app/state、
+      main.cpp 零命中（管道公开面 aki/std）。
+  - 偏差（如实记录）：① `direct_host + relay 信令 → P2p`：DEC-006 映射 5
+    未枚举该组合（仅 direct+lan/direct_srflx/turn_*/unknown）——按「直连
+    数据面不因信令通道变 Relay」补该分支为 P2p 并在映射函数注释登记；
+    ② 宿主管道构造不 start（确定性优先，见范围段）——「根 main.cpp 管道
+    装配」以构造+接线+关闭钩子 stop 兑现，启动归 M3-08。
+  - 限制：连接/断开双扇出与路径回环断言待防火墙放行/LAN 双端环境补跑
+    （[skip] 输出为证）；CI Linux 四档随本 PR 门禁；MR 闭环由后续环节执行，
+    本记录不含 commit/CI 证据。
+  - CI 闭环补记（MR 闭环环节，如实）：CI 第 1 轮（run 35943203897）两档
+    失败——① tsan 档 test_message_loopback 首报 usrsctp（libdatachannel
+    vendored 依赖）内部数据竞争 `sctp_output.c:7581 sctp_toss_old_cookies`
+    （双节点 DTLS/SCTP 会话建立首次真实过 TSAN；上游 C 代码非 TSAN-clean）：
+    按 AGENTS 供应链纪律不改 third_party，新增 `cmake/tsan-suppressions.supp`
+    （仅上游条目，第一方竞争禁止入表）并经 ci.yml TSAN_OPTIONS 生效；
+    ② asan 档 test_peer_sessions_loopback:210 配对等待硬失败（会话已到
+    pairing_restricted 未走降级路径）——沿 M3-04/M3-05 降级纪律扩展覆盖
+    「已提交配对但握手未完成」（诊断输出 + 受控退出），presence/path 断言
+    补跑条件不变。
+  - 同步：本里程碑（M3-06 勾选、本记录）、总计划当前状态。
