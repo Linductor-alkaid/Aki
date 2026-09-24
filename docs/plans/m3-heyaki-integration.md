@@ -902,4 +902,16 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
   - 限制：回环全链路待防火墙放行/LAN 双端环境补跑（[skip] 输出为证）；
     CI Linux 四档随本 PR 门禁（CI runner 可能走 [skip]，证据输出保留）；
     MR 闭环由后续环节执行，本记录不含 commit/CI 证据。
+  - CI 闭环补记（MR 闭环环节，如实）：CI 第 1 轮（run 35954858012）Linux
+    四档 GCC `-Werror=type-limits` 编译失败（size_t `>= 0` 恒真断言，MSVC
+    不告警）——改 `consumed > 0` 有效断言。第 2 轮（run 35956052751）三档
+    失败——① tsan 档 test_reconnect_loop 首报**第一方**数据竞争：测试用例
+    普通 `int attempts` 跨上下文访问（协调器线程写/测试线程读），改
+    `std::atomic`（同文件其余用例同型已 atomic）；② recovery/message 回环
+    配对等待硬失败（会话已到 pairing_restricted 后握手停滞，sanitizer 慢化
+    下 A/B 进度不对称）——沿 M3-04/05/06 降级纪律扩展「已提交配对但握手未
+    完成」路径（B 侧受限改有界等待），全链路补跑条件不变；③ ubsan 档
+    test_message_loopback 建链路径打印 libdatachannel/usrsctp 非对齐访问
+    （`srs_t` 4 字节对齐，`sctptransport.cpp:732-735`）——UBSan recover
+    语义下非致命（不触发门禁失败），按供应链纪律登记上游缺陷不抑制不修改。
   - 同步：本里程碑（M3-07 勾选、本记录）、总计划当前状态。

@@ -57,17 +57,19 @@ TEST_CASE("Reconnect loop recovers and settles cleanly (DOD-02 normal)",
     REQUIRE(owner.initialize());
     ReconnectCoordinator coordinator{owner.executor()};
 
-    int attempts = 0;
+    // 跨上下文访问：协调器线程写、测试线程读——必须 atomic（CI run
+    // 35956052751 tsan 首报本文件 :70 数据竞争，其余用例同型已 atomic）。
+    std::atomic<int> attempts{0};
     Hooks hooks1{
         .try_reconnect = [&attempts] {
-            ++attempts;
+            attempts.fetch_add(1);
             return true;  // 首轮重连即成功
         },
-        .is_recovered = [&attempts] { return attempts > 0; }};
+        .is_recovered = [&attempts] { return attempts.load() > 0; }};
     REQUIRE(coordinator.start(DeviceId{"peer-a"}, hooks1));
     REQUIRE(wait_until_local(
         [&] { return coordinator.stats().recovered == 1; }, 2s));
-    REQUIRE(attempts == 1);
+    REQUIRE(attempts.load() == 1);
 
     const auto report = owner.shutdown([&] {
         // 自终循环的记录保留至消费（AGENTS 规则 3 future 纪律）→ 消费数 1。
