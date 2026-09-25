@@ -430,7 +430,13 @@ TEST_CASE("Full inbox rejects visibly while the pump is occupied (RULE-09)",
 
 TEST_CASE("Shutdown hook cancels all active sessions with terminal events",
     "[unit][transfer][m4-02][dod02]") {
-    ExecutorOwner owner;
+    // 显式 4 线程：3 个常驻会话各占 1 worker（活动会话占用 worker 是本组件
+    // 的线程预算属性），泵/排空需要第 4 个——2 核 CI runner 上 3 会话会
+    // 饥饿（本轮 CI 失败根因，回归守卫）。
+    ExecutorOwnerOptions owner_options;
+    owner_options.executor_config.min_threads = 4;
+    owner_options.executor_config.max_threads = 4;
+    ExecutorOwner owner{owner_options};
     REQUIRE(owner.initialize());
     EventLog log;
     std::atomic<int> gate{0};
@@ -445,7 +451,7 @@ TEST_CASE("Shutdown hook cancels all active sessions with terminal events",
         REQUIRE(manager.start_transfer(TransferId{name}, 100U));
     }
     REQUIRE(wait_until_local(
-        [&] { return manager.session_count() == 3U; }, 2s));
+        [&] { return manager.session_count() == 3U; }, 10s));
     REQUIRE(wait_until_local(
         [&] {
             for (const auto* name : {"t1", "t2", "t3"}) {
@@ -456,7 +462,7 @@ TEST_CASE("Shutdown hook cancels all active sessions with terminal events",
             }
             return true;
         },
-        2s));
+        10s));
 
     REQUIRE(manager.stop_all() == 3U);
     for (const auto* name : {"t1", "t2", "t3"}) {
