@@ -180,10 +180,12 @@ TEST_CASE("HeyakiNodeAdapter outbound SPI validates and reports honestly",
     NodeDomain domain(temp_root("outbound"));
     HeyakiNodeAdapter adapter{owner.executor(), valid_options(domain)};
 
-    // 传输四接口：M4 前签名语义 false（DEC-006，不伪造事件）。
+    // 传输四接口：M4 前签名语义 false（DEC-006，不伪造事件）；source_path
+    // 签名随 M4-02 §7.1⑤ 固化。
     aki::transfer::FileMetadata file{"model.gguf", 1024, "application/octet-stream"};
     REQUIRE_FALSE(adapter.start_file_transfer(
-        DeviceId{"peer-x"}, aki::transfer::TransferId{"t-1"}, file));
+        DeviceId{"peer-x"}, aki::transfer::TransferId{"t-1"}, file,
+        std::filesystem::path{"payloads/model.gguf"}));
     REQUIRE_FALSE(adapter.pause_transfer(aki::transfer::TransferId{"t-1"}));
     REQUIRE_FALSE(adapter.resume_transfer(aki::transfer::TransferId{"t-1"}));
     REQUIRE_FALSE(adapter.cancel_transfer(aki::transfer::TransferId{"t-1"}));

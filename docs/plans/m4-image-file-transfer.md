@@ -101,7 +101,7 @@
   resume/cancel + FileTransferPhase 八态→Aki 状态映射逐条 + pull_file
   预留）+ §8.1 传输四接口真实语义声明。纯文档变更，无产品代码。详见验证
   记录。）
-- [ ] `M4-02` `transfer/manager/` TransferManager：传输会话七状态机全覆盖
+- [x] `M4-02` `transfer/manager/` TransferManager：传输会话七状态机全覆盖
   （合法/非法转移、终态幂等）、`submit_cancellable` + StopToken 任务承载、
   有界收件箱 + 排空泵、按业务稳定 ID 持有句柄。**M4-02 首轮实现受阻
   （未完成，2026-09-24）**：原型 `transfer/manager/transfer_session_manager.hpp`
@@ -113,7 +113,12 @@
   不派生会话任务仍崩溃）、stop_all 有/无（两形态均崩）。按工程规范第 7 节
   不得合并未定位段错误的原型；原型保留于工作树（未跟踪）供续查。
   补跑条件：WinDbg/cdb 或 ASan 运行时可用环境下的符号化定位后修复。
-  详见验证记录（M4-02 受阻条目）。
+  详见验证记录（M4-02 受阻条目）。（2026-09-25 完成并合入：SIGSEGV 根因
+  独立复核闭环（非 executor 缺陷）、原型按 §7.1① 重构落地（四接口泵上
+  串行 + 单消费者泵 + 全局 stop 预算 + 事件顺序闸门 + lifecycle 互斥）、
+  SPI source_path 签名扩展（§7.1⑤）、单测重建 9 用例（DOD-02 六项 +
+  七状态机/RULE-08）、debug/release 全量 ctest 零回归 + 新测试 30 连跑
+  稳定，详见验证记录 2026-09-25 条目。）
 - [ ] `M4-03` 图片消息（`SCOPE-07`）：`Image` typed 消息收发，消息面仅
   metadata + `TransferId`，本体经传输链路（`RULE-05`）。
 - [ ] `M4-04` 发送侧真实传输链路（`SCOPE-08`）：`push_file` 发起 → 分块写入
@@ -227,7 +232,8 @@
   - 同步：本里程碑（M4-01 勾选、本记录、状态 In Progress）、总计划当前
     状态。
 
-- 2026-09-24（`M4-02`，**受阻未完成**——按工程规范 4.3/第 7 节不冒充完成；
+- 2026-09-24（`M4-02`，**受阻未完成**——按工程规范 §4 勾选规则 3/4 与 §7
+  验证证据纪律不冒充完成；
   Windows 11 / MSVC 2022 BuildTools 14.44.35207 / CMake 4.1.0）：
   - 已实现（工作树未提交原型）：`transfer/manager/transfer_session_manager.hpp`
     （单飞排空泵 + 会话循环 + 七状态机 + TaskHandle 按 ID + stop_all 消费）；
@@ -247,9 +253,12 @@
   - 与 M3-07 ReconnectCoordinator 的差异对照（M3-07 同 executor 模式测试
     全绿）：本管理器会话循环含 pause/resume 状态机 + 每 tick io 回调 +
     SessionControl shared_ptr——未定位到具体差异点。
-  - 处置（工程规范 4.3/第 7 节）：不合并未定位段错误的原型；M4-02 保持
-    未完成；原型保留于工作树（未跟踪文件）供续查。补跑条件：WinDbg/cdb
-    或 MSVC ASan 运行时可用的环境符号化定位后修复再重跑全套单测。
+  - 处置（工程规范 §4 勾选规则 3/4 与 §7 验证证据）：不合并未定位段错误
+    的原型；M4-02 保持未完成；原型保留于工作树（未跟踪文件）供续查。
+    补跑条件：WinDbg/cdb 或 MSVC ASan 运行时可用的环境符号化定位后修复
+    再重跑全套单测。负责人：Linductor（补跑已于 2026-09-25 在原环境执行
+    完成——根因定位与修复未依赖外部调试器，见下方评审修正与 2026-09-25
+    完成条目）。
   - 同步：本里程碑（M4-02 受阻条目、本记录）、总计划（当前状态阻塞说明）。
   - 2026-09-24 评审修正（根因已定位并修复；以下修正原条目与事实不符处）：
     - 「已实现」清单纠正：`SPI start_file_transfer` 签名扩展（source_path）
@@ -280,3 +289,71 @@
     - 状态：M4-02 仍**未完成**（In Progress）——原型缺陷已修复，但
       DOD-02 六项 + 七状态机/RULE-08 单测初稿已删除、待重建后全量验收；
       SPI 签名扩展随 M4-04/M4-02 落地。
+
+- 2026-09-25（`M4-02`，**完成**；Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0；负责人：Linductor）：
+  - SIGSEGV 根因复核闭环（独立三探针，`build/sigsegv-verify/`，gitignored，
+    与 CI 同 pinned executor 构建产物链接）：① executor 黑盒——对已终态
+    （完成/失败）任务的 `request_task_cancel` 共 2500 次（2000 完成 + 500
+    失败，各含重复取消）零异常零崩溃，全部按契约返回 `AlreadyCompleted`，
+    shutdown Completed——结合契约（executor.hpp:232-246 `noexcept` + 过期
+    句柄幂等）、registry 实现（互斥 + map + tombstone，无裸句柄索引）与
+    上游 `test_task_cancellation.cpp::RepeatAndStaleHandlesAreIdempotent`
+    覆盖，证实「request_task_cancel 不稳定」系误诊且逻辑上不成立（原缺陷
+    路径中该调用不可达——`wait_for` 对从未赋值 future 先抛
+    `future_error(no_state)`，探针②精确复现该签名）；③ 孤儿会话 UAF
+    复现（管理器释放后 worker 仍在其地址 tick，`shutdown` 停滞/任务静默
+    死亡/SIGSEGV 为同一根因的三种时序表现）。不进 executor 反馈台账
+    （无能力缺口）。
+  - 实现（原型按 §7.1① 重构落地；本轮单测期复现的新 SIGSEGV 同族定位
+    一并闭合）：出站四接口全部经单飞排空泵上下文串行（start 在泵内
+    submit+登记，调用方线程零派生，无幽灵 Queued）；同步拒绝可见性
+    （收件箱满 false 且零事件；泵内提交即拒回收记录——拒绝检测依据
+    executor 同步结算语义：句柄恒先分配、future 即刻就绪才是信号，
+    `handle.valid()` 不是）；状态事件仅在状态实际变化时投递一次（同态
+    幂等不重报）；`SessionControl::start_gate` 启动闸门保证事件顺序恒为
+    Queued → Negotiating → …（worker 抢跑不乱序）；`drain_loop` 修正为
+    严格单消费者不变量（MpscChannel 契约 "one logical consumer"——原
+    「批间释放在飞代号」窗口允许两个排空任务并发 `try_receive`：命令
+    丢失 + 节点损坏）；`stop_all` 全局 deadline 预算（不随会话数放大）+
+    活动态会话先推进 Cancelled 并投递终态 + 未消费 future 移入遗留集合
+    由析构兜底无界消费（会话经 this 引用管理器，析构不得先于其终结）；
+    `lifecycle_mutex_` 串行化 submit→登记 与 stop_all 快照（锁序
+    lifecycle → mutex → futures），并修正登记守卫（记录存在即登记——
+    快速调度下会话任务可能先于登记完成状态推进，误判接管会把运行中
+    会话取消成无句柄记录）。
+  - SPI source_path 签名扩展（§7.1⑤，M4-02 落地）：`heyaki_adapter.hpp`
+    `start_file_transfer(receiver, TransferId, FileMetadata,
+    const std::filesystem::path& source_path)`（source_path 不进入对端
+    可见 FileMetadata，防信息外泄）；Fake（参数化接受，路径真实消费随
+    M4-04）、真实 Adapter（M4 前语义 false）、app TransferManager
+    （`StartTransferWork` 增 source_path 字段并透传；公开 API 默认空参）
+    全调用点同步；test_heyaki_adapter / test_heyaki_node_adapter /
+    test_app_managers 调用点更新。顺带修正 heyaki_adapter.hpp 过期头注
+    （「9 类事件一一对应」→ 按 M3-05 第 10 方法后实际）。
+  - 单测重建（`tests/unit/test_transfer_session_manager.cpp`，unit，
+    9 用例 86 断言）：七状态机合法链全覆盖（事件序列逐项断言 + 每转移
+    恰一次投递，含 Paused↔Transferring）；RULE-08 终态幂等（FIFO 屏障
+    确定性验证终态后取消不复活、零新事件）；重复 ID/非法参数拒绝；io
+    异常 → Failed（异常不外抛，future 干净结算）；执行中取消恰一次
+    Cancelled（双报回归守卫）；提交拒绝（registry 容量 0 → 记录回收
+    state_of 复位 nullopt + 无幽灵 Queued + 容量恢复后回归）；stop_all
+    全局预算有界（事件控制的卡死 io + 预算内如实报 consumed=0 + 析构
+    兜底消费）；收件箱满拒绝（单 worker 占用确定性，RULE-09）；shutdown
+    钩子三会话终态各恰一次 + fully_stopped。断言只在主线程，事件收集器
+    加锁；DOD-02 六项沿传输会话长任务路径全覆盖。
+  - 验证：debug 全量 ctest 32/32、release 全量 ctest 32/32（既有 31 项
+    零回归）；新测试二进制随机顺序 30 连跑零失败零崩溃（修复过程中以
+    插桩定位三处竞态/顺序缺陷后收敛）；ASAN/UBSAN/TSAN 与 MSVC 矩阵随
+    本 PR CI。
+  - 观察登记（不在本项修复范围）：① `app/application/manager_runtime.hpp`
+    的 drain_loop 存在同类「批间释放在飞代号」窗口（MpscChannel 单消费者
+    契约下两个排空任务可并发 `try_receive`）——M1-05 既有组件，建议随后
+    续里程碑以本项修正模式收口；② executor tracked 提交的容量类拒绝经
+    future 同步结算异常而非句柄无效（`submit_tracked_with_hook` 先分配
+    句柄后做 registry admission），`reconnect_loop.hpp` 的
+    `!handle.valid()` 提交即拒分支对容量类拒绝不可达——reconnect 组件
+    自身测试语义不受影响（其单飞拒绝为协调器层逻辑），登记备查。
+  - 同步：本里程碑（M4-02 勾选、受阻条目引用修正、本记录、状态
+    In Progress）、总计划（当前状态条目 + 更新日期 + M4 文档创建条目
+    归位 + test_reconnect_loop 用例计数修正）。

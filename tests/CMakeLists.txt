@@ -380,6 +380,20 @@ target_link_libraries(test_reconnect_loop PRIVATE
 add_test(NAME test_reconnect_loop COMMAND test_reconnect_loop)
 set_tests_properties(test_reconnect_loop PROPERTIES LABELS "unit")
 
+# M4-02：传输会话管理器单元测试（§7.1① 出站四接口泵上串行 + 七状态机/
+# RULE-08 终态幂等；DOD-02 六项沿传输会话长任务路径；注入 IO 回调，网络
+# 无关）。
+add_executable(test_transfer_session_manager
+    unit/test_transfer_session_manager.cpp)
+target_compile_features(test_transfer_session_manager PRIVATE cxx_std_20)
+aki_apply_warnings(test_transfer_session_manager PRIVATE)
+target_link_libraries(test_transfer_session_manager PRIVATE
+    Catch2::Catch2WithMain
+    aki_app)
+add_test(NAME test_transfer_session_manager
+    COMMAND test_transfer_session_manager)
+set_tests_properties(test_transfer_session_manager PROPERTIES LABELS "unit")
+
 # M3-05（评审拆分）：MessageId 双射 + aki.text 信封往返（DEC-006 冻结；网络
 # 无关）。独立 unit 二进制：回环二进制的 [skip] 受控退出不得掩盖同二进制内
 # 既有失败（工程规范第 7 节），网络无关断言在此始终完整执行。

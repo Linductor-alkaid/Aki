@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <set>
 #include <string>
 #include <string_view>
@@ -58,7 +59,9 @@ public:
 
     bool start_file_transfer(const aki::device::DeviceId& to,
         const aki::transfer::TransferId& transfer_id,
-        const aki::transfer::FileMetadata& file) override {
+        const aki::transfer::FileMetadata& file,
+        const std::filesystem::path& source_path) override {
+        (void)source_path;  // 路径真实消费随 M4-04 数据面落地（§7.1⑤）
         if (to.empty() || transfer_id.empty() || file.name.empty()) {
             return false;
         }

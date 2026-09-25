@@ -31,6 +31,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <functional>
 #include <future>
 #include <stdexcept>
@@ -495,8 +496,12 @@ TEST_CASE("Fake rejects injections without sink, with invalid payloads, or under
         REQUIRE(fake.send_text_message(DeviceId{"beta"}, MessageId{"m-1"}, "hello"));
 
         const FileMetadata file{"model.gguf", 1024, "application/octet-stream"};
-        REQUIRE(fake.start_file_transfer(DeviceId{"beta"}, TransferId{"t-1"}, file));
-        REQUIRE_FALSE(fake.start_file_transfer(DeviceId{"beta"}, TransferId{"t-1"}, file));
+        REQUIRE(fake.start_file_transfer(
+            DeviceId{"beta"}, TransferId{"t-1"}, file,
+            std::filesystem::path{"payloads/model.gguf"}));
+        REQUIRE_FALSE(fake.start_file_transfer(
+            DeviceId{"beta"}, TransferId{"t-1"}, file,
+            std::filesystem::path{"payloads/model.gguf"}));
         REQUIRE(fake.pause_transfer(TransferId{"t-1"}));
         REQUIRE(fake.resume_transfer(TransferId{"t-1"}));
         REQUIRE(fake.cancel_transfer(TransferId{"t-1"}));

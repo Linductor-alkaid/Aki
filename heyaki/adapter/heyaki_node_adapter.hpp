@@ -37,6 +37,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -212,13 +213,16 @@ public:
 
     // 传输四接口（M4 前签名语义，DEC-006：文件数据链路 M4）：
     // admission false + TransferId 语义（一个 TransferId 一个会话）随 M4
-    // 数据面落地；本版本不伪造进度/终态事件。
+    // 数据面落地；本版本不伪造进度/终态事件。source_path 签名随 M4-02 按
+    // §7.1⑤ 固化，真实消费随 M4-04。
     [[nodiscard]] bool start_file_transfer(const aki::device::DeviceId& to,
         const aki::transfer::TransferId& transfer_id,
-        const aki::transfer::FileMetadata& file) override {
+        const aki::transfer::FileMetadata& file,
+        const std::filesystem::path& source_path) override {
         (void)to;
         (void)transfer_id;
         (void)file;
+        (void)source_path;
         return false;  // M4
     }
 
