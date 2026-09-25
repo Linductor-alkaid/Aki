@@ -266,7 +266,21 @@ struct BasicStack {
         ConversationManagerOptions conversation_options = {},
         MessageManagerOptions message_options = {},
         TransferManagerOptions transfer_options = {})
-        : host(std::move(host_options)) {
+        : host([&] {
+              // 固定线程池（脱离 runner 硬件决定性）：M1 会话骨架
+              // session_loop 在池 worker 上 sleep 轮询（每个活跃会话停占
+              // 一个 worker，M4-04 真实传输循环替换）。自适应池在 2 vCPU
+              // CI runner 上仅 2 worker——闸门用例的双占位会话将其全部
+              // 停占，TM 排空任务（flush 哨兵）永无调度 → flush 超时失败
+              // （PR 34 首两轮 CI 五档红、~915s 的根因；2 线程池本地强制
+              // 复现证实）。测试固定 4 worker：双会话停占 2 个，排空与
+              // shutdown 路径恒可调度。生产侧 2 核设备同饥饿风险登记为
+              // M4-02 观察项③，随真实传输循环收口。
+              auto pinned = std::move(host_options);
+              pinned.executor_config.min_threads = 4;
+              pinned.executor_config.max_threads = 4;
+              return pinned;
+          }()) {
         if (device_pump.name.empty()) {
             device_pump.name = "aki.dm";
         }

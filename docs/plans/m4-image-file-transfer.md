@@ -137,7 +137,8 @@
   证据路径降级（补跑条件登记）。详见验证记录 2026-09-26 条目。）
 - [ ] `M4-04` 发送侧真实传输链路（`SCOPE-08`）：`push_file` 发起 → 分块写入
   `.part`（blocking worker）→ 进度实时持久化 → `Completed` SHA-256 + 原子
-  改名 + 回写（M2-06 作业组真实接线）。
+  改名 + 回写（M2-06 作业组真实接线；M4-03 观察③：消除会话骨架
+  `session_loop` 的池 worker 停占——2 核设备 ≥2 并发传输即饥饿 Manager 泵）。
 - [ ] `M4-05` 接收侧与暂停/恢复/取消（`SCOPE-08`）：接收落盘与完成合并；
   pause/resume/cancel 状态机推进与 `.part` 幂等删除；`on_transfer_*` 路由；
   终态幂等。
@@ -463,20 +464,31 @@
     ——M5 UI 兜底与后续 GC 议题。
   - 同步：本里程碑（M4-03 勾选、本记录）、总计划（当前状态条目 + DEC-010
     决策清单条目）、DEC-010/DEC-006/设计 §6/§6.1/§7.1/§8.1。
-  - 补记（MR 闭环期，2026-09-26；负责人：Linductor）：PR 首轮 CI 五档全红
-    （Linux debug/asan/ubsan/tsan + Windows debug，run 36182858882），失败
-    集中于本项新增闸门用例的 `transfers.flush(2s)` 3 处断言
-    （test_app_managers.cpp:397 quiesce 排空×2 + :1366 直调×1），且该二进制
-    在 CI 耗时 ~915s（本机全量 ~1s）；TSAN 档无数据竞争告警、同为断言
-    超时——指向丢唤醒类时序缺陷而非数据竞争。定位：`app/application/
-    manager_runtime.hpp` drain_loop「批间无条件释放在飞代号 + 释放后仅单次
-    size_approx 检查」窗口（即 M4-02 观察项①）：慢核 CI 上入队者的
-    ensure_pump CAS 先于释放而失败后，其已提交的工作项（flush 哨兵等）滞留
-    收件箱无人排空；批间释放同时违反 MpscChannel 单逻辑消费者契约（双消费
-    者并发 try_receive：工作项丢失 + 节点损坏）。本机 20/2/1 核亲和连跑均
-    不复现（快核时序窗口窄），CI 2 vCPU 稳定复现。修复：drain_loop 收敛为
-    M4-02 已落地的严格单消费者形态（同 transfer_session_manager.hpp 修正
-    模式）：批处理期间不释放在飞代号，仅在退出决策点释放，随后终检续期或
-    让新 spawner 接管（恰其一）。修复后本机验证：debug/release 全量各
-    34/34；test_app_managers 2 核与 1 核亲和连跑通过；ASAN/UBSAN/TSAN 随
-    PR CI 第二轮门禁复核。
+  - 补记（MR 闭环期，2026-09-26；负责人：Linductor）：PR CI 两轮五档全红
+    （Linux debug/asan/ubsan/tsan + Windows debug，run 36182858882 与
+    36187158313），失败均集中于本项新增闸门用例的 `transfers.flush(2s)`
+    3 处断言（失败点两轮间漂移：:1366/:397×2 与 :397×2/:1661 组合），该
+    二进制 CI 耗时两轮均 ~915.5s（本机 ~1s）；TSAN 档无数据竞争告警。
+    第一轮修复（保留有效）：`app/application/manager_runtime.hpp`
+    drain_loop 收敛为 M4-02 已落地的严格单消费者形态（批处理期间不释放
+    在飞代号，仅在退出决策点释放+终检续期或让新 spawner 接管）——收口
+    M4-02 观察项①登记的「批间释放」窗口（双消费者并发 try_receive 违反
+    MpscChannel 单逻辑消费者契约 + 释放后单检查丢唤醒）。第二轮 CI 仍
+    五档红、时长仍 ~915s——排除其为本次 CI 红根因（作为已登记缺陷的
+    加固保留）。
+    第二轮定位（决定性复现）：测试夹具强制 2 线程池后本机精确复现（同
+    3 处 flush 断言、总耗时 916s）。根因：M1 会话骨架 `session_loop`
+    （transfer_manager.hpp）在池 worker 上 `sleep_for` 轮询——每个活跃
+    会话停占一个 worker；自适应池在 2 vCPU CI runner 上恰为 2 worker，
+    闸门用例的双占位会话将其全部停占，TM 排空任务（flush 哨兵）永无调度
+    → flush 超时失败；每个失败 section 的析构 shutdown 依次撞 executor
+    内部等待上限（~305s × 3 ≈ 915s，与两轮 CI 时长吻合）。本机
+    hardware_concurrency=20（进程 CPU 亲和性不改变池大小）故不复现。
+    第二轮修复：`tests/unit/test_app_managers.cpp` BasicStack 固定线程池
+    4 worker——测试脱离 runner 硬件决定性（双会话停占 2 个，排空与
+    shutdown 恒可调度）。修复后本机 debug/release 全量各 34/34；
+    ASAN/UBSAN/TSAN 随 PR CI 第三轮门禁复核。
+    观察登记③（M4-04 收口）：会话骨架停占池 worker 在生产侧构成 2 核
+    设备饥饿风险（≥2 并发传输即停占全部默认池 worker，Manager 泵不可
+    调度）——M4-04 真实传输循环（分块写入走 blocking worker）必须消除
+    池 worker 停占；M1 骨架以 M4 替换为既定设计，本项不重构。
