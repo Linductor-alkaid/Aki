@@ -417,17 +417,20 @@ MessagePayload payload_from_row(const Statement& row, MessageType type) {
             return ImagePayload{
                 FileMetadata{row.column_text(7),
                     static_cast<std::uint64_t>(row.column_int64(8)),
-                    row.column_text(9)},
+                    row.column_text(9),
+                    /*stored_sha256 消息行无列，重启重建为空（DEC-011 登记）*/ {}},
                 TransferId{row.column_text(10)}};
         case MessageType::Video:
             return VideoPayload{FileMetadata{row.column_text(7),
                 static_cast<std::uint64_t>(row.column_int64(8)),
-                row.column_text(9)}};
+                row.column_text(9),
+                /*同上：消息面 stored_sha256 不持久化*/ {}}};
         case MessageType::File:
             return FilePayload{
                 FileMetadata{row.column_text(7),
                     static_cast<std::uint64_t>(row.column_int64(8)),
-                    row.column_text(9)},
+                    row.column_text(9),
+                    /*同上：消息面 stored_sha256 不持久化*/ {}},
                 TransferId{row.column_text(10)}};
     }
     throw_unknown_enum_value("type", to_int(type));
@@ -541,7 +544,9 @@ Transfer read_transfer(const Statement& row) {
     transfer.sender = DeviceId{row.column_text(2)};
     transfer.receiver = DeviceId{row.column_text(3)};
     transfer.file = FileMetadata{row.column_text(4),
-        static_cast<std::uint64_t>(row.column_int64(5)), row.column_text(6)};
+        static_cast<std::uint64_t>(row.column_int64(5)), row.column_text(6),
+        /*FileMetadata.stored_sha256 为 wire+内存字段（M4-04）：传输行读取
+          不回填——stored_* 列属归档作业组回写位（M2-06），非本类型权威*/ {}};
     transfer.transferred = static_cast<std::uint64_t>(row.column_int64(7));
     transfer.total = static_cast<std::uint64_t>(row.column_int64(8));
     transfer.state = transfer_state_from(static_cast<int>(row.column_int64(9)));

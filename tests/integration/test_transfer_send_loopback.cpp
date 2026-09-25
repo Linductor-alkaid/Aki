@@ -211,7 +211,7 @@ TEST_CASE("Two-node send-side transfer chain over the borrowed runtime",
     }
     const auto transfer_id = NodeSession::new_transfer_id();
     REQUIRE(transfer_id.value.size() == 31);
-    const FileMetadata file{"payload.bin", 32, "application/octet-stream"};
+    const FileMetadata file{"payload.bin", 32, "application/octet-stream", ""};
 
     // 真实发起面：push_file admission（对端已认证）+ Aki 归档链路完成。
     std::atomic<bool> hash_ready{false};

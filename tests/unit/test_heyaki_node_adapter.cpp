@@ -184,7 +184,8 @@ TEST_CASE("HeyakiNodeAdapter outbound SPI validates and reports honestly",
 
     // 传输四接口：M4 前签名语义 false（DEC-006，不伪造事件）；source_path
     // 签名随 M4-02 §7.1⑤ 固化。
-    aki::transfer::FileMetadata file{"model.gguf", 1024, "application/octet-stream"};
+    aki::transfer::FileMetadata file{"model.gguf", 1024,
+        "application/octet-stream", ""};
     REQUIRE_FALSE(adapter.start_file_transfer(
         DeviceId{"peer-x"}, aki::transfer::TransferId{"t-1"}, file,
         std::filesystem::path{"payloads/model.gguf"}));
@@ -298,7 +299,7 @@ TEST_CASE("HeyakiNodeAdapter dispatches image envelopes and rejects bounded "
     // 合法 aki.image 载荷（DEC-010① 冻结字段号）：Image typed 消息投递 sink，
     // 消息面仅 metadata + TransferId（RULE-05）。transfer_id 用 heyaki 自身
     // 编码器生成（规范形式按构造成立，31 字符 hyt1_ 串）。
-    const aki::transfer::FileMetadata media{"photo.png", 2048, "image/png"};
+    const aki::transfer::FileMetadata media{"photo.png", 2048, "image/png", ""};
     const aki::transfer::TransferId transfer_id{::heyaki::to_string(
         ::heyaki::TransferId(::heyaki::TransferId::Storage{
             std::byte{0x21}, std::byte{0x22}, std::byte{0x23}, std::byte{0x24},

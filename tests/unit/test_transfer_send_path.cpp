@@ -376,17 +376,20 @@ TEST_CASE("Send archive covers chunk boundaries with hash-first verification",
 
     SECTION("empty file") {
         const auto source = write_source(stack.root, "empty.bin", 0, 'x');
-        run_chunk_case(stack, FileMetadata{"empty.bin", 0, "application/octet-stream"},
+        run_chunk_case(stack,
+            FileMetadata{"empty.bin", 0, "application/octet-stream", ""},
             source, TransferId{"t-empty"}, 0);
     }
     SECTION("non-aligned tail (20B, chunk 8)") {
         const auto source = write_source(stack.root, "tail.bin", 20, 'a');
-        run_chunk_case(stack, FileMetadata{"tail.bin", 20, "application/octet-stream"},
+        run_chunk_case(stack,
+            FileMetadata{"tail.bin", 20, "application/octet-stream", ""},
             source, TransferId{"t-tail"}, 20);
     }
     SECTION("multi chunk (100B, chunk 8)") {
         const auto source = write_source(stack.root, "multi.bin", 100, 'm');
-        run_chunk_case(stack, FileMetadata{"multi.bin", 100, "application/octet-stream"},
+        run_chunk_case(stack,
+            FileMetadata{"multi.bin", 100, "application/octet-stream", ""},
             source, TransferId{"t-multi"}, 100);
     }
 
@@ -403,7 +406,7 @@ TEST_CASE("Hash-first image flow carries stored_sha256 in the message",
     io_options.chunk_bytes = 16;
     SendPathStack stack{ExecutorOwner::Options{}, io_options};
     const auto source = write_source(stack.root, "photo.bin", 48, 'p');
-    const FileMetadata file{"photo.bin", 48, "image/png"};
+    const FileMetadata file{"photo.bin", 48, "image/png", ""};
 
     REQUIRE(aki::app::send_image_message_with_hash(*stack.transfers,
         *stack.messages, DeviceId{"beta"}, MessageId{"m-img"}, file,
@@ -452,7 +455,7 @@ TEST_CASE("Progress coalescing applies at most one update per drain and "
     io_options.chunk_bytes = 8;
     SendPathStack stack{ExecutorOwner::Options{}, io_options};
     const auto source = write_source(stack.root, "prog.bin", 32, 'g');
-    const FileMetadata file{"prog.bin", 32, "application/octet-stream"};
+    const FileMetadata file{"prog.bin", 32, "application/octet-stream", ""};
     const TransferId id{"t-prog"};
 
     REQUIRE(stack.transfers->start_transfer(DeviceId{"beta"}, id, file, source));
@@ -495,7 +498,7 @@ TEST_CASE("Terminal gate holds wire completion until the archive finishes",
     io_options.chunk_bytes = 8;
     SendPathStack stack{host_options, io_options};
     const auto source = write_source(stack.root, "gate.bin", 40, 'k');
-    const FileMetadata file{"gate.bin", 40, "application/octet-stream"};
+    const FileMetadata file{"gate.bin", 40, "application/octet-stream", ""};
     const TransferId id{"t-gate"};
 
     auto saturate =
@@ -555,7 +558,7 @@ TEST_CASE("IO failure surfaces as a failed event and the worker survives",
     TransferIoWorkerOptions io_options;
     io_options.chunk_bytes = 8;
     SendPathStack stack{ExecutorOwner::Options{}, io_options};
-    const FileMetadata file{"ghost.bin", 16, "application/octet-stream"};
+    const FileMetadata file{"ghost.bin", 16, "application/octet-stream", ""};
     const TransferId id{"t-ghost"};
     std::atomic<bool> hash_ready{false};
     std::string got_hash = "unset";
@@ -592,7 +595,7 @@ TEST_CASE("IO failure surfaces as a failed event and the worker survives",
     const TransferId id2{"t-alive"};
     std::atomic<bool> hash2{false};
     REQUIRE(stack.transfers->start_transfer(DeviceId{"beta"}, id2,
-        FileMetadata{"alive.bin", 12, "application/octet-stream"}, source,
+        FileMetadata{"alive.bin", 12, "application/octet-stream", ""}, source,
         [&](std::string) { hash2.store(true); }));
     REQUIRE(wait_until([&] { return hash2.load(); }, 5s));
     REQUIRE(wait_until([&] {
@@ -613,7 +616,7 @@ TEST_CASE("IO submission rejection after stop is visible",
     TransferIoWorkerOptions io_options;
     SendPathStack stack{ExecutorOwner::Options{}, io_options};
     const auto source = write_source(stack.root, "reject.bin", 4, 'r');
-    const FileMetadata file{"reject.bin", 4, "application/octet-stream"};
+    const FileMetadata file{"reject.bin", 4, "application/octet-stream", ""};
 
     stack.io->request_stop();  // 承载面停止（组合根关闭序内的确定性形态）
     REQUIRE(wait_until([&] { return stack.io->idle(); }, 2s));
@@ -641,7 +644,7 @@ TEST_CASE("In-flight cancellation discards the partial archive idempotently",
     io_options.chunk_bytes = 8;
     SendPathStack stack{host_options, io_options};
     const auto source = write_source(stack.root, "cancel.bin", 40, 'c');
-    const FileMetadata file{"cancel.bin", 40, "application/octet-stream"};
+    const FileMetadata file{"cancel.bin", 40, "application/octet-stream", ""};
     const TransferId id{"t-cancel"};
 
     // 确定性在飞形态（同闸门用例）：start+cancel 在泵运行前入列——cancel
@@ -688,7 +691,7 @@ TEST_CASE("Shutdown quiesces in-flight archives and stops cleanly",
     io_options.chunk_bytes = 8;
     SendPathStack stack{ExecutorOwner::Options{}, io_options};
     const auto source = write_source(stack.root, "sd.bin", 64, 's');
-    const FileMetadata file{"sd.bin", 64, "application/octet-stream"};
+    const FileMetadata file{"sd.bin", 64, "application/octet-stream", ""};
 
     REQUIRE(stack.transfers->start_transfer(
         DeviceId{"beta"}, TransferId{"t-sd"}, file, source));
@@ -725,7 +728,7 @@ TEST_CASE("flush drains IO events landing between pump quiescence and idle",
         transfer_options};
 
     // 会话建立（start 处理完毕，泵静止；active_session_count == 1）。
-    const FileMetadata file{"flush-order.bin", 4, "application/octet-stream"};
+    const FileMetadata file{"flush-order.bin", 4, "application/octet-stream", ""};
     REQUIRE(transfers.start_transfer(
         DeviceId{"beta"}, TransferId{"t-flush"}, file));
     REQUIRE(wait_until(
@@ -776,7 +779,7 @@ TEST_CASE("Two-worker pool stays schedulable under concurrent archives",
 
     const auto source_a = write_source(stack.root, "a.bin", 48, 'a');
     const auto source_b = write_source(stack.root, "b.bin", 48, 'b');
-    const FileMetadata file{"x.bin", 48, "application/octet-stream"};
+    const FileMetadata file{"x.bin", 48, "application/octet-stream", ""};
     std::atomic<int> hashes{0};
     auto on_hash = [&hashes](std::string) { hashes.fetch_add(1); };
     REQUIRE(stack.transfers->start_transfer(DeviceId{"beta"},
@@ -906,7 +909,7 @@ TEST_CASE("Send archive completes through the DB terminal job group and "
     db->mark_registered();
 
     const auto source = write_source(root, "model.bin", 40, 'd');
-    const FileMetadata file{"model.bin", 40, "application/octet-stream"};
+    const FileMetadata file{"model.bin", 40, "application/octet-stream", ""};
     const TransferId id{"t-db"};
     const auto expected_hash = sha256_hex(read_bytes(source));
 

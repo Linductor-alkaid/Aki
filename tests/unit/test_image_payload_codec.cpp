@@ -57,7 +57,7 @@ void put_bytes_field(std::vector<std::byte>& out, std::uint32_t field,
 
 ImagePayload sample() {
     return ImagePayload{
-        FileMetadata{"photo.png", 2048, "image/png"},
+        FileMetadata{"photo.png", 2048, "image/png", ""},
         TransferId{kCanonicalTransferId}};
 }
 

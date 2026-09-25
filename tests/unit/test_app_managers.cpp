@@ -137,14 +137,14 @@ Transfer make_transfer(std::string id, TransferState state) {
     transfer.id = TransferId{std::move(id)};
     transfer.sender = DeviceId{"alpha"};
     transfer.receiver = DeviceId{"beta"};
-    transfer.file = FileMetadata{"model.gguf", 1024, "application/octet-stream"};
+    transfer.file = FileMetadata{"model.gguf", 1024, "application/octet-stream", ""};
     transfer.total = 1024;
     transfer.state = state;
     return transfer;
 }
 
 FileMetadata make_file() {
-    return FileMetadata{"model.gguf", 1024, "application/octet-stream"};
+    return FileMetadata{"model.gguf", 1024, "application/octet-stream", ""};
 }
 
 // 可编程出站行为的 Adapter（任务异常 / 发送失败 / 排空期门控）。
@@ -1223,7 +1223,7 @@ TEST_CASE("Image send routes through MessageManager with terminal idempotency",
 
         // 出站：Fake 记录 SentImage（消息面仅 metadata + TransferId，RULE-05），
         // 本地行 Sent（admission 语义同文本）。
-        const FileMetadata media{"photo.png", 2048, "image/png"};
+        const FileMetadata media{"photo.png", 2048, "image/png", ""};
         REQUIRE(stack.messages->send_image(
             DeviceId{"beta"}, MessageId{"m-img"}, media, TransferId{"t-img"}));
         settle();
@@ -1287,7 +1287,7 @@ TEST_CASE("Image send routes through MessageManager with terminal idempotency",
             MessageOnlyStack stack{ExecutorOwner::Options{}, ManagerPumpOptions{},
                 /*fail_send=*/true};
             REQUIRE(stack.messages->send_image(DeviceId{"beta"}, MessageId{"m-img-f"},
-                FileMetadata{"photo.png", 1, "image/png"}, TransferId{"t-img"}));
+                FileMetadata{"photo.png", 1, "image/png", ""}, TransferId{"t-img"}));
             REQUIRE(stack.messages->flush(2s));
             drain_until_idle(stack.state_owner);
             executor::comm::Snapshot<AppState> snapshot;
@@ -1308,11 +1308,11 @@ TEST_CASE("Image send routes through MessageManager with terminal idempotency",
             const auto exceptions_before =
                 executor.get_failure_status().task_exception_count;
             REQUIRE(stack.messages->send_image(DeviceId{"beta"}, MessageId{"m-boom"},
-                FileMetadata{"photo.png", 1, "image/png"}, TransferId{"t-1"}));
+                FileMetadata{"photo.png", 1, "image/png", ""}, TransferId{"t-1"}));
             REQUIRE(stack.messages->flush(2s));
             stack.adapter.throw_on_send.store(false);
             REQUIRE(stack.messages->send_image(DeviceId{"beta"}, MessageId{"m-ok"},
-                FileMetadata{"photo.png", 1, "image/png"}, TransferId{"t-2"}));
+                FileMetadata{"photo.png", 1, "image/png", ""}, TransferId{"t-2"}));
             REQUIRE(stack.messages->flush(2s));
             REQUIRE(wait_until([&] {
                 return executor.get_failure_status().task_exception_count
@@ -1723,7 +1723,7 @@ TEST_CASE("Image message delivery and transfer terminal states stay orthogonal "
     settle();
 
     // 闸门正常通过：双侧准入成功。
-    const FileMetadata media{"photo.png", 2048, "image/png"};
+    const FileMetadata media{"photo.png", 2048, "image/png", ""};
     REQUIRE(aki::app::send_image_message_with_transfer(*stack.transfers,
         *stack.messages, DeviceId{"beta"}, MessageId{"m-img"}, media,
         TransferId{"t-img"})
