@@ -8,7 +8,7 @@
 > ——环境补跑不阻塞本里程碑文档与设计先行工作项，M4 实现工作项开工时复核
 > M3 状态；真实 Adapter、NodeSession、发现/消息/presence/重连管道均已就绪）
 > 建议发布点：v0.4.0
-> 更新日期：2026-09-24
+> 更新日期：2026-09-26
 
 ## 目标
 
@@ -119,8 +119,22 @@
   SPI source_path 签名扩展（§7.1⑤）、单测重建 9 用例（DOD-02 六项 +
   七状态机/RULE-08）、debug/release 全量 ctest 零回归 + 新测试 30 连跑
   稳定，详见验证记录 2026-09-25 条目。）
-- [ ] `M4-03` 图片消息（`SCOPE-07`）：`Image` typed 消息收发，消息面仅
-  metadata + `TransferId`，本体经传输链路（`RULE-05`）。
+- [x] `M4-03` 图片消息（`SCOPE-07`）：`Image` typed 消息收发，消息面仅
+  metadata + `TransferId`，本体经传输链路（`RULE-05`）。（2026-09-26 完成：
+  设计先行——新建 [DEC-010](../decisions/DEC-010-image-message-contract.md)
+  冻结 wire 契约（envelope `aki.image` + 载荷 schema v1 冻结字段号 protobuf-wire
+  编解码器，落 `conversation/codec/`）与收发状态联动（正交生命周期 +
+  TransferId 消费侧 join + 发送侧准入闸门 + 运行期零传导），设计 §6.1 新增/
+  §7.1①/§8.1 回填、DEC-006 冻结常量（`aki.image` + hyt1_ TransferId 双射点名）
+  与映射 4 图片面扩展；实现——`ImagePayload` 补 `transfer_id`（镜像
+  FilePayload）+ 持久化 media_transfer_id 双向读写（无迁移）、NodeSession
+  `send_image`/入站回调携带信封 type（分发收敛 Adapter 层）、SPI
+  `send_image_message`（Fake 参数化接受/真实 Adapter 全接线）、MM 图片出站
+  路由、编排层闸门 `app/application/image_flow.hpp`；测试——codec 单测 +
+  TransferId 双射/aki.image 信封往返 + Adapter 图片分发/有界拒绝计数 +
+  MM 路由/正向链/RULE-08/闸门两向失败/运行期零传导/图片路径任务异常，
+  debug/release 全量 ctest 34/34 零回归；双端图片回环因防火墙受限以 [skip]
+  证据路径降级（补跑条件登记）。详见验证记录 2026-09-26 条目。）
 - [ ] `M4-04` 发送侧真实传输链路（`SCOPE-08`）：`push_file` 发起 → 分块写入
   `.part`（blocking worker）→ 进度实时持久化 → `Completed` SHA-256 + 原子
   改名 + 回写（M2-06 作业组真实接线）。
@@ -357,3 +371,93 @@
   - 同步：本里程碑（M4-02 勾选、受阻条目引用修正、本记录、状态
     In Progress）、总计划（当前状态条目 + 更新日期 + M4 文档创建条目
     归位 + test_reconnect_loop 用例计数修正）。
+
+- 2026-09-26（`M4-03` 完成；Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0；负责人：Linductor）：
+  - 设计先行（DOD-04，M1-08 纪律；开工前调研两项结论按工程规范 6.2 落档）：
+    新建 [DEC-010](../decisions/DEC-010-image-message-contract.md)（Accepted）
+    冻结——① Image 消息 wire 契约：envelope `type="aki.image"`、
+    `delivery_mode=peer_acked`、`schema_version=1`（语义为 aki 载荷 schema
+    版本，heyaki 协议层仅校验非零）；ImagePayload 以 aki 自有 protobuf-wire
+    最小编解码器（落设计 §14 预留的 `conversation/codec/`）编码进
+    envelope.payload，冻结字段号 v1：1=name(≤512B)/2=size_bytes(varint)/
+    3=mime_type(≤128B)/4=transfer_id(`hyt1_` 规范串 31 字符)/5=stored_sha256
+    (预留 M4-04)；解码跳过未知字段（前向容忍）、缺 1~4/超限/非规范 → 有界
+    拒绝可见；载荷总量 ≤4KiB（aki 侧上限）；追加可选字段不 bump 版本、破坏性
+    变更才 bump；字符集仅长度界不校验 UTF-8（沿 aki.text 姿态）。
+    ② DeliveryState↔TransferState 联动：正交生命周期、TransferId 消费侧
+    join（`transfer.message_id` FK 保持可空不回填——M4-03 实现记录定案，
+    join 依 `message.media_transfer_id` 单向保持）、发送侧准入期闸门
+    （先传输准入、后发消息；传输准入失败 → 不发消息 + 消息行 Failed；
+    消息准入失败 → cancel_transfer）由编排层承载、运行期零传导、接收侧
+    一律 Delivered。③ SPI 形态：新增 `send_image_message` 专用方法，入站
+    复用 `on_message_received`（信封 type 分发收敛 Adapter 层）。
+    同批回填：设计 §6.1（新增「消息 wire 契约与收发状态联动」小节）+ §6
+    （ImagePayload 形状）+ §7.1①（闸门编排层归属）+ §8.1（SPI 方法清单）、
+    [DEC-006](../decisions/DEC-006-heyaki-api-contract.md)（冻结常量扩展
+    `aki.image` + 载荷 schema 字段号 + TransferId `hyt1_` 双射显式点名 +
+    映射 4 图片消息面扩展）、总计划已生效决策清单（DEC-010 条目）。
+  - 实现：`conversation/message/message_types.hpp` `ImagePayload` 补
+    `TransferId transfer_id`（镜像 FilePayload，`VideoPayload` 同构缺口按
+    §6.1 先例留待接入）；`conversation/codec/image_payload_codec.hpp`
+    （编解码 + 规范谓词 `is_canonical_transfer_id_text`——含尾部填充位
+    校验，与 heyaki `parse_transfer_id` 接受集一致，域层不依赖 third_party）；
+    `heyaki/session/runtime_node.hpp` `send_image`（MessageId/TransferId 双射
+    + codec 编码 + `hyt1_` 权威校验，任一失败 admission false）与入站回调
+    签名扩展（携带信封 type + payload 字节，不再压平 text 串）；SPI
+    `heyaki_adapter.hpp` 新增 `send_image_message`（出站第 11 面方法）；
+    Fake（参数化接受 + `sent_images()` 记录，沿 M4-02 先例不校验规范形式）
+    与真实 Adapter（`send_image` 全接线 + 入站 type 分发 + 未知 type/解码
+    失败有界拒绝计数 `inbound_rejections()` 可观测）同步；
+    `app/application/message_manager.hpp` 图片出站路由（admission 语义同
+    文本 + `transfer_admitted` 标记）；编排层闸门
+    `app/application/image_flow.hpp`（`send_image_message_with_transfer`，
+    唯一传导点，不创建任务不触碰 Store）；持久化 Image 分支
+    `media_transfer_id` 列双向读写（`repositories.cpp`，列已存在无迁移）。
+    入站回调签名扩展牵动的调用点同批更新（heyaki_node_adapter 构造/析构
+    中和、test_message_loopback、test_heyaki_node_adapter）。
+  - 测试（网络无关单测为主）：`test_image_payload_codec`（新二进制：往返 +
+    截断逐长度扫描/缺字段逐项/超限/非规范 transfer_id 四形态/未知字段与
+    预留字段 5 跳过/重复字段首现确定性/总量上限/非法 wire）；`test_heyaki_message`
+    （增补：TransferId 双射 + codec 谓词对 heyaki 编码器产物的交叉验证 +
+    非规范六形态双拒绝 + aki.image 信封 encode/parse 往返）；`test_heyaki_node_adapter`
+    （增补：图片入站分发逐字段断言/解码失败与未知 type 有界拒绝计数/无 sink
+    静默/send_image_message 出站有界校验）；`test_app_managers`（增补 3 用例：
+    图片出站路由 + DeliveryState 正向链 + 迟到失败回报 RULE-08 + 接收侧
+    Delivered；Adapter admission 失败 → Failed + 图片路径任务异常（DOD-02
+    任务异常项沿图片泵路径）自愈；闸门两向失败路径——传输准入失败
+    （容量 1 收件箱确定性占满）→ Fake 零 send 调用 + 消息行 Failed、消息
+    准入失败 → cancel_transfer 到达 Adapter；运行期零传导——消息 Delivered
+    与传输 Failed 正交 + 反向到达顺序解耦）；`test_persistence_repository`
+    （Image 载荷 transfer_id 往返断言）。
+  - 验证（本会话执行）：MSVC debug 全量 `ctest --test-dir build/debug -C
+    Debug` 34/34 通过（既有 32 项零回归 + 新 2 项；最终代码状态下连续 9
+    轮全量绿）；release 全量 `ctest --test-dir build/release -C Release`
+    34/34 通过（连续 8 轮全量绿）；
+    test_app_managers 随机顺序 10+8 连跑 + 新/改测试二进制（codec/message/
+    node_adapter/repository）随机顺序各 5 连跑 +
+    test_transfer_session_manager/test_discovery_pairing 各 8 连跑零失败零
+    崩溃；变更文档相对链接核验 83 条 0 断链。如实登记：最终代码状态前的一次
+    背靠背全量调用（debug 后接 release）出现过一次单测失败，其日志被后续
+    运行覆盖、未定位于具体用例（疑为双套件紧邻运行的系统负载抖动）；此后
+    连续 17 轮全量与上述定向压力全部绿，未复现。ASAN/UBSAN/TSAN 随本 PR CI
+    （Linux 四档门禁）。
+  - DOD-02 说明：图片路径未新增并发原语——出站经 MM/TM 既有单飞排空泵
+    （DEC-008 模式，六项已随 M1-05/M4-02 既有用例覆盖），本项新增覆盖
+    图片路径上的正常完成（路由用例）、任务异常（图片泵路径用例）、提交
+    拒绝（闸门用例以收件箱满为触发路径之一）、shutdown（用例内
+    fully_stopped 断言 + 会话先取消回收纪律）；执行中取消/超时沿泵与会话
+    路径由既有用例覆盖（无图片特有分支——图片不派生自有任务）。
+  - 如实降级（沿 M3-04~09/M4-02 纪律）：双端图片消息回环
+    `test_image_message_loopback`（新单用例二进制）因本机防火墙拦截至端
+    TLS（与 M3-05 文本回环同环境限制）以 `[skip] pairing handshake blocked
+    (firewall)` 证据路径通过——网络无关半边（编解码/双射/信封/分发/路由/
+    联动）已全部验证；补跑条件：防火墙放行入站 TCP 或 LAN 双端真机环境
+    重跑（与 M3-04~08 登记的补跑条件同批执行）。文本回环 test_message_
+    loopback 同样 [skip]（既有状态，签名适配后行为不变）。M4-06 回环验证
+    按本契约补全链路断言（图片 + 传输 + 重启恢复一致），环境受限处置不变。
+  - 已知边角登记（DEC-010②，非状态规则）：发送方消息 ack 失败但文件已
+    推完 → 接收侧孤儿传输行；接收侧单侧到达（消息无传输行/传输无消息卡）
+    ——M5 UI 兜底与后续 GC 议题。
+  - 同步：本里程碑（M4-03 勾选、本记录）、总计划（当前状态条目 + DEC-010
+    决策清单条目）、DEC-010/DEC-006/设计 §6/§6.1/§7.1/§8.1。

@@ -14,10 +14,19 @@
 //     关闭钩子顺序 → fully_stopped）；
 //   - 迟到事件不复活终态（RULE-08，退出-3）：迟到的进度/终态宣告、迟到的
 //     送达/发送失败回报经 Manager 路由后被状态机应用层拒绝（updates_rejected）。
+//   - M4-03 图片面（设计 §6.1/DEC-010）：出站路由与 DeliveryState 正向链/
+//     终态幂等、图片路径任务异常（DOD-02）、发送侧准入闸门两向失败路径
+//     （先传输准入、后发消息——传输准入失败零 send + 消息行 Failed；消息
+//     准入失败 cancel_transfer 到达 Adapter）、闸门 enqueue 级判据（重复
+//     TransferId 是 handler 级拒绝、闸门不可见——消息照常发送）、两级补偿
+//     降级（补偿 Failed 行/补偿取消被收件箱拒 → RowLost/CancelLost 经编排
+//     返回值可见，AGENTS 规则 10）、运行期零传导（消息 Delivered
+//     与传输终态正交、接收侧一律 Delivered）。
 //
 // 每个用例持有独立的 ExecutorOwner（AGENTS 规则 7/8；设计第 8.2 节落点说明：
 // 被测对象即组合根的一部分，EXEC-01 五步由用例显式驱动）。并发入队者经
 // executor 任务承载（AGENTS 规则 2）；Catch2 断言只在主线程。
+#include "app/application/image_flow.hpp"
 #include "app/application/router_sink.hpp"
 #include "app/lifecycle/executor_owner.hpp"
 #include "app/state/app_state_owner.hpp"
@@ -160,9 +169,13 @@ struct GateState {
 struct StubAdapter final : HeyakiAdapter {
     std::shared_ptr<GateState> send_gate;      // 设置后 send_text_message 阻塞。
     std::shared_ptr<GateState> discovery_gate; // 设置后 start_discovery 阻塞。
+    std::shared_ptr<GateState> transfer_gate;  // 设置后 start_file_transfer 阻塞
+                                               //（M4-03 闸门用例：占住 TM 泵）。
     std::atomic<bool> throw_on_send{false};
     std::atomic<bool> fail_send{false};
     std::atomic<int> send_entered{0};
+    std::atomic<int> transfer_entered{0};  // start_file_transfer 已进入（闸门
+                                           // 用例的确定性同步点）。
 
     struct SentText {
         DeviceId to;
@@ -170,6 +183,18 @@ struct StubAdapter final : HeyakiAdapter {
         std::string text;
     };
     std::vector<SentText> sent;
+
+    struct SentImage {
+        DeviceId to;
+        MessageId message_id;
+        FileMetadata file;
+        TransferId transfer_id;
+    };
+    std::vector<SentImage> sent_images;
+    std::vector<TransferId> cancelled_transfers;  // M4-03 闸门用例断言面
+                                                  //（仅泵静止后读取）。
+    std::atomic<int> cancel_entered{0};  // cancel_transfer 已进入（跨上下文
+                                         // 同步点；vector 本体不加锁）。
 
     void set_sink(HeyakiAdapterSink*) noexcept {}
 
@@ -198,13 +223,38 @@ struct StubAdapter final : HeyakiAdapter {
         return true;
     }
 
+    // 图片出站沿文本同型语义（M4-03）：gate/throw/fail 行为对称。
+    bool send_image_message(const DeviceId& to, const MessageId& message_id,
+        const FileMetadata& file, const TransferId& transfer_id) override {
+        send_entered.fetch_add(1);
+        if (send_gate) {
+            send_gate->await();
+        }
+        if (throw_on_send.load()) {
+            throw std::runtime_error("boom");
+        }
+        if (fail_send.load()) {
+            return false;
+        }
+        sent_images.push_back(SentImage{to, message_id, file, transfer_id});
+        return true;
+    }
+
     bool start_file_transfer(const DeviceId&, const TransferId&,
         const FileMetadata&, const std::filesystem::path&) override {
+        transfer_entered.fetch_add(1);
+        if (transfer_gate) {
+            transfer_gate->await();
+        }
         return true;
     }
     bool pause_transfer(const TransferId&) override { return true; }
     bool resume_transfer(const TransferId&) override { return true; }
-    bool cancel_transfer(const TransferId&) override { return true; }
+    bool cancel_transfer(const TransferId& transfer_id) override {
+        cancel_entered.fetch_add(1);
+        cancelled_transfers.push_back(transfer_id);
+        return true;
+    }
 };
 
 // ---- 组合根（设计第 8.3 节装配顺序）：ExecutorOwner.initialize → AppStateOwner
@@ -1137,6 +1187,623 @@ TEST_CASE("Send-failure report maps to Failed and a late report cannot revive De
     REQUIRE(messages.enqueue_message_send_failed(ConversationId{"conv-beta"}, MessageId{""}));
     REQUIRE(messages.flush(2s));
     REQUIRE(messages.stats().handler_rejections == 1);
+
+    const auto report = stack.host.executor_owner.shutdown();
+    REQUIRE(report.fully_stopped());
+}
+
+// ---- M4-03：图片消息收发面（设计 §6.1；DEC-010）----
+
+// 图片出站路由 + DeliveryState 正向链（Queued->Sent->Delivered）+ 终态幂等
+//（RULE-08）+ 任务异常沿图片泵路径可见（DOD-02：正常完成 + 任务异常）。
+TEST_CASE("Image send routes through MessageManager with terminal idempotency",
+    "[unit][managers][image][dod02]") {
+    SECTION("happy path, delivery chain, late-failure idempotency") {
+        AppStack stack;
+        auto& owner = stack.state_owner;
+        auto& fake = stack.adapter;
+        const auto settle = [&] {
+            quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+                *stack.transfers);
+        };
+
+        REQUIRE(stack.conversations->ensure_conversation(
+            DeviceId{"local-1"}, DeviceId{"beta"}));
+        settle();
+
+        // 接收侧的 sender 会话也先行（FK 前置校验：MM 按 sender 派生归属）。
+        REQUIRE(stack.conversations->ensure_conversation(
+            DeviceId{"local-1"}, DeviceId{"alpha"}));
+        settle();
+
+        // 出站：Fake 记录 SentImage（消息面仅 metadata + TransferId，RULE-05），
+        // 本地行 Sent（admission 语义同文本）。
+        const FileMetadata media{"photo.png", 2048, "image/png"};
+        REQUIRE(stack.messages->send_image(
+            DeviceId{"beta"}, MessageId{"m-img"}, media, TransferId{"t-img"}));
+        settle();
+        {
+            executor::comm::Snapshot<AppState> snapshot;
+            REQUIRE(owner.try_load_snapshot(snapshot));
+            REQUIRE(snapshot.value.messages.messages.size() == 1);
+            const auto& row = snapshot.value.messages.messages.front();
+            REQUIRE(row.type == MessageType::Image);
+            REQUIRE(row.state == DeliveryState::Sent);
+            const auto* image =
+                std::get_if<aki::conversation::ImagePayload>(&row.payload);
+            REQUIRE(image != nullptr);
+            REQUIRE(image->media == media);
+            REQUIRE(image->transfer_id == TransferId{"t-img"});
+        }
+        REQUIRE(fake.sent_images().size() == 1);
+        REQUIRE(fake.sent_images().front().transfer_id == TransferId{"t-img"});
+        REQUIRE(fake.sent_texts().empty());
+
+        // 送达回报：Sent -> Delivered（正向链对 Image 成立）。
+        REQUIRE(fake.inject_message_delivered(
+            ConversationId{"conv-beta"}, MessageId{"m-img"}));
+        settle();
+
+        // 迟到失败回报：Delivered -> Failed 非法 → 应用层拒绝（RULE-08）。
+        const auto rejected_before = owner.stats().updates_rejected;
+        REQUIRE(stack.router->on_message_send_failed(
+            ConversationId{"conv-beta"}, MessageId{"m-img"}));
+        settle();
+        {
+            executor::comm::Snapshot<AppState> snapshot;
+            REQUIRE(owner.try_load_snapshot(snapshot));
+            REQUIRE(snapshot.value.messages.messages.front().state
+                == DeliveryState::Delivered);
+            REQUIRE(owner.stats().updates_rejected == rejected_before + 1);
+        }
+
+        // 接收侧：入站 Image typed 消息一律记 Delivered（§6.1② 接收侧语义）。
+        Message inbound = make_message("m-img-in");
+        inbound.type = MessageType::Image;
+        inbound.payload = aki::conversation::ImagePayload{media, TransferId{"t-img"}};
+        REQUIRE(fake.inject_message_received(std::move(inbound)));
+        settle();
+        {
+            executor::comm::Snapshot<AppState> snapshot;
+            REQUIRE(owner.try_load_snapshot(snapshot));
+            REQUIRE(snapshot.value.messages.messages.size() == 2);
+            const auto& row = snapshot.value.messages.messages.back();
+            REQUIRE(row.id == MessageId{"m-img-in"});
+            REQUIRE(row.state == DeliveryState::Delivered);
+        }
+
+        const auto report = stack.host.executor_owner.shutdown();
+        REQUIRE(report.fully_stopped());
+    }
+
+    SECTION("adapter admission failure records Failed; throw self-heals") {
+        // Adapter admission 拒绝（闸门外的普通发送失败面）：Queued -> Failed。
+        {
+            MessageOnlyStack stack{ExecutorOwner::Options{}, ManagerPumpOptions{},
+                /*fail_send=*/true};
+            REQUIRE(stack.messages->send_image(DeviceId{"beta"}, MessageId{"m-img-f"},
+                FileMetadata{"photo.png", 1, "image/png"}, TransferId{"t-img"}));
+            REQUIRE(stack.messages->flush(2s));
+            drain_until_idle(stack.state_owner);
+            executor::comm::Snapshot<AppState> snapshot;
+            REQUIRE(stack.state_owner.try_load_snapshot(snapshot));
+            REQUIRE(snapshot.value.messages.messages.front().state
+                == DeliveryState::Failed);
+            REQUIRE(stack.adapter.sent_images.empty());
+
+            const auto report = stack.host.executor_owner.shutdown();
+            REQUIRE(report.fully_stopped());
+        }
+        // 图片路径任务异常：Adapter 抛出经排空 future 可见（AGENTS 规则 3/9），
+        // 泵自愈后下一条图片消息正常处理（DOD-02 六项之任务异常沿图片路径）。
+        {
+            MessageOnlyStack stack{ExecutorOwner::Options{}, ManagerPumpOptions{},
+                /*fail_send=*/false, /*throw_send=*/true};
+            auto& executor = stack.host.executor_owner.executor();
+            const auto exceptions_before =
+                executor.get_failure_status().task_exception_count;
+            REQUIRE(stack.messages->send_image(DeviceId{"beta"}, MessageId{"m-boom"},
+                FileMetadata{"photo.png", 1, "image/png"}, TransferId{"t-1"}));
+            REQUIRE(stack.messages->flush(2s));
+            stack.adapter.throw_on_send.store(false);
+            REQUIRE(stack.messages->send_image(DeviceId{"beta"}, MessageId{"m-ok"},
+                FileMetadata{"photo.png", 1, "image/png"}, TransferId{"t-2"}));
+            REQUIRE(stack.messages->flush(2s));
+            REQUIRE(wait_until([&] {
+                return executor.get_failure_status().task_exception_count
+                    >= exceptions_before + 1;
+            }, 2s));
+            REQUIRE(stack.adapter.sent_images.size() == 1);
+            REQUIRE(stack.adapter.sent_images.front().file.name == "photo.png");
+
+            const auto report = stack.host.executor_owner.shutdown();
+            REQUIRE(report.fully_stopped());
+        }
+    }
+}
+
+// 发送侧准入闸门（§6.1②：先传输准入、后发消息；两向失败路径）。
+TEST_CASE("Image send flow gates on transfer admission before the message",
+    "[unit][managers][image][flow]") {
+    SECTION("transfer admission failure: no send, message row Failed") {
+        // 占住 TM 泵 + 收件箱：transfer_gate 关闭 → 第 1 条占住泵、第 2 条占住
+        // 收件箱（容量 1），第 3 条 enqueue 拒绝——闸门第 1 步失败的确定性触发。
+        TransferManagerOptions transfer_options;
+        transfer_options.sender = DeviceId{"local-1"};
+        transfer_options.pump.inbox_capacity = 1;
+        transfer_options.session_poll_interval = 2ms;
+        transfer_options.session_reap_wait = 1s;
+        BasicStack<StubAdapter> stack{ExecutorOwner::Options{}, ManagerPumpOptions{},
+            {}, MessageManagerOptions{}, transfer_options};
+        auto& owner = stack.state_owner;
+        auto gate = std::make_shared<GateState>();
+        stack.adapter.transfer_gate = gate;
+
+        // DEC-009 ②：出站消息远端会话先行（FK 前置校验）。
+        REQUIRE(stack.conversations->ensure_conversation(
+            DeviceId{"local-1"}, DeviceId{"beta"}));
+        REQUIRE(stack.conversations->flush(2s));
+
+        REQUIRE(stack.transfers->start_transfer(
+            DeviceId{"beta"}, TransferId{"t-occ-1"}, make_file()));
+        // 等泵真实占住（item 已离箱、阻塞在 Adapter 门内）再投第二条——
+        // 否则第二条会与第一条竞态争用唯一收件箱槽位。
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.transfer_entered.load() == 1; }, 2s));
+        REQUIRE(stack.transfers->start_transfer(
+            DeviceId{"beta"}, TransferId{"t-occ-2"}, make_file()));
+
+        const auto result = aki::app::send_image_message_with_transfer(
+            *stack.transfers, *stack.messages, DeviceId{"beta"},
+            MessageId{"m-gate-1"}, make_file(), TransferId{"t-flow-1"});
+        REQUIRE(result == aki::app::ImageSendFlowResult::TransferAdmissionFailed);
+
+        gate->open_gate();
+        // 容量 1 的收件箱在泵取走第二条前不接受 flush 哨兵：等第二条真实
+        // 进入 Adapter（已离箱）再排空，消除竞态。
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.transfer_entered.load() == 2; }, 2s));
+        REQUIRE(stack.transfers->flush(2s));
+        REQUIRE(stack.messages->flush(2s));
+        quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+            *stack.transfers);
+        {
+            // 消息行 Failed（Queued -> Failed 合法边）；Adapter 零 send 调用
+            //（闸门断言对象，§6.1②）。
+            executor::comm::Snapshot<AppState> snapshot;
+            REQUIRE(owner.try_load_snapshot(snapshot));
+            REQUIRE(snapshot.value.messages.messages.size() == 1);
+            REQUIRE(snapshot.value.messages.messages.front().id
+                == MessageId{"m-gate-1"});
+            REQUIRE(snapshot.value.messages.messages.front().state
+                == DeliveryState::Failed);
+        }
+        REQUIRE(stack.adapter.sent_images.empty());
+        REQUIRE(stack.adapter.sent.empty());
+
+        // 关闭清理：两个占用会话回收（EXEC-01 关闭纪律）；容量 1 收件箱下
+        // 逐条取消并以原子计数同步（取消离箱后 flush 哨兵才可入列）。
+        REQUIRE(stack.transfers->cancel_transfer(TransferId{"t-occ-1"}));
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.cancel_entered.load() == 1; }, 2s));
+        REQUIRE(stack.transfers->flush(2s));
+        REQUIRE(stack.transfers->cancel_transfer(TransferId{"t-occ-2"}));
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.cancel_entered.load() == 2; }, 2s));
+        REQUIRE(stack.transfers->flush(2s));
+
+        const auto report = stack.host.executor_owner.shutdown();
+        REQUIRE(report.fully_stopped());
+    }
+
+    SECTION("message admission failure: transfer cancelled") {
+        // 占住 MM 泵 + 收件箱（send_gate 关闭，容量 1）→ 闸门第 2 步失败。
+        ManagerPumpOptions message_pump;
+        message_pump.name = "aki.mm";
+        message_pump.inbox_capacity = 1;
+        MessageManagerOptions message_options;
+        message_options.pump = message_pump;
+        message_options.local_device = DeviceId{"local-1"};
+        TransferManagerOptions transfer_options;
+        transfer_options.sender = DeviceId{"local-1"};
+        transfer_options.session_poll_interval = 2ms;
+        transfer_options.session_reap_wait = 1s;
+        BasicStack<StubAdapter> stack{ExecutorOwner::Options{}, ManagerPumpOptions{},
+            {}, message_options, transfer_options};
+        auto& owner = stack.state_owner;
+        auto gate = std::make_shared<GateState>();
+        stack.adapter.send_gate = gate;
+
+        // DEC-009 ②：出站消息远端会话先行（FK 前置校验）。
+        REQUIRE(stack.conversations->ensure_conversation(
+            DeviceId{"local-1"}, DeviceId{"beta"}));
+        REQUIRE(stack.conversations->flush(2s));
+
+        REQUIRE(stack.messages->send_text(DeviceId{"beta"}, MessageId{"m-occ-1"}, "a"));
+        REQUIRE(wait_until([&] { return stack.adapter.send_entered.load() == 1; }, 2s));
+        REQUIRE(stack.messages->send_text(DeviceId{"beta"}, MessageId{"m-occ-2"}, "b"));
+
+        const auto result = aki::app::send_image_message_with_transfer(
+            *stack.transfers, *stack.messages, DeviceId{"beta"},
+            MessageId{"m-gate-2"}, make_file(), TransferId{"t-flow-2"});
+        REQUIRE(result == aki::app::ImageSendFlowResult::MessageAdmissionFailed);
+
+        gate->open_gate();
+        REQUIRE(stack.messages->flush(2s));
+        REQUIRE(stack.transfers->flush(2s));
+        quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+            *stack.transfers);
+        {
+            // 图片消息从未进入系统（无 m-gate-2 行）；cancel_transfer 到达
+            // Adapter（闸门第 2 步的因果链断言——传输行终态经标准事件路径
+            // 推进，§7.1②）。
+            executor::comm::Snapshot<AppState> snapshot;
+            REQUIRE(owner.try_load_snapshot(snapshot));
+            for (const auto& message : snapshot.value.messages.messages) {
+                REQUIRE(message.id != MessageId{"m-gate-2"});
+            }
+        }
+        bool cancel_seen = false;
+        for (const auto& id : stack.adapter.cancelled_transfers) {
+            if (id == TransferId{"t-flow-2"}) {
+                cancel_seen = true;
+            }
+        }
+        REQUIRE(cancel_seen);
+        REQUIRE(stack.adapter.sent_images.empty());
+
+        // 关闭清理：t-flow-2 会话在泵内已派生（StartTransferWork 先于 Cancel），
+        // cancel 已入列；会话表由泵内取消回收，shutdown 钩子由栈析构兜底。
+        REQUIRE(stack.transfers->request_cancel_all());
+        REQUIRE(stack.transfers->flush(2s));
+
+        const auto report = stack.host.executor_owner.shutdown();
+        REQUIRE(report.fully_stopped());
+    }
+
+    SECTION("duplicate transfer id: gate blind at enqueue, handler rejects") {
+        // 重复 TransferId 的业务拒绝发生在 TM 排空 handler（用例 5b 语义：
+        // enqueue 返回值只代表收件箱受理），闸门不可见——编排返回 Submitted、
+        // 消息照常发送；后置结果按 §6.1② 如实断言（不新增传输行、不替换旧
+        // 会话、handler_rejections 可见）。
+        TransferManagerOptions transfer_options;
+        transfer_options.sender = DeviceId{"local-1"};
+        transfer_options.session_poll_interval = 2ms;
+        transfer_options.session_reap_wait = 1s;
+        BasicStack<StubAdapter> stack{ExecutorOwner::Options{}, ManagerPumpOptions{},
+            {}, MessageManagerOptions{}, transfer_options};
+        auto& owner = stack.state_owner;
+
+        // DEC-009 ②：出站消息远端会话先行（FK 前置校验）。
+        REQUIRE(stack.conversations->ensure_conversation(
+            DeviceId{"local-1"}, DeviceId{"beta"}));
+        REQUIRE(stack.conversations->flush(2s));
+
+        REQUIRE(stack.transfers->start_transfer(
+            DeviceId{"beta"}, TransferId{"t-dup"}, make_file()));
+        REQUIRE(stack.transfers->flush(2s));
+        REQUIRE(wait_until(
+            [&] { return stack.transfers->active_session_count() == 1; }, 2s));
+
+        const auto result = aki::app::send_image_message_with_transfer(
+            *stack.transfers, *stack.messages, DeviceId{"beta"},
+            MessageId{"m-dup"}, make_file(), TransferId{"t-dup"});
+        // 闸门只看 enqueue admission：双侧收件箱受理 → Submitted（消息已发）。
+        REQUIRE(result == aki::app::ImageSendFlowResult::Submitted);
+
+        REQUIRE(stack.transfers->flush(2s));
+        REQUIRE(stack.messages->flush(2s));
+        quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+            *stack.transfers);
+        {
+            executor::comm::Snapshot<AppState> snapshot;
+            REQUIRE(owner.try_load_snapshot(snapshot));
+            // 消息照常发送并记录 Sent（引用既有 TransferId）。
+            REQUIRE(snapshot.value.messages.messages.size() == 1);
+            REQUIRE(snapshot.value.messages.messages.front().id
+                == MessageId{"m-dup"});
+            REQUIRE(snapshot.value.messages.messages.front().state
+                == DeliveryState::Sent);
+            // 重复发起不新增传输行、不替换旧会话：仍是一条 Queued。
+            REQUIRE(snapshot.value.transfers.transfers.size() == 1);
+            REQUIRE(snapshot.value.transfers.transfers.front().state
+                == TransferState::Queued);
+        }
+        REQUIRE(stack.transfers->stats().handler_rejections == 1);
+        REQUIRE(stack.transfers->active_session_count() == 1);
+        REQUIRE(stack.adapter.sent_images.size() == 1);
+
+        // 关闭清理：唯一会话回收。
+        REQUIRE(stack.transfers->cancel_transfer(TransferId{"t-dup"}));
+        REQUIRE(stack.transfers->flush(2s));
+
+        const auto report = stack.host.executor_owner.shutdown();
+        REQUIRE(report.fully_stopped());
+    }
+
+    SECTION("transfer admission failure with full MM inbox: failed row lost") {
+        // 两级降级①（AGENTS 规则 10）：TM enqueue 拒绝触发补偿 Failed 行写入，
+        // 但 MM 收件箱也满 → 补偿写入被拒：无消息行。降级经返回值
+        // TransferAdmissionFailedRowLost 可见，不 (void) 吞掉。
+        ManagerPumpOptions message_pump;
+        message_pump.name = "aki.mm";
+        message_pump.inbox_capacity = 1;
+        MessageManagerOptions message_options;
+        message_options.pump = message_pump;
+        message_options.local_device = DeviceId{"local-1"};
+        TransferManagerOptions transfer_options;
+        transfer_options.sender = DeviceId{"local-1"};
+        transfer_options.pump.inbox_capacity = 1;
+        transfer_options.session_poll_interval = 2ms;
+        transfer_options.session_reap_wait = 1s;
+        BasicStack<StubAdapter> stack{ExecutorOwner::Options{}, ManagerPumpOptions{},
+            {}, message_options, transfer_options};
+        auto& owner = stack.state_owner;
+        auto transfer_gate = std::make_shared<GateState>();
+        auto send_gate = std::make_shared<GateState>();
+        stack.adapter.transfer_gate = transfer_gate;
+        stack.adapter.send_gate = send_gate;
+
+        // DEC-009 ②：出站消息远端会话先行（FK 前置校验）。
+        REQUIRE(stack.conversations->ensure_conversation(
+            DeviceId{"local-1"}, DeviceId{"beta"}));
+        REQUIRE(stack.conversations->flush(2s));
+
+        // 双侧占位：TM 泵 + 收件箱、MM 泵 + 收件箱（容量各 1）。
+        REQUIRE(stack.transfers->start_transfer(
+            DeviceId{"beta"}, TransferId{"t-occ-1"}, make_file()));
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.transfer_entered.load() == 1; }, 2s));
+        REQUIRE(stack.transfers->start_transfer(
+            DeviceId{"beta"}, TransferId{"t-occ-2"}, make_file()));
+        REQUIRE(stack.messages->send_text(DeviceId{"beta"}, MessageId{"m-occ-1"}, "a"));
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.send_entered.load() == 1; }, 2s));
+        REQUIRE(stack.messages->send_text(DeviceId{"beta"}, MessageId{"m-occ-2"}, "b"));
+
+        const auto result = aki::app::send_image_message_with_transfer(
+            *stack.transfers, *stack.messages, DeviceId{"beta"},
+            MessageId{"m-gate-3"}, make_file(), TransferId{"t-flow-3"});
+        REQUIRE(result
+            == aki::app::ImageSendFlowResult::TransferAdmissionFailedRowLost);
+
+        transfer_gate->open_gate();
+        send_gate->open_gate();
+        // 容量 1 的收件箱在泵取走第二条前不接受 flush 哨兵：等双侧第二条真实
+        // 进入 Adapter（已离箱）再排空，消除竞态。
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.transfer_entered.load() == 2; }, 2s));
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.send_entered.load() == 2; }, 2s));
+        REQUIRE(stack.transfers->flush(2s));
+        REQUIRE(stack.messages->flush(2s));
+        quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+            *stack.transfers);
+        {
+            // 降级①后置结果：无 m-gate-3 消息行（只有两条占位文本）；Adapter
+            // 零图片 send 调用（闸门断言对象不变，§6.1②）。
+            executor::comm::Snapshot<AppState> snapshot;
+            REQUIRE(owner.try_load_snapshot(snapshot));
+            REQUIRE(snapshot.value.messages.messages.size() == 2);
+            for (const auto& message : snapshot.value.messages.messages) {
+                REQUIRE(message.id != MessageId{"m-gate-3"});
+            }
+        }
+        REQUIRE(stack.adapter.sent_images.empty());
+
+        // 关闭清理：两个占用会话回收（容量 1 收件箱逐条取消同步，同第 1 节）。
+        REQUIRE(stack.transfers->cancel_transfer(TransferId{"t-occ-1"}));
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.cancel_entered.load() == 1; }, 2s));
+        REQUIRE(stack.transfers->flush(2s));
+        REQUIRE(stack.transfers->cancel_transfer(TransferId{"t-occ-2"}));
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.cancel_entered.load() == 2; }, 2s));
+        REQUIRE(stack.transfers->flush(2s));
+
+        const auto report = stack.host.executor_owner.shutdown();
+        REQUIRE(report.fully_stopped());
+    }
+
+    SECTION("message admission failure with full TM inbox: cancel lost") {
+        // 两级降级②（AGENTS 规则 10）：MM enqueue 拒绝触发补偿 cancel_transfer，
+        // 但 TM 收件箱被本编排刚受理的 StartTransferWork 占满（容量 1）→ 补偿
+        // 取消被拒：传输持续在飞、传输行停留 Queued。降级经返回值
+        // MessageAdmissionFailedCancelLost 可见（同步拒绝，无竞态）。
+        ManagerPumpOptions message_pump;
+        message_pump.name = "aki.mm";
+        message_pump.inbox_capacity = 1;
+        MessageManagerOptions message_options;
+        message_options.pump = message_pump;
+        message_options.local_device = DeviceId{"local-1"};
+        TransferManagerOptions transfer_options;
+        transfer_options.sender = DeviceId{"local-1"};
+        transfer_options.pump.inbox_capacity = 1;
+        transfer_options.session_poll_interval = 2ms;
+        transfer_options.session_reap_wait = 1s;
+        BasicStack<StubAdapter> stack{ExecutorOwner::Options{}, ManagerPumpOptions{},
+            {}, message_options, transfer_options};
+        auto& owner = stack.state_owner;
+        auto transfer_gate = std::make_shared<GateState>();
+        auto send_gate = std::make_shared<GateState>();
+        stack.adapter.transfer_gate = transfer_gate;
+        stack.adapter.send_gate = send_gate;
+
+        // DEC-009 ②：出站消息远端会话先行（FK 前置校验）。
+        REQUIRE(stack.conversations->ensure_conversation(
+            DeviceId{"local-1"}, DeviceId{"beta"}));
+        REQUIRE(stack.conversations->flush(2s));
+
+        // 占位：TM 泵阻塞在 Adapter 门内（t-occ-1 已离箱、收件箱空）；MM 泵 +
+        // 收件箱占满。闸门第 1 步受理的 t-flow-4 占据 TM 唯一收件箱槽位 →
+        // 补偿 cancel_transfer 对满箱再拒（同步 enqueue 拒绝，确定性可达）。
+        REQUIRE(stack.transfers->start_transfer(
+            DeviceId{"beta"}, TransferId{"t-occ-1"}, make_file()));
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.transfer_entered.load() == 1; }, 2s));
+        REQUIRE(stack.messages->send_text(DeviceId{"beta"}, MessageId{"m-occ-1"}, "a"));
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.send_entered.load() == 1; }, 2s));
+        REQUIRE(stack.messages->send_text(DeviceId{"beta"}, MessageId{"m-occ-2"}, "b"));
+
+        const auto result = aki::app::send_image_message_with_transfer(
+            *stack.transfers, *stack.messages, DeviceId{"beta"},
+            MessageId{"m-gate-4"}, make_file(), TransferId{"t-flow-4"});
+        REQUIRE(result
+            == aki::app::ImageSendFlowResult::MessageAdmissionFailedCancelLost);
+
+        transfer_gate->open_gate();
+        send_gate->open_gate();
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.transfer_entered.load() == 2; }, 2s));
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.send_entered.load() == 2; }, 2s));
+        REQUIRE(stack.transfers->flush(2s));
+        REQUIRE(stack.messages->flush(2s));
+        quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+            *stack.transfers);
+        {
+            // 降级②后置结果：补偿取消丢失——t-flow-4 传输行照常落库并停留
+            // Queued（非 Cancelled）；m-gate-4 消息行未产生。
+            executor::comm::Snapshot<AppState> snapshot;
+            REQUIRE(owner.try_load_snapshot(snapshot));
+            const auto& transfer_rows = snapshot.value.transfers.transfers;
+            REQUIRE(transfer_rows.size() == 2);
+            const Transfer* flow_row = nullptr;
+            for (const auto& row : transfer_rows) {
+                if (row.id == TransferId{"t-flow-4"}) {
+                    flow_row = &row;
+                }
+            }
+            REQUIRE(flow_row != nullptr);
+            REQUIRE(flow_row->state == TransferState::Queued);
+            for (const auto& message : snapshot.value.messages.messages) {
+                REQUIRE(message.id != MessageId{"m-gate-4"});
+            }
+        }
+        bool cancel_seen = false;
+        for (const auto& id : stack.adapter.cancelled_transfers) {
+            if (id == TransferId{"t-flow-4"}) {
+                cancel_seen = true;
+            }
+        }
+        REQUIRE(!cancel_seen);
+        // 会话在飞：t-occ-1 与 t-flow-4 双会话派生（补偿取消丢失的直接后果）。
+        REQUIRE(wait_until(
+            [&] { return stack.transfers->active_session_count() == 2; }, 2s));
+
+        // 关闭清理：容量 1 收件箱下逐条取消并以原子计数同步（同第 1 节——
+        // request_cancel_all + flush 会因哨兵无法入满箱而竞态）。
+        REQUIRE(stack.transfers->cancel_transfer(TransferId{"t-occ-1"}));
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.cancel_entered.load() == 1; }, 2s));
+        REQUIRE(stack.transfers->flush(2s));
+        REQUIRE(stack.transfers->cancel_transfer(TransferId{"t-flow-4"}));
+        REQUIRE(wait_until(
+            [&] { return stack.adapter.cancel_entered.load() == 2; }, 2s));
+        REQUIRE(stack.transfers->flush(2s));
+
+        const auto report = stack.host.executor_owner.shutdown();
+        REQUIRE(report.fully_stopped());
+    }
+}
+
+// 运行期零传导（§6.1②）：peer ack 事件与传输终态事件互不跨通道回写。
+TEST_CASE("Image message delivery and transfer terminal states stay orthogonal "
+    "(zero runtime conduction)",
+    "[unit][managers][image]") {
+    AppStack stack;
+    auto& owner = stack.state_owner;
+    auto& fake = stack.adapter;
+    const auto settle = [&] {
+        quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+            *stack.transfers);
+    };
+
+    REQUIRE(stack.conversations->ensure_conversation(
+        DeviceId{"local-1"}, DeviceId{"beta"}));
+    // 接收侧消息的 sender 会话先行（FK 前置校验：MM 按 sender 派生归属）。
+    REQUIRE(stack.conversations->ensure_conversation(
+        DeviceId{"local-1"}, DeviceId{"alpha"}));
+    settle();
+
+    // 闸门正常通过：双侧准入成功。
+    const FileMetadata media{"photo.png", 2048, "image/png"};
+    REQUIRE(aki::app::send_image_message_with_transfer(*stack.transfers,
+        *stack.messages, DeviceId{"beta"}, MessageId{"m-img"}, media,
+        TransferId{"t-img"})
+        == aki::app::ImageSendFlowResult::Submitted);
+    settle();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.messages.messages.size() == 1);
+        REQUIRE(snapshot.value.transfers.transfers.size() == 1);
+        REQUIRE(snapshot.value.transfers.transfers.front().id
+            == TransferId{"t-img"});
+        REQUIRE(snapshot.value.transfers.transfers.front().state
+            == TransferState::Queued);
+    }
+    REQUIRE(fake.sent_images().size() == 1);
+    REQUIRE(fake.transfer_session_known("t-img"));
+
+    // 消息 Delivered；随后传输 Failed：消息保持 Delivered（运行期零传导——
+    // 传输晚于 peer ack 失败不回写消息面，Delivered -> Failed 非法边由 owner
+    // 拒绝，此处甚至无跨通道更新可拒绝）。传输行沿合法边推进：
+    // Queued -> Negotiating（inject started）-> Failed（终态宣告）。
+    REQUIRE(fake.inject_message_delivered(
+        ConversationId{"conv-beta"}, MessageId{"m-img"}));
+    settle();
+    REQUIRE(fake.inject_transfer_started(
+        make_transfer("t-img", TransferState::Negotiating)));
+    settle();
+    REQUIRE(fake.inject_transfer_completed(TransferId{"t-img"}, TransferState::Failed));
+    settle();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.messages.messages.front().state
+            == DeliveryState::Delivered);
+        REQUIRE(snapshot.value.transfers.transfers.front().state
+            == TransferState::Failed);
+    }
+
+    // 反向到达顺序：传输先 Completed、消息 ack 后到——传输保持 Completed，
+    // 消息照常 Delivered，两行互不影响（接收侧消息一律 Delivered；入站传输
+    // 状态仅经 transfers Store join 可见）。
+    Message inbound = make_message("m-img-rx");
+    inbound.type = MessageType::Image;
+    inbound.payload = aki::conversation::ImagePayload{media, TransferId{"t-rx"}};
+    REQUIRE(fake.inject_transfer_started(
+        make_transfer("t-rx", TransferState::Transferring)));
+    settle();
+    REQUIRE(fake.inject_message_received(std::move(inbound)));
+    settle();
+    REQUIRE(fake.inject_transfer_completed(
+        TransferId{"t-rx"}, TransferState::Completed));
+    settle();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        const auto& messages = snapshot.value.messages.messages;
+        REQUIRE(messages.size() == 2);
+        REQUIRE(messages.back().id == MessageId{"m-img-rx"});
+        REQUIRE(messages.back().state == DeliveryState::Delivered);
+        const auto* image =
+            std::get_if<aki::conversation::ImagePayload>(&messages.back().payload);
+        REQUIRE(image != nullptr);
+        REQUIRE(image->transfer_id == TransferId{"t-rx"});
+        REQUIRE(snapshot.value.transfers.transfers.size() == 2);
+        REQUIRE(snapshot.value.transfers.transfers.back().id
+            == TransferId{"t-rx"});
+        REQUIRE(snapshot.value.transfers.transfers.back().state
+            == TransferState::Completed);
+    }
+
+    // 关闭清理：闸门创建的传输会话先取消回收（EXEC-01 关闭纪律——会话在飞
+    // 时 shutdown 的有界等待会超时）。
+    REQUIRE(stack.transfers->request_cancel_all());
+    REQUIRE(stack.transfers->flush(2s));
 
     const auto report = stack.host.executor_owner.shutdown();
     REQUIRE(report.fully_stopped());

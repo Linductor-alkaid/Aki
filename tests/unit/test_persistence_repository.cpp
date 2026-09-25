@@ -282,7 +282,8 @@ TEST_CASE("Message repository round-trips all payload kinds",
     std::vector<Message> seed;
     seed.push_back(make_message("m-text", TextPayload{"你好，设备"}));
     seed.push_back(make_message("m-image",
-        ImagePayload{FileMetadata{"img.png", 2048, "image/png"}}));
+        ImagePayload{FileMetadata{"img.png", 2048, "image/png"},
+            TransferId{"t-img-1"}}));
     seed.push_back(make_message("m-video",
         VideoPayload{FileMetadata{"clip.mp4", 4096, "video/mp4"}}));
     seed.push_back(make_message("m-file",
@@ -309,6 +310,9 @@ TEST_CASE("Message repository round-trips all payload kinds",
     REQUIRE(std::get<ImagePayload>(image->payload).media.size_bytes == 2048);
     REQUIRE(std::get<ImagePayload>(image->payload).media.mime_type
         == "image/png");
+    // M4-03：media_transfer_id 列双向读写（join 键持久化，设计 §6.1②）。
+    REQUIRE(std::get<ImagePayload>(image->payload).transfer_id
+        == TransferId{"t-img-1"});
 
     const auto file = messages.find(MessageId{"m-file"});
     REQUIRE(file->type == MessageType::File);

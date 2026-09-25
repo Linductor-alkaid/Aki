@@ -22,9 +22,11 @@
 // lan_discovery.hpp）。
 #pragma once
 
+#include "conversation/codec/image_payload_codec.hpp"
 #include "conversation/message/message_types.hpp"
 #include "device/device/device_types.hpp"
 #include "heyaki/adapter/local_identity.hpp"
+#include "transfer/transfer/transfer_types.hpp"
 
 #include <heyaki/node.hpp>
 #include <heyaki/runtime.hpp>
@@ -368,7 +370,7 @@ public:
         return true;
     }
 
-    // ---- M3-05：文本消息面（DEC-006 映射 4；aki/std 公开面）----
+    // ---- M3-05/M4-03：消息面（DEC-006 映射 4 + 图片面扩展；aki/std 公开面）----
 
     // aki MessageId ↔ heyaki MessageId 双射（DEC-006 冻结常量）：权威形式为
     // heyaki::to_string / parse_message_id 的规范字符串（hym1_ 前缀编码）；
@@ -385,6 +387,17 @@ public:
     [[nodiscard]] static aki::conversation::MessageId to_aki_message_id(
         const ::heyaki::MessageId& message_id) {
         return aki::conversation::MessageId{::heyaki::to_string(message_id)};
+    }
+
+    // aki TransferId ↔ heyaki TransferId 双射（DEC-010；hyt1_ 规范串，同上
+    // 语义）：非规范形式解码失败 → nullopt（admission 拒绝可见）。
+    [[nodiscard]] static std::optional<::heyaki::TransferId> to_heyaki_transfer_id(
+        const aki::transfer::TransferId& transfer_id) {
+        auto decoded = ::heyaki::parse_transfer_id(transfer_id.value);
+        if (!decoded || decoded.error != ::heyaki::IdentifierDecodeError::none) {
+            return std::nullopt;
+        }
+        return decoded.value;
     }
 
     // 出站文本（DEC-006 映射 4）：MessageEnvelope{message_id = aki MessageId
@@ -413,15 +426,60 @@ public:
         return sent.has_value();
     }
 
+    // 出站图片（M4-03，DEC-010①/DEC-006 映射 4 图片面扩展）：
+    // MessageEnvelope{message_id 16B 双射, type = "aki.image", schema_version =
+    // 1（aki 载荷 schema 版本，协议层仅校验非零）, delivery_mode = peer_acked,
+    // payload = ImagePayload 冻结字段号编码（conversation/codec）}。有界校验
+    //（RULE-09，任一失败 admission false 可见）：TransferId 非规范
+    //（heyaki::parse_transfer_id 权威校验——codec 谓词之外的双射权威）/
+    // 载荷超限（codec 编码 nullopt）/ peer 不可达 / MessageId 非规范。
+    // 图片本体不经本路径（RULE-05，传输面经 DEC-006 映射 7）。
+    [[nodiscard]] bool send_image(const aki::device::DeviceId& peer,
+        const aki::conversation::MessageId& message_id,
+        const aki::transfer::FileMetadata& media,
+        const aki::transfer::TransferId& transfer_id) {
+        auto key = endpoint_key_of(peer);
+        if (!key.has_value()) {
+            return false;
+        }
+        auto wire_id = to_heyaki_message_id(message_id);
+        if (!wire_id.has_value()) {
+            return false;
+        }
+        if (!to_heyaki_transfer_id(transfer_id).has_value()) {
+            return false;  // 非规范 hyt1_ 形式：编码契约违反，admission 拒绝
+        }
+        auto payload = aki::conversation::codec::encode_image_payload(
+            aki::conversation::ImagePayload{media, transfer_id});
+        if (!payload.has_value()) {
+            return false;  // 载荷超限/字段非法：codec 有界拒绝
+        }
+        ::heyaki::MessageEnvelope envelope;
+        envelope.message_id = *wire_id;
+        envelope.type = std::string(
+            aki::conversation::codec::kAkiImageEnvelopeType);  // DEC-006 冻结常量
+        envelope.schema_version =
+            aki::conversation::codec::kAkiImagePayloadSchemaVersion;
+        envelope.delivery_mode =
+            ::heyaki::MessageDeliveryMode::peer_acked;
+        envelope.payload = std::move(*payload);
+        auto sent = node_.send_message(*key, std::move(envelope));
+        return sent.has_value();
+    }
+
     // 入站与投递回报（DEC-006 映射 4；Node 上下文回调，消费方有界处理 +
     // 投递，EXEC-02）：
-    //   inbound：协议层已去重 + ACK 应答后的消息（text 为 payload 字节串）；
+    //   inbound：协议层已去重 + ACK 应答后的信封——payload 为信封原始字节，
+    //   type 为信封 type（aki.text / aki.image / …）。M4-03 起入站不再压平为
+    //   text 串：信封 type 分发收敛在 Adapter 层（设计 §6.1①/§8.1——aki 层
+    //   包装不承载应用语义，未知 type 的有界拒绝由 Adapter 计数可观测）；
     //   ack event 映射：queued→queued、acked→acked、send_failed/peer_rejected/
     //   ack_timeout/session_closed→failed（aki DeliveryState 语义域）。
     void set_message_handlers(
         std::function<void(const aki::device::DeviceId& peer,
             const aki::conversation::MessageId& message_id,
-            const std::string& text)>
+            const std::string& type,
+            const std::string& payload)>
             inbound,
         std::function<void(const aki::device::DeviceId& peer,
             const aki::conversation::MessageId& message_id,
@@ -434,13 +492,14 @@ public:
                 if (!inbound) {
                     return;
                 }
-                const std::string text(
+                const std::string payload(
                     reinterpret_cast<const char*>(envelope.payload.data()),
                     envelope.payload.size());
                 inbound(
                     aki::device::DeviceId{
                         ::heyaki::to_string(peer.device_id)},
-                    to_aki_message_id(envelope.message_id), text);
+                    to_aki_message_id(envelope.message_id), envelope.type,
+                    payload);
             });
         node_.set_message_ack_observer(
             [ack = std::move(ack)](const ::heyaki::DeviceEndpointKey& peer,

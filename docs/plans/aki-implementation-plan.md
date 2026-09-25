@@ -2,7 +2,7 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-09-25
+> 更新日期：2026-09-26
 > 设计依据：[Aki 设计方案](../design/aki_design.md)
 > 协作约束：[AGENTS.md](../../AGENTS.md)、[项目管理与工程规范](../project/project-standards.md)
 
@@ -250,6 +250,27 @@
   （M1-05 既有，建议后续收口）；executor tracked 提交容量类拒绝经 future
   同步结算（reconnect_loop 的 handle-valid 分支对其不可达，登记备查）。
   详见 M4 里程碑文档 M4-02 验证记录 2026-09-25 条目。
+- 2026-09-26：`M4-03` 完成（图片消息，`SCOPE-07`）：设计先行新建
+  [DEC-010](../decisions/DEC-010-image-message-contract.md)（Accepted）冻结
+  图片消息 wire 契约（envelope `aki.image` + ImagePayload 载荷 schema v1
+  冻结字段号 protobuf-wire 编解码器，落 `conversation/codec/`；前向容忍跳过
+  未知字段、缺字段/超限/非规范 TransferId 有界拒绝可见、载荷 ≤4KiB、追加
+  字段不 bump 版本）与收发状态联动（DeliveryState/TransferState 正交生命
+  周期 + TransferId 消费侧 join + 发送侧准入闸门「先传输准入、后发消息」
+  编排层承载 + 运行期零传导 + 接收侧一律 Delivered）；同批回填设计
+  §6/§6.1/§7.1①/§8.1 与 DEC-006（冻结常量 `aki.image` + `hyt1_` TransferId
+  双射点名 + 映射 4 图片面扩展）。实现：`ImagePayload` 补 `transfer_id` +
+  持久化 `media_transfer_id` 双向读写（无迁移）、NodeSession `send_image`
+  与入站回调携带信封 type（分发收敛 Adapter 层、未知 type/解码失败拒绝
+  计数可观测）、SPI `send_image_message`（Fake 参数化接受/真实 Adapter 全
+  接线）、MM 图片出站路由、编排层闸门 `app/application/image_flow.hpp`。
+  测试：codec 单测（往返 + 全拒收路径 + 前向容忍）+ TransferId 双射与
+  aki.image 信封往返（codec 谓词对 heyaki 编码器产物交叉验证）+ Adapter
+  图片分发 + MM 路由/正向链/RULE-08 终态幂等/闸门两向失败/运行期零传导；
+  debug/release 全量 ctest 34/34 零回归，test_app_managers 随机顺序 10 连跑
+  稳定。双端图片回环因防火墙受限沿 M3-09 纪律以 [skip] 证据路径降级
+  （补跑条件登记，网络无关半边已验证）。详见 M4 里程碑文档 M4-03 验证
+  记录 2026-09-26 条目。
 
 ## 交付边界
 
@@ -352,10 +373,18 @@ M3 引入真实 Heyaki；M5 整合 UI 并按设计第 15 节逐项验收 MVP。�
 [DEC-006](../decisions/DEC-006-heyaki-api-contract.md)（2026-09-23，Heyaki API 契约
 版本与目标级集成方式——pinned v1.0.1-38 公开面为契约基线、单一构建图接入
 heyaki::client、executor 由 heyaki 子目录提供同 pin、borrowed Runtime 注入保持
-EXEC-01 唯一 owner、SPI↔API 映射与冻结常量；含 DEC-003 executor 接入条款修订）、
+EXEC-01 唯一 owner、SPI↔API 映射与冻结常量；含 DEC-003 executor 接入条款修订；
+M4-03 扩展冻结常量 `aki.image` 与映射 4 图片消息面）、
 [DEC-007](../decisions/DEC-007-test-framework.md)
 与 [DEC-008](../decisions/DEC-008-manager-routing-and-executor-tasks.md)
-（2026-09-22，Manager 职责切分、事件路由与 Executor 任务承载））。
+（2026-09-22，Manager 职责切分、事件路由与 Executor 任务承载）、
+[DEC-009](../decisions/DEC-009-appstate-write-path.md)（2026-09-24，持久化写路径
+正式落点）、[DEC-010](../decisions/DEC-010-image-message-contract.md)（2026-09-26，
+图片消息 wire 契约——envelope type `aki.image` + aki 载荷 schema v1 冻结字段号
+protobuf-wire 编解码（落 conversation/codec/）与收发状态联动——DeliveryState/
+TransferState 正交生命周期 + TransferId 消费侧 join + 发送侧准入期闸门
+「先传输准入、后发消息」+ 运行期零传导；含 ImagePayload 补 transfer_id 与 SPI
+`send_image_message` 增补））。
 
 ## 跨里程碑通用完成定义
 

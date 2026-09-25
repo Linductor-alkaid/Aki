@@ -4,6 +4,10 @@
 // delivered 事件 → SetDeliveryState（终态幂等，迟到的回报不复活终态，RULE-08）；
 // 文本发送是本域出站操作（→ Adapter）：入队时本地记录 Queued，Adapter admission
 // 成功记录 Sent、失败记录 Failed（M3 起由真实投递回报推进中间状态）。
+// 图片消息发送面（M4-03，设计 §6.1/§8.1）：同型 admission 语义，载荷仅
+// FileMetadata + TransferId（RULE-05）；发送侧准入闸门在编排层
+// （image_flow.hpp），MM 经 transfer_admitted 标记接收闸门结论、不感知
+// TransferManager。
 //
 // 生命周期（EXEC-07）同 DeviceManager；发送命令经单飞泵串行化，Fake/真实
 // Adapter 的出站调用只在 Manager 上下文发生（EXEC-02）。
@@ -16,6 +20,7 @@
 #include "conversation/message/message_types.hpp"
 #include "device/device/device_types.hpp"
 #include "heyaki/adapter/heyaki_adapter.hpp"
+#include "transfer/transfer/transfer_types.hpp"
 
 #include <chrono>
 #include <string>
@@ -44,10 +49,23 @@ struct SendTextWork {
     std::string text;
 };
 
+// 图片消息出站（M4-03，设计 §6.1/§8.1；DEC-010）。transfer_admitted =
+// false 表示发送侧准入闸门的传输半边已失败（设计 §6.1②：不发送消息、消息行
+// 记 Failed、Adapter 零 send 调用）——编排层（image_flow.hpp）置位，MM 不
+// 感知 TransferManager。
+struct SendImageWork {
+    aki::device::DeviceId to;
+    aki::conversation::MessageId message_id;
+    aki::transfer::FileMetadata media;
+    aki::transfer::TransferId transfer_id;
+    bool transfer_admitted = true;
+};
+
 using MessageManagerWork = std::variant<MessageReceivedWork,
     MessageDeliveredWork,
     MessageDeliveryFailedWork,
-    SendTextWork>;
+    SendTextWork,
+    SendImageWork>;
 
 // 构造选项置于命名空间作用域（同 AppStateOwnerOptions 处理，GCC 纪律）。
 struct MessageManagerOptions {
@@ -106,6 +124,19 @@ public:
         aki::conversation::MessageId message_id, std::string text) {
         return pump_.enqueue(
             SendTextWork{std::move(to), std::move(message_id), std::move(text)});
+    }
+
+    // ---- 本域出站操作：图片消息发送（M4-03，设计 §6.1/§8.1）----
+    // 消息面仅 metadata + TransferId（RULE-05）；transfer_admitted 语义见
+    // SendImageWork（编排层闸门，默认 true = 正常发送路径）。
+
+    [[nodiscard]] bool send_image(aki::device::DeviceId to,
+        aki::conversation::MessageId message_id,
+        aki::transfer::FileMetadata media, aki::transfer::TransferId transfer_id,
+        bool transfer_admitted = true) {
+        return pump_.enqueue(SendImageWork{std::move(to),
+            std::move(message_id), std::move(media), std::move(transfer_id),
+            transfer_admitted});
     }
 
     [[nodiscard]] bool flush(std::chrono::milliseconds budget) {
@@ -172,6 +203,34 @@ private:
             adapter_.send_text_message(work.to, work.message_id, work.text);
         // M1 语义：Adapter admission 成功 = Sent；失败 = Failed（Queued -> Failed
         // 是合法边）。真实投递回报经 on_message_delivered 推进（M3 起含中间态）。
+        message.state = accepted ? aki::conversation::DeliveryState::Sent
+                                 : aki::conversation::DeliveryState::Failed;
+        return state_owner_.submit_update(UpsertMessage{std::move(message),
+            options_.conversation_for(work.to)});
+    }
+
+    // 图片消息出站（M4-03）：admission 语义同文本（成功 = Sent、失败 =
+    // Failed）；transfer_admitted = false 时跳过 Adapter 调用直接记 Failed
+    //（设计 §6.1② 闸门的传输半边失败路径——Fake adapter 零 send 调用）。
+    bool handle(SendImageWork& work) {
+        if (work.to.empty() || work.message_id.empty()
+            || work.media.name.empty() || work.transfer_id.empty()) {
+            return false;
+        }
+        aki::conversation::Message message;
+        message.id = work.message_id;
+        message.sender = options_.local_device;
+        message.receiver = work.to;
+        message.timestamp = std::chrono::system_clock::now();
+        message.type = aki::conversation::MessageType::Image;
+        message.payload =
+            aki::conversation::ImagePayload{work.media, work.transfer_id};
+        message.state = aki::conversation::DeliveryState::Queued;
+        bool accepted = false;
+        if (work.transfer_admitted) {
+            accepted = adapter_.send_image_message(
+                work.to, work.message_id, work.media, work.transfer_id);
+        }
         message.state = accepted ? aki::conversation::DeliveryState::Sent
                                  : aki::conversation::DeliveryState::Failed;
         return state_owner_.submit_update(UpsertMessage{std::move(message),

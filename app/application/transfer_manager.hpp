@@ -149,9 +149,11 @@ public:
 
     // 应用发起传输：本地记录 Queued → Adapter admission；成功则派生可取消会话
     // 任务（TaskHandle 按 TransferId 归本 Manager 持有，EXEC-07）。同 id 在飞
-    // 会话已存在时拒绝（返回 false）：不替换旧会话记录（其句柄与 future 归属
-    // 不变）。source_path（§7.1⑤）经出站 SPI 传 Adapter，默认空——M4-03/04
-    // 图片/文件消息面接入真实路径。
+    // 会话已存在时的重复发起在排空 handler 内拒绝（异步接口——本返回值只
+    // 代表收件箱受理，重复 id 仍返回 true，拒绝经 handler_rejections 可见，
+    // RULE-09）：不替换旧会话记录（其句柄与 future 归属不变）。source_path
+    //（§7.1⑤）经出站 SPI 传 Adapter，默认空——M4-03/04 图片/文件消息面接入
+    // 真实路径。
     [[nodiscard]] bool start_transfer(aki::device::DeviceId to,
         aki::transfer::TransferId transfer_id, aki::transfer::FileMetadata file,
         std::filesystem::path source_path = {}) {

@@ -76,6 +76,18 @@ public:
     virtual bool send_text_message(const aki::device::DeviceId& to,
         const aki::conversation::MessageId& message_id, std::string_view text) = 0;
 
+    // 图片消息发送面（设计第 6.1/8.1 节，M4-03；DEC-010③）。bool admission
+    // 语义同 send_text_message；消息面仅 FileMetadata + TransferId，图片本体经
+    // 传输链路（RULE-05）——本接口与传输四接口以 TransferId 关联（发送侧准入
+    // 闸门「先传输准入、后发消息」由编排层承载，设计 §6.1②）。载荷超限或
+    // TransferId 非规范（编码失败）即 admission false 可见（RULE-09）。
+    // 入站不新增 sink 方法：复用 on_message_received（信封 type 分发在
+    // Adapter 层）。
+    virtual bool send_image_message(const aki::device::DeviceId& to,
+        const aki::conversation::MessageId& message_id,
+        const aki::transfer::FileMetadata& file,
+        const aki::transfer::TransferId& transfer_id) = 0;
+
     // 文件传输接口面（设计第 7/7.1⑤ 节）。M4-02 起签名含发送侧本地路径
     // `source_path`（std::filesystem::path）——不进入对端可见的 FileMetadata
     // （携带本地路径即信息外泄）；数据链路与路径真实消费在 M4-04 落地。

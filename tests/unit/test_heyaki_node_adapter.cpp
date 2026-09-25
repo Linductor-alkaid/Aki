@@ -9,6 +9,7 @@
 //   - 析构闭合（评审修正回归守卫）：deliver_disconnected 后销毁——不再有
 //     未登记的 submit_cancellable 循环，owner.shutdown fully_stopped。
 #include "app/lifecycle/executor_owner.hpp"
+#include "conversation/codec/image_payload_codec.hpp"
 #include "heyaki/adapter/heyaki_node_adapter.hpp"
 #include "heyaki/adapter/local_identity.hpp"
 #include "heyaki/session/runtime_node.hpp"
@@ -16,6 +17,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -236,7 +238,7 @@ TEST_CASE("HeyakiNodeAdapter inbound injection dispatches to the sink",
     REQUIRE(sink.connected.front().first == peer);
     REQUIRE(sink.connected.front().second == ConnectionPath::Lan);
 
-    adapter.deliver_inbound(peer, MessageId{"m-1"}, "hello");
+    adapter.deliver_inbound(peer, MessageId{"m-1"}, "aki.text", "hello");
     REQUIRE(sink.received.size() == 1);
     {
         const auto& message = sink.received.front();
@@ -282,6 +284,88 @@ TEST_CASE("HeyakiNodeAdapter inbound injection dispatches to the sink",
     REQUIRE(report.fully_stopped());
 }
 
+TEST_CASE("HeyakiNodeAdapter dispatches image envelopes and rejects bounded "
+    "inbound failures visibly",
+    "[unit][heyaki_node_adapter]") {
+    ExecutorOwner owner;
+    REQUIRE(owner.initialize());
+    NodeDomain domain(temp_root("image"));
+    HeyakiNodeAdapter adapter{owner.executor(), valid_options(domain)};
+    RecordingSink sink;
+    adapter.set_sink(&sink);
+    const DeviceId peer{"peer-b"};
+
+    // 合法 aki.image 载荷（DEC-010① 冻结字段号）：Image typed 消息投递 sink，
+    // 消息面仅 metadata + TransferId（RULE-05）。transfer_id 用 heyaki 自身
+    // 编码器生成（规范形式按构造成立，31 字符 hyt1_ 串）。
+    const aki::transfer::FileMetadata media{"photo.png", 2048, "image/png"};
+    const aki::transfer::TransferId transfer_id{::heyaki::to_string(
+        ::heyaki::TransferId(::heyaki::TransferId::Storage{
+            std::byte{0x21}, std::byte{0x22}, std::byte{0x23}, std::byte{0x24},
+            std::byte{0x25}, std::byte{0x26}, std::byte{0x27}, std::byte{0x28},
+            std::byte{0x29}, std::byte{0x2a}, std::byte{0x2b}, std::byte{0x2c},
+            std::byte{0x2d}, std::byte{0x2e}, std::byte{0x2f}, std::byte{0x30}}))};
+    REQUIRE(transfer_id.value.size() == 31);
+    const auto encoded =
+        aki::conversation::codec::encode_image_payload({media, transfer_id});
+    REQUIRE(encoded.has_value());
+    const std::string payload(reinterpret_cast<const char*>(encoded->data()),
+        encoded->size());
+    adapter.deliver_inbound(peer, MessageId{"m-img"},
+        std::string{aki::conversation::codec::kAkiImageEnvelopeType}, payload);
+    REQUIRE(sink.received.size() == 1);
+    {
+        const auto& message = sink.received.front();
+        REQUIRE(message.type == aki::conversation::MessageType::Image);
+        REQUIRE(message.id == MessageId{"m-img"});
+        REQUIRE(message.state == DeliveryState::Sent);  // MM 强制 Delivered
+        const auto* image =
+            std::get_if<aki::conversation::ImagePayload>(&message.payload);
+        REQUIRE(image != nullptr);
+        REQUIRE(image->media == media);
+        REQUIRE(image->transfer_id == transfer_id);
+    }
+    REQUIRE(adapter.inbound_rejections() == 0);
+
+    // 解码失败（缺必填字段的 wire）→ 不投递 sink、拒绝计数可见（RULE-09）。
+    adapter.deliver_inbound(peer, MessageId{"m-bad"},
+        std::string{aki::conversation::codec::kAkiImageEnvelopeType},
+        std::string{reinterpret_cast<const char*>(encoded->data()), 1});
+    REQUIRE(sink.received.size() == 1);
+    REQUIRE(adapter.inbound_rejections() == 1);
+
+    // 未知信封 type → 同上有界拒绝（设计 §6.1①）。
+    adapter.deliver_inbound(peer, MessageId{"m-unknown"}, "aki.video", "x");
+    REQUIRE(sink.received.size() == 1);
+    REQUIRE(adapter.inbound_rejections() == 2);
+
+    // 无 sink：静默丢弃不崩溃（EXEC-02 观察者缺失不阻塞管道）。
+    {
+        HeyakiNodeAdapter sinkless{owner.executor(), valid_options(domain)};
+        sinkless.deliver_inbound(peer, MessageId{"m-img"},
+            std::string{aki::conversation::codec::kAkiImageEnvelopeType},
+            payload);
+        REQUIRE(sinkless.inbound_rejections() == 0);  // 未接 sink：未走到分发
+    }
+
+    // send_image_message 有界校验（EXEC-02 出站面）：空载荷拒绝。
+    REQUIRE_FALSE(adapter.send_image_message(DeviceId{}, MessageId{"m-1"},
+        media, transfer_id));
+    REQUIRE_FALSE(adapter.send_image_message(peer, MessageId{}, media,
+        transfer_id));
+    REQUIRE_FALSE(adapter.send_image_message(
+        peer, MessageId{"m-1"}, aki::transfer::FileMetadata{}, transfer_id));
+    REQUIRE_FALSE(adapter.send_image_message(peer, MessageId{"m-1"}, media,
+        aki::transfer::TransferId{}));
+    // 不可达 peer（无发现端点）→ admission false（确定性，网络无关）。
+    REQUIRE_FALSE(adapter.send_image_message(
+        DeviceId{"hy1_00000000000000000000000000000000000000000000000000000000000000"},
+        MessageId{"m-1"}, media, transfer_id));
+
+    const auto report = owner.shutdown();
+    REQUIRE(report.fully_stopped());
+}
+
 TEST_CASE("HeyakiNodeAdapter without a sink drops injections silently",
     "[unit][heyaki_node_adapter]") {
     ExecutorOwner owner;
@@ -294,7 +378,7 @@ TEST_CASE("HeyakiNodeAdapter without a sink drops injections silently",
     adapter.deliver_connected(DeviceId{"peer-b"});
     adapter.deliver_disconnected(DeviceId{"peer-b"});
     adapter.deliver_path_changed(DeviceId{"peer-b"}, ConnectionPath::Relay);
-    adapter.deliver_inbound(DeviceId{"peer-b"}, MessageId{"m-1"}, "hello");
+    adapter.deliver_inbound(DeviceId{"peer-b"}, MessageId{"m-1"}, "aki.text", "hello");
     adapter.deliver_ack(DeviceId{"peer-b"}, MessageId{"m-1"}, "acked");
 
     const auto report = owner.shutdown();

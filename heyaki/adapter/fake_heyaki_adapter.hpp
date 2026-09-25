@@ -26,6 +26,14 @@ public:
         std::string text;
     };
 
+    // 图片消息出站记录（M4-03；消息面仅 metadata + TransferId，RULE-05）。
+    struct SentImage {
+        aki::device::DeviceId to;
+        aki::conversation::MessageId message_id;
+        aki::transfer::FileMetadata file;
+        aki::transfer::TransferId transfer_id;
+    };
+
     struct TransferCommand {
         enum class Kind { Start, Pause, Resume, Cancel };
         Kind kind = Kind::Start;
@@ -54,6 +62,22 @@ public:
             return false;
         }
         sent_texts_.push_back(SentText{to, message_id, std::string(text)});
+        return true;
+    }
+
+    // 图片消息出站（M4-03，设计 §6.1/§8.1；沿 M4-02 参数化接受先例——只做
+    // 有界校验与记录，不校验 TransferId 规范形式（生成入口随 M4-04 定案，
+    // DEC-010 风险），不消费图片本体（无真实 I/O）。
+    bool send_image_message(const aki::device::DeviceId& to,
+        const aki::conversation::MessageId& message_id,
+        const aki::transfer::FileMetadata& file,
+        const aki::transfer::TransferId& transfer_id) override {
+        if (to.empty() || message_id.empty() || file.name.empty()
+            || transfer_id.empty()) {
+            return false;  // 有界校验（EXEC-02 出站面）
+        }
+        sent_images_.push_back(
+            SentImage{to, message_id, file, transfer_id});
         return true;
     }
 
@@ -167,6 +191,9 @@ public:
     [[nodiscard]] const std::vector<SentText>& sent_texts() const noexcept {
         return sent_texts_;
     }
+    [[nodiscard]] const std::vector<SentImage>& sent_images() const noexcept {
+        return sent_images_;
+    }
     [[nodiscard]] const std::vector<TransferCommand>& transfer_commands() const noexcept {
         return transfer_commands_;
     }
@@ -197,6 +224,7 @@ private:
     std::atomic<bool> discovery_running_{false};
     std::vector<aki::device::DiscoveryMethod> discovery_methods_;
     std::vector<SentText> sent_texts_;
+    std::vector<SentImage> sent_images_;
     std::vector<TransferCommand> transfer_commands_;
     std::set<std::string> transfer_sessions_;
 };
