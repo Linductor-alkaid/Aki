@@ -199,6 +199,78 @@ struct Message {
 Agent 输出最终都需要再次编码和解析。Typed message 直接保留消息语义，也让
 UI 可以根据类型渲染对应组件。
 
+`ImagePayload` 为 `FileMetadata media` + `TransferId transfer_id`（镜像
+`FilePayload` 形状，M4-03 起；消息面仅 metadata + TransferId，图片本体经传输
+链路，`RULE-05`）。wire 契约与收发状态联动见第 6.1 节（M4-03 固化；
+`VideoPayload` 的同构 transfer_id 缺口在 M4 范围外，接入时沿本节先例）。
+
+### 6.1 消息 wire 契约与收发状态联动（M4 契约，M4-03）
+
+本小节固化 Image typed 消息的 wire 契约与 `DeliveryState`/`TransferState`
+联动语义（[DEC-010](../decisions/DEC-010-image-message-contract.md)；
+DEC-006 冻结常量与映射 4 扩展为契约权威，本节为应用侧集成契约）。
+
+**① Image 消息 wire 契约**：出站信封 `MessageEnvelope{message_id =
+aki MessageId 16B 双射, type = "aki.image", schema_version = 1,
+delivery_mode = peer_acked}`（同 `aki.text` 的 MessageId 双射与 ack 模式，
+DEC-006 映射 4）；`schema_version` 语义为 **aki 载荷 schema 版本**（heyaki
+协议层仅校验非零，RPC 描述子与事件发布同此约定）。envelope.payload 承载
+`ImagePayload`（FileMetadata + TransferId）的 aki 自有最小编码——冻结字段号
+schema v1（protobuf-wire 形态，编解码器落第 14 节预留的 `conversation/codec/`）：
+
+| 字段号 | wire 类型 | 载荷 | 界限 |
+| --- | --- | --- | --- |
+| 1 | length-delimited | `name`（原始字节） | ≤512B（对齐 heyaki `max_logical_name_bytes`） |
+| 2 | varint | `size_bytes` | — |
+| 3 | length-delimited | `mime_type`（原始字节） | ≤128B |
+| 4 | length-delimited | `transfer_id`（规范字符串） | `hyt1_` 前缀 + 26 个 base32 字符 = 31 字符（heyaki `TransferId` 规范形式，DEC-006 冻结常量） |
+| 5 | length-delimited | `stored_sha256`（**预留**，M4-04） | 旧接收端跳过；v1 解码器不读取 |
+
+解析规则（前向容忍与有界拒绝）：解码**跳过未知字段号**（前向兼容——新增可选
+字段不破坏旧接收端）；缺字段 1~4 任一、字段超限、transfer_id 非规范形式
+（前缀/长度/字符集/尾部位填充任一不符）或载荷总量超 aki 侧上限（4KiB，冻结于
+codec 常量，紧于 heyaki 1MiB）→ **有界拒绝可见**：入站不投递
+`on_message_received`、经 Adapter 拒绝计数可观测（`RULE-09`）；出站编码失败
+→ SPI admission false。字符集校验沿 `aki.text` 姿态：仅长度界，不校验 UTF-8。
+版本规则：**追加可选字段不 bump schema_version**（旧接收端跳过、新接收端缺省
+视为无）；破坏性变更（删字段/改语义）才 bump——M4-04 的 `stored_sha256`（字段
+5）即按追加字段保持 v1。
+
+**② DeliveryState ↔ TransferState 联动**：两通道为**正交生命周期**——
+`DeliveryState` 只反映消息信封的协议层投递（peer ack），`TransferState` 只反映
+文件本体传输（§7）；唯一关联键是 `TransferId`（**消费侧 join**：消息侧经
+`ImagePayload.transfer_id` 持久化到 `message.media_transfer_id` 列；
+`transfer.message_id` FK 保持可空——M4-03 不回填，重启恢复后 join 依持久化键
+保持）。唯一传导规则是**发送侧准入期闸门**（编排层承载——组合根/应用层辅助
+函数，非任一 Manager 内部职责）：
+
+1. **先传输准入、后发消息**（闸门判据为 **enqueue 级 admission**——两命令
+   面均异步，返回值只代表收件箱受理）：`start_transfer` enqueue 拒绝（TM
+   收件箱满）则不发送消息，消息行记 `Failed`（Adapter 零 send 调用）；
+   `send_image` enqueue 拒绝（MM 收件箱满）则对刚准入的传输发
+   `cancel_transfer`（传输行 `Cancelled`，本地确定性决策、处于 Negotiating 前
+   准入窗口无竞态）。两笔补偿写入（`Failed` 行 / 补偿取消）自身也是 enqueue
+   admission、可能被收件箱拒——两级降级不吞掉（AGENTS 规则 10），经编排
+   返回值可见（`ImageSendFlowResult` 的 `*RowLost`/`*CancelLost` 档）：补偿
+   `Failed` 行被拒 → 无消息行；补偿取消被拒 → 传输持续在飞、传输行停留
+   `Queued`。**重复 TransferId 不在闸门可见面内**：其 enqueue admission
+   照常受理（闸门通过、消息照常发送），业务拒绝发生在 TM 排空 handler 的
+   会话表守卫（经 `handler_rejections` 可见，RULE-09）——不新增传输行、
+   不替换旧在飞会话，消息引用的仍是既有 TransferId；TransferId 唯一性由
+   调用方生成保证（生成规则随 M4-04 定案冻结，DEC-010）。
+2. **运行期零传导**：peer ack 事件（`on_message_delivered`/
+   `on_message_send_failed`）与传输终态事件（`on_transfer_completed`）互不
+   跨通道回写——`Delivered→Failed` 非法（§6 状态机）、`ack_timeout` 两可语义
+   下取消传输会破坏断点续传（§7.1）；传输 `Completed` 是比消息 `Delivered`
+   更强的独立指示（文件已落对端盘），UI 各自渲染、不合成复合状态。
+3. **接收侧消息一律按 §6 记 `Delivered`**（协议层已先行去重 + ACK，app 无法
+   撤回）；入站传输状态仅经 transfers Store 经 TransferId join 可见，不推进
+   消息 `DeliveryState`。
+
+已知边角（如实登记，非状态规则）：发送方消息 ack 失败但文件已推完 → 接收侧
+孤儿传输行；接收侧仅一侧到达（消息无传输行/传输无消息卡）→ M5 UI 兜底与后续
+GC 议题。`VideoPayload` 同构接入沿本节先例（先更新本节再实现）。
+
 ## 7. 文件传输
 
 文件消息与文件数据分开处理。Conversation 中保存文件 metadata 和 Transfer
@@ -255,6 +327,8 @@ push 的分块由 heyaki 接收根落盘，`Committed` 事件后 Aki 从接收�
 驱动状态机 `Transferring ↔ Paused`；heyaki 侧分块进度保持（断点续传），
 Aki 侧 `.part` 与已落库进度保持。取消：`cancel_file_transfer` →
 `Cancelled` 终态 + `.part` 幂等删除作业（M2-06 discard 作业组）。
+图片/文件消息的发送侧准入闸门（先传输准入、后发消息）属编排层契约，
+见第 6.1 节 ②——TransferManager 不感知消息域，闸门由组合根编排承载。
 
 **② 传输 typed 更新 → DB 作业映射（§11.1 ① 补充）**：在既有
 `UpsertTransfer`/`UpdateTransferProgress`/`CompleteTransfer` 之上，
@@ -367,6 +441,15 @@ executor 类型（`RULE-10`）；heyaki 层仅依赖第 3~7 节领域类型，�
   扫描型来源（LAN 发现 / Relay）启动扫描，记录型来源的接入在 M3 细化。
 - `send_text_message(receiver, MessageId, text)`：文本消息发送（第 6 节）；
   `MessageId` 由应用生成并保持稳定（`RULE-08`）。
+- `send_image_message(receiver, MessageId, FileMetadata, TransferId)`：图片
+  消息发送面（第 6.1 节，M4-03 增补——沿 M3-05 增量先例新增专用方法，不泛化
+  为 `send_message(Message&)` 一次性改动全部调用点）；`bool` admission 语义同
+  `send_text_message`，载荷超限或
+  TransferId 非规范（codec 编码失败）即 admission false 可见（`RULE-09`）；
+  消息面仅 FileMetadata + TransferId，图片本体经传输链路（`RULE-05`）。
+  入站不新增 sink 方法：复用既有 `on_message_received(Message)`——信封
+  `type` 的分发（`aki.text`/`aki.image` → 对应 typed payload；未知 type →
+  有界拒绝可见，不投递 sink）收敛在 Adapter 层（第 6.1 节 ①）。
 - `start_file_transfer(receiver, TransferId, FileMetadata)` /
   `pause_transfer` / `resume_transfer` / `cancel_transfer(TransferId)`：文件传输
   接口面（第 7 节）。M4 前仅签名与 TransferId 语义——一个 `TransferId` 对应一个

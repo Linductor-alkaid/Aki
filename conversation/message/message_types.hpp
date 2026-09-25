@@ -105,13 +105,17 @@ struct TextPayload {
     friend bool operator==(const TextPayload&, const TextPayload&) = default;
 };
 
-// 图片与视频消息在 M4 接入真实数据链路；metadata 结构自本版本固定。
+// 图片消息：消息面仅 metadata + TransferId（RULE-05；M4-03 起与 FilePayload
+// 同形，图片本体经传输链路）。wire 契约与收发状态联动见设计 §6.1/DEC-010。
 struct ImagePayload {
     FileMetadata media;
+    TransferId transfer_id;
 
     friend bool operator==(const ImagePayload&, const ImagePayload&) = default;
 };
 
+// 视频消息在 M4 后接入真实数据链路；metadata 结构自本版本固定
+// （transfer_id 同构缺口按设计 §6.1 先例随接入补齐）。
 struct VideoPayload {
     FileMetadata media;
 

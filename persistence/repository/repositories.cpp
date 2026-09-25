@@ -390,6 +390,7 @@ void MessageRepository::upsert(const Message& message,
         statement.bind(8, image->media.name);
         statement.bind(9, static_cast<std::int64_t>(image->media.size_bytes));
         statement.bind(10, image->media.mime_type);
+        bind_text_or_null(statement, 11, image->transfer_id.value);
     } else if (const auto* video = std::get_if<VideoPayload>(&message.payload)) {
         statement.bind(8, video->media.name);
         statement.bind(9, static_cast<std::int64_t>(video->media.size_bytes));
@@ -411,9 +412,13 @@ MessagePayload payload_from_row(const Statement& row, MessageType type) {
         case MessageType::System:
             return SystemPayload{row.column_text(6)};
         case MessageType::Image:
-            return ImagePayload{FileMetadata{row.column_text(7),
-                static_cast<std::uint64_t>(row.column_int64(8)),
-                row.column_text(9)}};
+            // M4-03：transfer_id 与 FilePayload 同形往返（media_transfer_id 列
+            // 双向读写——join 键持久化，设计 §6.1②）。
+            return ImagePayload{
+                FileMetadata{row.column_text(7),
+                    static_cast<std::uint64_t>(row.column_int64(8)),
+                    row.column_text(9)},
+                TransferId{row.column_text(10)}};
         case MessageType::Video:
             return VideoPayload{FileMetadata{row.column_text(7),
                 static_cast<std::uint64_t>(row.column_int64(8)),

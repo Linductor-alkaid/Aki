@@ -3,13 +3,17 @@
 // 将 M3-04~06 的分件（发现观察管道、peer_sessions diff 管道、NodeSession
 // 消息面）组装为单一 HeyakiAdapter SPI 实现类：
 //   - 出站：start/stop_discovery → LAN 发现观察管道启停；send_text_message →
-//     aki.text 信封（peer_acked）；传输四接口 M4 前签名语义（false + 记录，
-//     DEC-006：TransferId 一个会话不可重复启动的语义随 M4 数据面落地）；
+//     aki.text 信封（peer_acked）；send_image_message → aki.image 信封
+//     （peer_acked，M4-03——消息面仅 metadata + TransferId，RULE-05）；传输
+//     四接口 M4 前签名语义（false + 记录，DEC-006：TransferId 一个会话不可
+//     重复启动的语义随 M4 数据面落地）；
 //   - 入站（EXEC-02：回调只做有界校验 + 经 sink 投递）：发现观察管道 →
 //     on_device_discovered；peer_sessions diff → on_device_connected/
 //     on_device_disconnected（presence，DM）/ on_connection_path_changed
-//     （LatestMailbox，DM）；消息 inbound → on_message_received；ack →
-//     acked→on_message_delivered、失败四态→on_message_send_failed。
+//     （LatestMailbox，DM）；消息 inbound → 信封 type 分发（aki.text/
+//     aki.image → on_message_received；未知 type / 解码失败 → 有界拒绝计数
+//     可观测，M4-03）；ack → acked→on_message_delivered、失败四态→
+//     on_message_send_failed。
 //
 // 断线重连是 Application 层职责（RULE-01 层向：heyaki/adapter 仅依赖领域
 // 类型与 heyaki 会话面，不依赖 app/application——DEC-002 固定方向 UI→
@@ -33,6 +37,8 @@
 #include "heyaki/adapter/local_identity.hpp"
 #include "heyaki/session/runtime_node.hpp"
 
+#include "conversation/codec/image_payload_codec.hpp"
+
 #include <executor/executor.hpp>
 
 #include <atomic>
@@ -40,6 +46,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -97,7 +104,10 @@ public:
         options_.session->set_message_handlers(
             [this](const aki::device::DeviceId& peer,
                 const aki::conversation::MessageId& id,
-                const std::string& text) { deliver_inbound(peer, id, text); },
+                const std::string& type,
+                const std::string& payload) {
+                deliver_inbound(peer, id, type, payload);
+            },
             [this](const aki::device::DeviceId& peer,
                 const aki::conversation::MessageId& id,
                 const std::string& event) { deliver_ack(peer, id, event); });
@@ -153,8 +163,13 @@ public:
         }
     }
 
+    // 入站信封分发（M4-03，设计 §6.1①/§8.1：信封 type 分发收敛在本层）：
+    // aki.text → TextPayload；aki.image → codec 解码 → ImagePayload；未知
+    // type 或解码失败 → 有界拒绝可见（不投递 sink、inbound_rejections 计数，
+    // RULE-09——EXEC-02 回调线程只做有界校验 + 投递/拒绝，不解析重负载）。
     void deliver_inbound(const aki::device::DeviceId& peer,
-        const aki::conversation::MessageId& id, const std::string& text) {
+        const aki::conversation::MessageId& id, const std::string& type,
+        const std::string& payload) {
         if (sink_ == nullptr) {
             return;
         }
@@ -162,9 +177,25 @@ public:
         message.id = id;
         message.sender = peer;
         message.receiver = local_id_;
-        message.type = aki::conversation::MessageType::Text;
-        message.payload = aki::conversation::TextPayload{text};
         message.state = aki::conversation::DeliveryState::Sent;  // MM 强制 Delivered
+        if (type == "aki.text") {
+            message.type = aki::conversation::MessageType::Text;
+            message.payload = aki::conversation::TextPayload{payload};
+        } else if (type
+            == aki::conversation::codec::kAkiImageEnvelopeType) {
+            const auto* data = reinterpret_cast<const std::byte*>(payload.data());
+            const auto decoded = aki::conversation::codec::decode_image_payload(
+                std::span<const std::byte>(data, payload.size()));
+            if (!decoded.value.has_value()) {
+                inbound_rejections_.fetch_add(1);  // 有界拒绝可见（不投递 sink）
+                return;
+            }
+            message.type = aki::conversation::MessageType::Image;
+            message.payload = std::move(*decoded.value);
+        } else {
+            inbound_rejections_.fetch_add(1);  // 未知信封 type：同上可见拒绝
+            return;
+        }
         (void)sink_->on_message_received(std::move(message));
     }
 
@@ -211,6 +242,20 @@ public:
         return options_.session->send_text(to, message_id, text);
     }
 
+    // 图片消息出站（M4-03，DEC-010①）：aki.image 信封经 NodeSession send_image
+    //（MessageId 双射 + codec 编码 + TransferId 规范校验，任一失败 admission
+    // false 可见）；图片本体不经本路径（RULE-05，传输面随 M4-04 接线）。
+    [[nodiscard]] bool send_image_message(const aki::device::DeviceId& to,
+        const aki::conversation::MessageId& message_id,
+        const aki::transfer::FileMetadata& file,
+        const aki::transfer::TransferId& transfer_id) override {
+        if (to.empty() || message_id.empty() || file.name.empty()
+            || transfer_id.empty()) {
+            return false;  // 有界校验（EXEC-02 出站面）
+        }
+        return options_.session->send_image(to, message_id, file, transfer_id);
+    }
+
     // 传输四接口（M4 前签名语义，DEC-006：文件数据链路 M4）：
     // admission false + TransferId 语义（一个 TransferId 一个会话）随 M4
     // 数据面落地；本版本不伪造进度/终态事件。source_path 签名随 M4-02 按
@@ -254,12 +299,21 @@ public:
         return discovery_ != nullptr ? discovery_->discovered_count() : 0;
     }
 
+    // 入站有界拒绝计数（M4-03，设计 §6.1①：未知信封 type / 图片载荷解码
+    // 失败——不投递 sink、经此可观测，RULE-09）。
+    [[nodiscard]] std::uint64_t inbound_rejections() const noexcept {
+        return inbound_rejections_.load();
+    }
+
 private:
     Options options_;
     aki::device::DeviceId local_id_;
     HeyakiAdapterSink* sink_ = nullptr;
     std::unique_ptr<LanDiscoveryPipeline> discovery_;
     std::unique_ptr<PeerSessionPipeline> peer_pipeline_;
+    // 跨上下文计数：入站回调在 Node 上下文、读取在宿主/测试上下文（EXEC-06
+    // 可观测；域计数不复刻 Executor 监控）。
+    std::atomic<std::uint64_t> inbound_rejections_{0};
 };
 
 // SPI 同接口编译期断言（验收 ③：Fake 与真实 Adapter 同一接口契约；

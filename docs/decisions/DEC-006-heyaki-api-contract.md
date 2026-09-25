@@ -73,6 +73,16 @@ M3 要以 pinned `third_party/heyaki` 替换 `FakeHeyakiAdapter`（[DEC-002](DEC
      `on_message_delivered`）、send_failed/peer_rejected/ack_timeout/
      session_closed→`Failed` 终态；`on_message_received` ←
      `set_message_inbound_handler`（协议层先去重+ACK）。
+     **图片消息面扩展（M4-03，[DEC-010](DEC-010-image-message-contract.md)；
+     应用侧集成契约见设计 §6.1/§8.1）**：`send_image_message` → 同型信封
+     `MessageEnvelope{message_id 双射同上, type="aki.image", schema_version=1
+     （aki 载荷 schema 版本，协议层仅校验非零）, delivery_mode=peer_acked,
+     payload=ImagePayload（FileMetadata+TransferId）冻结字段号编码}`；
+     `DeliveryState` 映射同 aki.text 四态；入站信封 `type` 分发收敛在 Adapter
+     层——`aki.image` → codec 解码 → `on_message_received(Image typed)`，
+     未知 type 或解码失败（缺字段/超限/TransferId 非规范）→ 有界拒绝可见
+     （不投递 sink、Adapter 拒绝计数，`RULE-09`）；图片本体不经消息通道
+     （`RULE-05`），传输面经映射 7。
   5. Presence/路径：`on_device_connected/disconnected` ← `peer_sessions()` diff
      （authenticated↔closed）；`on_connection_path_changed` ← data_path +
      signaling_route diff；映射 direct+lan→`Lan`、direct_srflx→`P2p`、
@@ -107,9 +117,17 @@ M3 要以 pinned `third_party/heyaki` 替换 `FakeHeyakiAdapter`（[DEC-002](DEC
   - 回调线程：Node 回调在 executor 上下文触发（api.md），与 `EXEC-02`
     「有界校验 + 投递」对齐；业务 handler 一律在 Manager 执行上下文。
 - **冻结常量**（防止各工作项各自发明编码）：`application_id = "org.aki.app"`；
-  `DeviceId`（32B）/`MessageId`（16B）/`TransferId` 与 heyaki `Identifier` 的
-  字节 ↔ 规范字符串（`to_string` 编码形式）双射；envelope `type = "aki.text"`；配对 scope =
-  `message.send`。
+  `DeviceId`（32B）/`MessageId`（16B）/`TransferId`（16B）与 heyaki
+  `Identifier` 的字节 ↔ 规范字符串（`to_string` 编码形式）双射——TransferId
+  规范形式为 `hyt1_` 前缀 + 26 个 base32 字符（31 字符，`parse_transfer_id`
+  对非规范形式解码拒绝；M4-03 显式点名，沿 M3-05 `hym1_` 澄清先例）；envelope
+  `type = "aki.text"`（文本消息面）与 `type = "aki.image"`（图片消息面，
+  M4-03——aki 图片载荷 schema：`schema_version=1`，冻结字段号 1=name(≤512B)/
+  2=size_bytes(varint)/3=mime_type(≤128B)/4=transfer_id(字段 4 规范串)/
+  5=stored_sha256(预留 M4-04)，解码跳过未知字段（前向容忍）、缺 1~4/超限/
+  非规范 → 有界拒绝可见，载荷总量 ≤4KiB（aki 侧上限，紧于 heyaki 1MiB）；权威
+  细节见 [DEC-010](DEC-010-image-message-contract.md) 与设计 §6.1①）；
+  配对 scope = `message.send`。
 - **已知语义缺口（如实记录，不静默）**：LanPresence 不携带
   display_name/device_class/os_name/capabilities 元数据——`DeviceIdentity` 这些
   字段 M3 为占位值，后续经 RPC 能力查询或 heyaki 协议演进解决；发现启停为
@@ -181,11 +199,14 @@ build；最终二进制单份 sqlite3 符号与有效版本（dumpbin/nm）；bo
 ## 关联文档和工作项
 
 - [Aki 设计方案](../design/aki_design.md)第 8.1 节（SPI 映射权威指向本记录）、
-  第 8.2 节（executor 协调落点）、第 8.3 节（关闭钩子序列）
-- [Aki 实施总计划](../plans/aki-implementation-plan.md)（`SCOPE-01/02/03/05/06/10/11`、
-  `EXEC-01`/`EXEC-02`/`EXEC-04`、M3）
+  第 8.2 节（executor 协调落点）、第 8.3 节（关闭钩子序列）、第 6.1 节
+  （Image 消息 wire 契约与收发状态联动，M4-03）
+- [Aki 实施总计划](../plans/aki-implementation-plan.md)（`SCOPE-01/02/03/05/06/07/10/11`、
+  `EXEC-01`/`EXEC-02`/`EXEC-04`、M3、M4）
 - [DEC-002](DEC-002-layering-and-state-boundary.md)（真实 Heyaki 在 M3 接入）、
   [DEC-003](DEC-003-dependency-locking.md)（锁定纪律；executor 接入条款按本记录
   修订）、[DEC-008](DEC-008-manager-routing-and-executor-tasks.md)（回调路由与
-  序语义重评条款）
-- [M3：Heyaki 真实接入与文本消息](../plans/m3-heyaki-integration.md)（`M3-01`~`M3-09`）
+  序语义重评条款）、[DEC-010](DEC-010-image-message-contract.md)（图片消息
+  wire 契约与收发状态联动——本记录映射 4/冻结常量的 M4-03 扩展权威）
+- [M3：Heyaki 真实接入与文本消息](../plans/m3-heyaki-integration.md)（`M3-01`~`M3-09`）、
+  [M4：图片消息与文件传输](../plans/m4-image-file-transfer.md)（`M4-03`）

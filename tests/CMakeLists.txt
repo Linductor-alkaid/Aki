@@ -397,14 +397,45 @@ set_tests_properties(test_transfer_session_manager PROPERTIES LABELS "unit")
 # M3-05（评审拆分）：MessageId 双射 + aki.text 信封往返（DEC-006 冻结；网络
 # 无关）。独立 unit 二进制：回环二进制的 [skip] 受控退出不得掩盖同二进制内
 # 既有失败（工程规范第 7 节），网络无关断言在此始终完整执行。
+# M4-03 增补：TransferId 双射（hyt1_ 规范串，DEC-010）与 aki.image 信封 +
+# ImagePayload 冻结字段号编码往返。
 add_executable(test_heyaki_message unit/test_heyaki_message.cpp)
 target_compile_features(test_heyaki_message PRIVATE cxx_std_20)
 aki_apply_warnings(test_heyaki_message PRIVATE)
 target_link_libraries(test_heyaki_message PRIVATE
     Catch2::Catch2WithMain
     aki_app
+    aki_conversation
     aki_heyaki
     heyaki::client)
 aki_deploy_openssl_dlls(test_heyaki_message)
 add_test(NAME test_heyaki_message COMMAND test_heyaki_message)
 set_tests_properties(test_heyaki_message PROPERTIES LABELS "unit")
+
+# M4-03：ImagePayload wire 编解码器单测（DEC-010① 冻结字段号 schema v1；
+# 往返 + 各拒收路径 + 前向容忍跳过；网络无关，无 [skip] 受控退出）。
+add_executable(test_image_payload_codec unit/test_image_payload_codec.cpp)
+target_compile_features(test_image_payload_codec PRIVATE cxx_std_20)
+aki_apply_warnings(test_image_payload_codec PRIVATE)
+target_link_libraries(test_image_payload_codec PRIVATE
+    Catch2::Catch2WithMain
+    aki_conversation
+    aki_transfer)
+add_test(NAME test_image_payload_codec COMMAND test_image_payload_codec)
+set_tests_properties(test_image_payload_codec PROPERTIES LABELS "unit")
+
+# M4-03：图片消息双节点回环（DEC-006 映射 4 图片面扩展/DEC-010；单用例
+# 二进制，[skip] 受控退出纪律沿 M3-05——防火墙受限环境按 M3-09 先例降级，
+# 补跑条件见里程碑验证记录）。
+add_executable(test_image_message_loopback
+    integration/test_image_message_loopback.cpp)
+target_compile_features(test_image_message_loopback PRIVATE cxx_std_20)
+aki_apply_warnings(test_image_message_loopback PRIVATE)
+target_link_libraries(test_image_message_loopback PRIVATE
+    Catch2::Catch2WithMain
+    aki_app
+    aki_heyaki
+    heyaki::client)
+aki_deploy_openssl_dlls(test_image_message_loopback)
+add_test(NAME test_image_message_loopback COMMAND test_image_message_loopback)
+set_tests_properties(test_image_message_loopback PROPERTIES LABELS "integration")
