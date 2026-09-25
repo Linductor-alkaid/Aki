@@ -135,10 +135,17 @@
   MM 路由/正向链/RULE-08/闸门两向失败/运行期零传导/图片路径任务异常，
   debug/release 全量 ctest 34/34 零回归；双端图片回环因防火墙受限以 [skip]
   证据路径降级（补跑条件登记）。详见验证记录 2026-09-26 条目。）
-- [ ] `M4-04` 发送侧真实传输链路（`SCOPE-08`）：`push_file` 发起 → 分块写入
+- [x] `M4-04` 发送侧真实传输链路（`SCOPE-08`）：`push_file` 发起 → 分块写入
   `.part`（blocking worker）→ 进度实时持久化 → `Completed` SHA-256 + 原子
   改名 + 回写（M2-06 作业组真实接线；M4-03 观察③：消除会话骨架
   `session_loop` 的池 worker 停占——2 核设备 ≥2 并发传输即饥饿 Manager 泵）。
+  （2026-09-26 完成：调研结论按工程规范 6.2 落档
+  [DEC-011](../decisions/DEC-011-transfer-io-bearing.md)（Accepted——事件驱动
+  会话状态机（无池上会话长任务）+ 专用 `aki.transfer-io` blocking worker
+  逐块续接（每会话单飞）+ 进度最新槽聚合 + 终态闸门 + hash-first 消息排序 +
+  M4-02 组件收口删除 + TransferId 规范生成入口定案），设计 §7.1①③④/§8.3/
+  §11.1③④/§14 与总计划 EXEC-04/05 同批回填；实现与测试见下方 2026-09-26
+  （M4-04）验证记录。）
 - [ ] `M4-05` 接收侧与暂停/恢复/取消（`SCOPE-08`）：接收落盘与完成合并；
   pause/resume/cancel 状态机推进与 `.part` 幂等删除；`on_transfer_*` 路由；
   终态幂等。
@@ -492,3 +499,96 @@
     设备饥饿风险（≥2 并发传输即停占全部默认池 worker，Manager 泵不可
     调度）——M4-04 真实传输循环（分块写入走 blocking worker）必须消除
     池 worker 停占；M1 骨架以 M4 替换为既定设计，本项不重构。
+
+- 2026-09-26（`M4-04` 完成；Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0；负责人：Linductor）：
+  - 设计先行（DOD-04，M1-08 纪律；开工前调研结论按工程规范 6.2 落档）：
+    新建 [DEC-011](../decisions/DEC-011-transfer-io-bearing.md)（Accepted）
+    定案——① 发送侧「事件驱动会话状态机（无池上会话长任务）+ Aki 侧分块
+    文件 IO 走新增专用 blocking worker（`aki.transfer-io`，DatabaseWorker
+    同款 IBlockingIoWorker + 有界 MpscChannel 作业通道形态）上的逐块续接
+    （每会话单飞）」；② M4-02 `transfer_session_manager` 组件与 M1 会话骨架
+    双组件收口（组件与其测试删除，会话所有者收敛至 app TransferManager，
+    `transfer/manager/` 目录留空、落位说明入设计 §14）；③ 承载面层向
+    （`transfer/storage/transfer_io.hpp` 域接口 + `persistence/storage/`
+    实现）与「TM 先于 IO 回调终结」生命周期纪律；④ TransferId 生成入口
+    定案（16 随机字节 → heyaki 规范串，`NodeSession::new_transfer_id()`，
+    DEC-010 风险⑦ 闭环）。同批回填：设计 §7.1①③（承载形态重写，M4-01 的
+    「不经 DB 通道」硬结论维持）§7.1④（stored_sha256 wire+内存字段口径）
+    §8.3（长任务适用面 + transfer IO worker 关闭纪律 + TM 终结前置）§11.1③
+    （worker 复用 DatabaseWorker 关闭纪律）§11.1④（发送侧 M4-04 接线标注）
+    §14（落位说明）、总计划 EXEC-04/EXEC-05（适用面修订）与决策清单。
+  - 实现：`FileMetadata` 补 `stored_sha256`（transfer_types.hpp；codec 字段
+    5 激活——非空携带、缺省视为无、>64B 拒收，DEC-010 前向兼容条款落地）；
+    `transfer/storage/transfer_io.hpp`（域承载面：start/advance/cancel/
+    release + 事件相位 + idle/拒绝计数，RULE-10 仅 aki/std）；
+    `persistence/storage/transfer_io_worker.hpp`（TransferIoControl 共享
+    Impl + TransferIoRunnable：DatabaseWorker 同款轮询环、offset 基础无状态
+    分块、hash→copy 相位切换、空文件显物化 .part、异常作业边界捕获转
+    failed 事件 worker 存活、停止路径存量清理 + 回调结算、release 语义保留
+    .part 供 M2-06 作业组）；`app/application/transfer_manager.hpp` 全量重构
+    （会话表事件驱动：单飞续接/续接抑制（closing/paused）/进度最新槽 +
+    单飞 dirty（每排空至多一个 UpdateTransferProgress）/终态闸门
+    （Completed 持有至归档完成，Failed/Cancelled FIFO cancel 幂等清理）/
+    hash-first 延续（on_hash_ready 泵上下文）/flush 泵静止 + IO 归零/析构
+    兜底 request_stop）；`heyaki_node_adapter.hpp` start_file_transfer 真实
+    push_file 接线（root 经 Options 注入 `push_root`，§7.1⑤；pause/resume/
+    cancel 仍 M4-05）+ `NodeSession::push_file`/`new_transfer_id`；Fake
+    TransferCommand 记录 source_path（M4-02 登记的路径消费落地）；
+    `image_flow.hpp` v2 `send_image_message_with_hash`（hash-first，v1 语义
+    保留）；组合根 main.cpp：TransferIoControl 构造（3.6 步）→ TM 注入 →
+    `aki.transfer-io` 注册（6.5 步，TM 构造先于 worker 启动）→ 关闭序
+    （transfers.flush 含 IO 归零 → db drain → owner 步骤 2/3 双 worker
+    回收，断言 blocking_workers == 2）。
+  - 基础设施加固（如实登记）：`app/application/manager_runtime.hpp`
+    `wait_current_pump` 由「持 futures_mutex_ 等待未结算 future」改为短临界区
+    轮询——M4-04 起排空 handler 内存在自续接入队（进度聚合/回调重入），
+    入队侧 ensure_pump 需同一 mutex，持锁等待互锁至 flush 预算耗尽（发送
+    路径首测实测复现：flush(2s) 确定性失败）；轮询形态锁只覆盖就绪检查与
+    消费，flush 语义不变，四个 Manager 全量测试零回归。
+  - 测试：新建 `tests/unit/test_transfer_send_path.cpp`（10 用例 171 断言，
+    网络无关）——分块边界三态（空文件显物化 .part/非整块尾 20B/多块 100B，
+    chunk=8）+ .part 与源逐字节一致 + hash-first 回调与 sha256_hex 交叉
+    验证；hash-first 图片流（v2：消息行 media.stored_sha256 == 源 SHA-256 +
+    Fake Start 命令含 source_path）；进度聚合（三连注入 ≤3 更新上界 +
+    latest-wins 终值 24 落地）；终态闸门（单线程池 + 饱和任务确定性停档：
+    wire Completed 先至 → 行停留非终态 + 会话存活 → resume → 放行 Completed；
+    合法链 Queued→Negotiating→Transferring→Completed）；IO 失败（源缺失 →
+    failed 事件 + 空 hash 直通 + worker 存活后续会话正常）；提交拒绝
+    （承载面 request_stop 后 start → io_rejected_submissions +1）；执行中
+    取消（确定性在飞 + FIFO cancel → .part 幂等删除 + 迟到事件计数）；
+    shutdown（在飞会话 + fully_stopped + 双 worker 回收）；2-worker 小池夹具
+    （双并发归档 48B + MM 文本发送 2s 内完成——M4-03 观察③ 闭环：无池
+    worker 停占）；重启一致性（完整 DB 组合：迁移/仓储/DatabaseWorker/接受
+    后处理器镜像 main.cpp → 归档 + wire 事件 → M2-06 终态作业组真实文件源
+    （.part → files/<id>/<净化名> + stored_relative_path/stored_sha256/
+    stored_size_bytes 回写列 SQL 断言）→ 关闭 → 重开 DB 行/文件本体/哈希
+    逐项一致）。新建 `tests/integration/test_transfer_send_loopback.cpp`
+    （单用例二进制：配对 → 真实 Adapter push_file admission + 归档链路 +
+    非规范 TransferId 拒绝）；`test_transfer_session_manager` 随组件删除
+    （CMake 同步，其覆盖由上述用例与 test_transfer_state/test_app_state
+    承载）；既有测试更新：test_app_managers 会话取消语义（无池任务句柄——
+    executor 取消计数断言移除，ActiveSession/cancelled 计数保留）、
+    test_image_payload_codec 字段 5 在册断言。
+  - 验证（本会话执行）：MSVC debug 全量 `ctest --test-dir build/debug -C
+    Debug` 35/35 通过（既有 34 项中 TSM 1 项移除 + 新 send_path 1 项 +
+    send_loopback 1 项 = 35）；release 全量
+    `ctest --test-dir build/release -C Release` 35/35 通过；
+    test_transfer_send_path/test_app_managers/test_image_payload_codec 随机
+    顺序各 8 连跑零失败；ASAN/UBSAN/TSAN 随本 PR CI（Linux 四档门禁）。
+  - hash-first 延迟实测（DEC-011 风险④登记项）：aki 软件 SHA-256 探针
+    （build/scratch/hash_probe.cpp，MSVC 默认无优化）64MiB 单遍 ~1496ms
+    （~43MiB/s）——大文件首次发送的消息可见延迟为 hash 单遍时长量级
+    （release 优化构建更快）；push_file 不等 hash，wire 传输启动不受影响。
+  - 如实降级（沿 M3-04~09/M4-03 纪律）：`test_transfer_send_loopback` 因
+    本机防火墙拦截至端 TLS 以 `[skip] pairing handshake blocked (firewall)`
+    证据路径通过（网络无关半边——归档链路/闸门/取消/重启一致性——已全部
+    验证）；补跑条件：防火墙放行入站 TCP 或 LAN 双端真机（与 M3-04~08/
+    M4-03 登记同批执行）。真实 wire 终态事件路由（set_file_event_observer
+    → RouterSink）随 M4-05 接线。
+  - 已知边角登记（DEC-011）：归档失败 + wire Completed → held 终态立即
+    释放、M2-06 作业组对缺失 .part 明确失败可见（行 Completed 与存储缺失
+    并存为可见失败而非悬挂）；`FileMetadata.stored_sha256` 消息行重启重建
+    为空（传输行 stored_* 列为持久权威）——M4-06 回环断言按此口径。
+  - 同步：本里程碑（M4-04 勾选、本记录）、总计划（当前状态条目 + EXEC-04/05
+    + DEC-011 决策清单条目）、DEC-011/设计 §7.1/§8.3/§11.1/§14。

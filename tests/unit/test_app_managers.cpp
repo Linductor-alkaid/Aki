@@ -9,7 +9,8 @@
 //   - DOD-02 六项沿 Manager 任务路径：正常完成（用例 1/2）、任务异常（Adapter
 //     抛出经 future + task_exception_count 可见且泵自愈）、提交拒绝
 //     （max_in_flight_tasks 准入 + 收件箱满，均可见）、执行中取消
-//     （submit_cancellable + request_task_cancel + StopToken 轮询退出）、超时
+//     （M4-04 语义：事件驱动会话——续接抑制 + Adapter 命令 + 会话回收；IO
+//     路径的执行中取消见 test_transfer_send_path）、超时
 //     （独立 owner 排队软超时击杀排空任务且存量不丢）、shutdown（第 8.3 节
 //     关闭钩子顺序 → fully_stopped）；
 //   - 迟到事件不复活终态（RULE-08，退出-3）：迟到的进度/终态宣告、迟到的
@@ -823,22 +824,21 @@ TEST_CASE("DOD-02 submit rejection: admission limit and inbox backpressure are v
     }
 }
 
-// ---- 用例 5：DOD-02 执行中取消——submit_cancellable + request_task_cancel ----
+// ---- 用例 5：DOD-02 执行中取消（M4-04 语义：事件驱动会话，无池任务句柄；
+// 取消 = 续接抑制 + Adapter 命令 + 会话回收；IO 路径的执行中取消见
+// test_transfer_send_path）----
 
 TEST_CASE("DOD-02 in-flight cancellation: transfer session observes the stop token",
     "[unit][managers][dod02]") {
     TransferManagerOptions transfer_options;
     transfer_options.sender = DeviceId{"local-1"};
-    transfer_options.session_poll_interval = 2ms;
-    transfer_options.session_reap_wait = 1s;
     AppStack stack{ExecutorOwner::Options{}, ManagerPumpOptions{}, {},
         MessageManagerOptions{}, transfer_options};
     auto& owner = stack.state_owner;
     auto& fake = stack.adapter;
     auto& transfers = *stack.transfers;
-    auto& executor = stack.host.executor_owner.executor();
 
-    // 应用发起传输：会话任务派生（TaskHandle 按 TransferId 归 Manager 持有）。
+    // 应用发起传输：会话登记（事件驱动状态机，DEC-011；无池任务派生）。
     REQUIRE(transfers.start_transfer(DeviceId{"beta"}, TransferId{"t-1"}, make_file()));
     REQUIRE(transfers.flush(2s));
     REQUIRE(wait_until([&] { return transfers.active_session_count() == 1; }, 2s));
@@ -851,17 +851,13 @@ TEST_CASE("DOD-02 in-flight cancellation: transfer session observes the stop tok
         REQUIRE(snapshot.value.transfers.transfers.front().state == TransferState::Queued);
     }
 
-    // 协作取消：Executor 侧 request_task_cancel（排队/运行期对 Executor 可见）。
+    // 协作取消：Adapter 命令 + 会话收尾（续接抑制 + 回收）。
     REQUIRE(transfers.cancel_transfer(TransferId{"t-1"}));
-    REQUIRE(transfers.flush(2s));  // 取消 + 会话回收（future 已消费）。
+    REQUIRE(transfers.flush(2s));
     REQUIRE(transfers.active_session_count() == 0);
     REQUIRE(transfers.cancelled_session_count() == 1);
 
-    const auto cancellation = executor.get_cancellation_status();
-    REQUIRE(cancellation.request_count == 1);
-    REQUIRE(cancellation.running_request_count == 1);
-
-    // Adapter 侧取消命令同样可见（SPI 幂等停止）。
+    // Adapter 侧取消命令可见（SPI 幂等停止）。
     bool adapter_cancel_seen = false;
     for (const auto& command : fake.transfer_commands()) {
         if (command.kind == aki::heyaki::FakeHeyakiAdapter::TransferCommand::Kind::Cancel
@@ -880,10 +876,11 @@ TEST_CASE("DOD-02 in-flight cancellation: transfer session observes the stop tok
         REQUIRE(snapshot.value.transfers.transfers.front().state == TransferState::Cancelled);
     }
 
-    // 幂等：会话已回收，再次取消不再产生新的取消请求。
+    // 幂等：会话已回收，再次取消不再重复计数（会话表已空）。
     REQUIRE(transfers.cancel_transfer(TransferId{"t-1"}));
     REQUIRE(transfers.flush(2s));
-    REQUIRE(executor.get_cancellation_status().request_count == 1);
+    REQUIRE(transfers.cancelled_session_count() == 1);
+    REQUIRE(transfers.active_session_count() == 0);
 
     const auto report = stack.host.executor_owner.shutdown();
     REQUIRE(report.fully_stopped());
@@ -898,8 +895,6 @@ TEST_CASE("Duplicate transfer id is rejected without replacing the live session"
     // 去重或状态机非法边（FakeHeyakiAdapter 二者兼备，测不到本防线）。
     TransferManagerOptions transfer_options;
     transfer_options.sender = DeviceId{"local-1"};
-    transfer_options.session_poll_interval = 2ms;
-    transfer_options.session_reap_wait = 1s;
     BasicStack<StubAdapter> stack{ExecutorOwner::Options{}, ManagerPumpOptions{}, {},
         MessageManagerOptions{}, transfer_options};
     auto& owner = stack.state_owner;
@@ -1013,8 +1008,6 @@ TEST_CASE("DOD-02 shutdown: the composition hook cancels, drains, and closes in 
     "[unit][managers][dod02]") {
     TransferManagerOptions transfer_options;
     transfer_options.sender = DeviceId{"local-1"};
-    transfer_options.session_poll_interval = 2ms;
-    transfer_options.session_reap_wait = 1s;
     AppStack stack{ExecutorOwner::Options{}, ManagerPumpOptions{}, {},
         MessageManagerOptions{}, transfer_options};
     auto& owner = stack.state_owner;
@@ -1047,8 +1040,6 @@ TEST_CASE("DOD-02 shutdown: the composition hook cancels, drains, and closes in 
     REQUIRE(report.fully_stopped());
     REQUIRE(stack.transfers->cancelled_session_count() == 1);
     REQUIRE(stack.transfers->active_session_count() == 0);
-    REQUIRE(stack.host.executor_owner.executor().get_cancellation_status().request_count
-        == 1);
     REQUIRE(owner.is_closed());
 
     // 停止投递后注入明确拒绝（EXEC-01/AGENTS 规则 10：不静默）。
@@ -1345,8 +1336,6 @@ TEST_CASE("Image send flow gates on transfer admission before the message",
         TransferManagerOptions transfer_options;
         transfer_options.sender = DeviceId{"local-1"};
         transfer_options.pump.inbox_capacity = 1;
-        transfer_options.session_poll_interval = 2ms;
-        transfer_options.session_reap_wait = 1s;
         BasicStack<StubAdapter> stack{ExecutorOwner::Options{}, ManagerPumpOptions{},
             {}, MessageManagerOptions{}, transfer_options};
         auto& owner = stack.state_owner;
@@ -1420,8 +1409,6 @@ TEST_CASE("Image send flow gates on transfer admission before the message",
         message_options.local_device = DeviceId{"local-1"};
         TransferManagerOptions transfer_options;
         transfer_options.sender = DeviceId{"local-1"};
-        transfer_options.session_poll_interval = 2ms;
-        transfer_options.session_reap_wait = 1s;
         BasicStack<StubAdapter> stack{ExecutorOwner::Options{}, ManagerPumpOptions{},
             {}, message_options, transfer_options};
         auto& owner = stack.state_owner;
@@ -1482,8 +1469,6 @@ TEST_CASE("Image send flow gates on transfer admission before the message",
         // 会话、handler_rejections 可见）。
         TransferManagerOptions transfer_options;
         transfer_options.sender = DeviceId{"local-1"};
-        transfer_options.session_poll_interval = 2ms;
-        transfer_options.session_reap_wait = 1s;
         BasicStack<StubAdapter> stack{ExecutorOwner::Options{}, ManagerPumpOptions{},
             {}, MessageManagerOptions{}, transfer_options};
         auto& owner = stack.state_owner;
@@ -1548,8 +1533,6 @@ TEST_CASE("Image send flow gates on transfer admission before the message",
         TransferManagerOptions transfer_options;
         transfer_options.sender = DeviceId{"local-1"};
         transfer_options.pump.inbox_capacity = 1;
-        transfer_options.session_poll_interval = 2ms;
-        transfer_options.session_reap_wait = 1s;
         BasicStack<StubAdapter> stack{ExecutorOwner::Options{}, ManagerPumpOptions{},
             {}, message_options, transfer_options};
         auto& owner = stack.state_owner;
@@ -1633,8 +1616,6 @@ TEST_CASE("Image send flow gates on transfer admission before the message",
         TransferManagerOptions transfer_options;
         transfer_options.sender = DeviceId{"local-1"};
         transfer_options.pump.inbox_capacity = 1;
-        transfer_options.session_poll_interval = 2ms;
-        transfer_options.session_reap_wait = 1s;
         BasicStack<StubAdapter> stack{ExecutorOwner::Options{}, ManagerPumpOptions{},
             {}, message_options, transfer_options};
         auto& owner = stack.state_owner;

@@ -283,33 +283,46 @@ private:
         in_flight_generation_.compare_exchange_strong(expected, 0);
     }
 
-    // 有界等待当前在飞排空任务终结并消费其 future。全程持 futures_mutex_：
-    // future 不离开句柄槽（避免无效槽位与其他消费路径竞态）；代价是 flush
-    // 等待期间入队者的 spawn 入槽被有界阻塞（flush 语义即静止收敛，可接受）。
-    // 返回 false 表示预算耗尽（证据不伪造）。
+    // 有界等待当前在飞排空任务终结并消费其 future。等待为短临界区轮询
+    //（1ms 粒度）：不持 futures_mutex_ 等待未结算 future——M4-04 起排空
+    // handler 内存在自续接入队（进度聚合/回调重入，transfer_manager.hpp），
+    // 入队侧 ensure_pump 需要同一 mutex，持锁等待会与其互锁至预算耗尽
+    //（排空 future 的结算依赖 handler 完成）。轮询形态下锁只覆盖就绪
+    // 检查与消费；flush 语义（静止收敛、预算耗尽如实返回 false）不变。
     [[nodiscard]] bool wait_current_pump(std::chrono::steady_clock::time_point deadline) {
-        std::lock_guard<std::mutex> guard(futures_mutex_);
-        const auto generation = in_flight_generation_.load();
-        for (auto it = pending_futures_.begin(); it != pending_futures_.end(); ++it) {
-            if (it->first != generation) {
-                continue;
-            }
-            if (it->second.wait_for(std::chrono::seconds(0))
-                != std::future_status::ready) {
-                const auto remaining = deadline - std::chrono::steady_clock::now();
-                if (remaining <= std::chrono::milliseconds(0)
-                    || it->second.wait_for(remaining) != std::future_status::ready) {
-                    return false;
+        for (;;) {
+            std::uint64_t generation = 0;
+            bool pending_found = false;
+            {
+                std::lock_guard<std::mutex> guard(futures_mutex_);
+                generation = in_flight_generation_.load();
+                for (auto it = pending_futures_.begin();
+                    it != pending_futures_.end(); ++it) {
+                    if (it->first != generation) {
+                        continue;
+                    }
+                    pending_found = true;
+                    if (it->second.wait_for(std::chrono::seconds(0))
+                        == std::future_status::ready) {
+                        consume_drain_future(std::move(it->second));
+                        pending_futures_.erase(it);
+                        release_in_flight_if_current(generation);
+                        return true;
+                    }
+                    break;  // 当前代号至多一个句柄槽
                 }
             }
-            consume_drain_future(std::move(it->second));
-            pending_futures_.erase(it);
-            release_in_flight_if_current(generation);
-            return true;
+            if (!pending_found) {
+                // spawn 在 CAS 之后才入槽：短暂窗口内可能还没有 future，
+                // 退让重试（同既有 yield 语义）。
+                std::this_thread::yield();
+                return std::chrono::steady_clock::now() < deadline;
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                return false;  // 预算耗尽：如实上报（证据不伪造）。
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-        // spawn 在 CAS 之后才入槽：短暂窗口内可能还没有 future，退让重试。
-        std::this_thread::yield();
-        return std::chrono::steady_clock::now() < deadline;
     }
 
     [[nodiscard]] std::uint64_t next_generation() noexcept {

@@ -6,7 +6,9 @@
 //   2 = size_bytes  varint
 //   3 = mime_type   length-delimited，≤128B
 //   4 = transfer_id length-delimited，规范串 hyt1_ + 26 base32 = 31 字符
-//   5 = stored_sha256（预留 M4-04；v1 解码器跳过，不读取）
+//   5 = stored_sha256 length-delimited，≤64B（M4-04 起承载：发送方发送前
+//     流式 SHA-256，64 字符小写 hex；可选字段——缺省视为无。DEC-010 前向
+//     兼容条款落地：旧接收端跳过、不 bump schema_version）
 //
 // 解析规则（前向容忍 + 有界拒绝可见，RULE-09）：
 //   - 跳过未知字段号（追加可选字段不 bump schema_version，破坏性变更才 bump）；
@@ -41,6 +43,8 @@ inline constexpr std::size_t kImageNameMaxBytes = 512;
 inline constexpr std::size_t kImageMimeMaxBytes = 128;
 // hyt1_ 前缀（5）+ 16 字节 base32 编码（ceil(128/5) = 26）= 31 字符。
 inline constexpr std::size_t kImageTransferIdEncodedBytes = 31;
+// 字段 5 stored_sha256（64 字符小写 hex）上限（M4-04）。
+inline constexpr std::size_t kImageSha256MaxBytes = 64;
 // aki 侧载荷总量上限（紧于 heyaki envelope 1MiB；冻结于 codec 常量）。
 inline constexpr std::size_t kImagePayloadMaxBytes = 4096;
 
@@ -164,7 +168,8 @@ inline constexpr std::uint32_t kWireLengthDelimited = 2;
     }
     std::vector<std::byte> out;
     out.reserve(kImageTransferIdEncodedBytes + payload.media.name.size()
-        + payload.media.mime_type.size() + 16);
+        + payload.media.mime_type.size() + payload.media.stored_sha256.size()
+        + 16);
     if (!wire_detail::append_bytes_field(out, 1, payload.media.name)
         || !wire_detail::append_header(out, 2, wire_detail::kWireVarint)
         || !wire_detail::append_varint(
@@ -174,6 +179,16 @@ inline constexpr std::uint32_t kWireLengthDelimited = 2;
             out, 4, payload.transfer_id.value)
         || out.size() > kImagePayloadMaxBytes) {
         return std::nullopt;  // 编码超限：总量上限在成品上校验（先写入有界）
+    }
+    // 字段 5（M4-04）：stored_sha256 非空时携带（缺省视为无——DEC-010 前向
+    // 兼容：旧接收端跳过本字段）。
+    if (!payload.media.stored_sha256.empty()) {
+        if (payload.media.stored_sha256.size() > kImageSha256MaxBytes
+            || !wire_detail::append_bytes_field(
+                out, 5, payload.media.stored_sha256)
+            || out.size() > kImagePayloadMaxBytes) {
+            return std::nullopt;
+        }
     }
     return out;
 }
@@ -191,6 +206,7 @@ inline constexpr std::uint32_t kWireLengthDelimited = 2;
     std::optional<std::uint64_t> size_bytes;
     std::optional<std::string> mime_type;
     std::optional<std::string> transfer_id;
+    std::string stored_sha256;  // 字段 5（可选，M4-04）：缺省为空。
     std::size_t cursor = 0;
     while (cursor < bytes.size()) {
         std::uint64_t tag = 0;
@@ -253,8 +269,17 @@ inline constexpr std::uint32_t kWireLengthDelimited = 2;
                         transfer_id = std::string{field_text};
                     }
                     break;
+                case 5U:
+                    if (field_text.size() > kImageSha256MaxBytes) {
+                        return {std::nullopt,
+                            ImagePayloadDecodeError::field_limit};
+                    }
+                    if (stored_sha256.empty()) {
+                        stored_sha256 = std::string{field_text};
+                    }
+                    break;
                 default:
-                    break;  // 未知字段（含预留 5）：跳过（前向容忍）
+                    break;  // 未知字段：跳过（前向容忍）
             }
         } else {
             // wire 类型 1/5（64/32-bit）与已弃用 group（3/4）：aki schema v1
@@ -267,7 +292,8 @@ inline constexpr std::uint32_t kWireLengthDelimited = 2;
         return {std::nullopt, ImagePayloadDecodeError::missing_field};
     }
     ImagePayload payload;
-    payload.media = FileMetadata{*name, *size_bytes, *mime_type};
+    payload.media =
+        FileMetadata{*name, *size_bytes, *mime_type, std::move(stored_sha256)};
     payload.transfer_id = TransferId{*transfer_id};
     return {std::move(payload), ImagePayloadDecodeError::none};
 }

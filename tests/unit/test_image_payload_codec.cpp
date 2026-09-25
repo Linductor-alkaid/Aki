@@ -207,12 +207,13 @@ TEST_CASE("Image payload codec rejects bounded violations visibly",
 
 TEST_CASE("Image payload codec skips unknown fields for forward tolerance",
     "[unit][codec][image]") {
-    // 未知字段号（99）与预留字段 5（M4-04 stored_sha256）：v1 解码器跳过，
-    // 往返不破坏（前向容忍，DEC-010① 版本规则）。
+    // 未知字段号（99/100）跳过（前向容忍，DEC-010① 版本规则）；字段 5 自
+    // M4-04 起承载 stored_sha256（可选取值——缺省视为无；首现为准）。
     const auto encoded = codec::encode_image_payload(sample());
     REQUIRE(encoded.has_value());
     std::vector<std::byte> extended = *encoded;
-    put_bytes_field(extended, 5U, std::string(64, 'h'));  // 预留 sha256 形态
+    const std::string sha_field(64, 'h');
+    put_bytes_field(extended, 5U, sha_field);  // stored_sha256（M4-04 起在册）
     put_bytes_field(extended, 99U, "future-field");
     {
         put_header(extended, 100U, 0U);  // 未知 varint 字段
@@ -222,7 +223,10 @@ TEST_CASE("Image payload codec skips unknown fields for forward tolerance",
         std::span<const std::byte>(extended.data(), extended.size()));
     REQUIRE(decoded.error == ImagePayloadDecodeError::none);
     REQUIRE(decoded.value.has_value());
-    REQUIRE(decoded.value->media == sample().media);
+    REQUIRE(decoded.value->media.name == sample().media.name);
+    REQUIRE(decoded.value->media.size_bytes == sample().media.size_bytes);
+    REQUIRE(decoded.value->media.mime_type == sample().media.mime_type);
+    REQUIRE(decoded.value->media.stored_sha256 == sha_field);
     REQUIRE(decoded.value->transfer_id == sample().transfer_id);
 
     // 重复字段：首现为准（确定性——不做 last-wins，避免歧义语义入契约）。
@@ -233,8 +237,11 @@ TEST_CASE("Image payload codec skips unknown fields for forward tolerance",
     put_varint(duplicated, 1);
     put_bytes_field(duplicated, 3U, "image/png");
     put_bytes_field(duplicated, 4U, kCanonicalTransferId);
+    put_bytes_field(duplicated, 5U, sha_field);
+    put_bytes_field(duplicated, 5U, std::string(64, 'x'));
     const auto decoded_duplicate = codec::decode_image_payload(
         std::span<const std::byte>(duplicated.data(), duplicated.size()));
     REQUIRE(decoded_duplicate.error == ImagePayloadDecodeError::none);
     REQUIRE(decoded_duplicate.value->media.name == "first.png");
+    REQUIRE(decoded_duplicate.value->media.stored_sha256 == sha_field);
 }

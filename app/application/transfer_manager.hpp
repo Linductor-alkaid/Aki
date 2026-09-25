@@ -1,20 +1,32 @@
-// Transfer Manager 骨架（设计第 8.3 节，DEC-008；M1-05，EXEC-05/EXEC-07）。
+// Transfer Manager（设计第 8.3/7.1 节，DEC-008；M1-05 → M4-04 重构，
+// DEC-011）。
 //
 // 只写 transfers Store：started/progress/completed 事件 → UpsertTransfer /
 // UpdateTransferProgress / CompleteTransfer（终态幂等，迟到事件不复活，RULE-08）。
-// 传输四接口是本域出站操作（→ Adapter）。应用发起的传输由会话任务承载：
-// submit_cancellable + StopToken（executor 注入首参数），TaskHandle + future 按
-// 业务稳定 TransferId 由本 Manager 显式持有；取消一律经
-// executor().request_task_cancel(handle) 发起，会话任务轮询 stop_requested()
-// 协作退出（不抢占、不引入 TimerHandle，M1 无周期负载）。
+// 传输四接口是本域出站操作（→ Adapter）。
 //
-// M1 会话循环是协作取消骨架：轮询停止请求直到被取消（真实分块传输循环由 M4
-// 替换）；会话只有在取消请求后才会退出，宿主关闭钩子必须先 request_cancel_all
-// 并 flush 消费在途 future（设计第 8.3 节关闭顺序）。取消断言经
-// get_cancellation_status()/ExecutorSnapshot.cancellation（EXEC-06）。
+// 会话承载（M4-04 定案，DEC-011/§7.1①③）：**事件驱动会话状态机，无池上
+// 会话长任务**——wire 侧状态由 heyaki 文件事件（经 RouterSink 入泵）驱动；
+// Aki 侧归档（发送前流式 SHA-256 → source 拷贝 files/tmp/<id>.part）经注入的
+// TransferIo 承载面（组合根以 aki.transfer-io blocking worker 实现）分块执行：
+// 每会话单飞（一次一个在飞分块作业，完成事件回到泵后续接下一块），进度经
+// 每会话最新进度槽 + 单飞 dirty 工作项聚合（每次排空至多一个
+// UpdateTransferProgress，§7.1③），终态闸门——`CompleteTransfer(Completed)`
+// 仅在归档完成后放行（M2-06 终态作业组对不完整 .part 明确失败）；
+// `Failed`/`Cancelled` 终态不等待归档（在飞块结束后由 FIFO cancel 作业幂等
+// 清理）。取消经「会话控制位（closing/paused，块间检查）+ io cancel 作业 +
+// worker StopToken」表达，不经 request_task_cancel（无池任务句柄）。
 //
-// 会话表/回收队列只在排空上下文访问；active_session_count() 原子仅供跨上下文
-// 诊断。生命周期（EXEC-07）：本对象必须先于其会话任务终结。
+// hash-first（§7.1④）：发送前 SHA-256 分块流先行；`stored_sha256` 随消息载荷
+// 携带的调用方经 start_transfer 的 on_hash_ready 延续在 hash 完成后（泵上下文）
+// 被触发；归档失败/无 io 承载时以空 hash 触发（调用方决定不发消息）。
+//
+// 线程契约与生命周期（EXEC-02/04/07）：会话表/进度槽只在排空上下文访问；
+// IO 事件经 worker 线程的有界投递面回到本泵收件箱（收件箱满时短退避重试，
+// 仍失败计数可见）；**本对象必须先于其 IO 事件回调终结**——flush() 先等
+// IO 在飞归零、再做最终泵排空（两序皆满足才返回 true，有界预算），析构
+// 兜底 request_stop + 有界等待；组合根关闭序为「flush（含 IO 归零）→
+// owner EXEC-01 步骤 2/3 回收 worker」（§11.1③）。
 #pragma once
 
 #include "app/application/manager_runtime.hpp"
@@ -23,20 +35,20 @@
 #include "app/state/app_state_updates.hpp"
 #include "device/device/device_types.hpp"
 #include "heyaki/adapter/heyaki_adapter.hpp"
+#include "transfer/storage/transfer_io.hpp"
 #include "transfer/transfer/transfer_types.hpp"
 
 #include <executor/executor.hpp>
-#include <executor/task_cancellation.hpp>
-#include <executor/types.hpp>
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <deque>
 #include <filesystem>
+#include <functional>
+#include <future>
 #include <map>
 #include <memory>
-#include <future>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -63,9 +75,12 @@ struct StartTransferWork {
     aki::device::DeviceId to;
     aki::transfer::TransferId transfer_id;
     aki::transfer::FileMetadata file;
-    // 发送侧本地路径（§7.1⑤）：随出站 SPI 传 Adapter，不进入对端可见的
-    // FileMetadata；真实取值随 M4-03/04 图片/文件消息面接入。
+    // 发送侧本地路径（§7.1⑤）：随出站 SPI 传 Adapter（wire 侧 heyaki 自读），
+    // 同时是 Aki 归档拷贝的源。
     std::filesystem::path source_path;
+    // hash-first 延续（§7.1④/DEC-011）：hash 完成后于泵上下文以 64 字符
+    // hex 触发；归档失败/无 io 承载时以空串触发（调用方决定不发消息）。
+    std::function<void(std::string)> on_hash_ready;
 };
 
 struct PauseTransferWork {
@@ -80,10 +95,21 @@ struct CancelTransferWork {
     aki::transfer::TransferId transfer_id;
 };
 
-// 关闭钩子用：请求取消全部在飞会话（EXEC-01 步骤 2 前置，句柄由 Manager 发起）。
+// IO 完成事件（worker 线程 → 本泵收件箱的有界投递面）。
+struct IoEventWork {
+    aki::transfer::TransferIoEvent event;
+};
+
+// 进度聚合的单飞 dirty 工作项（每会话至多一个在飞：每次排空至多一个
+// UpdateTransferProgress，§7.1③）。
+struct ProgressFlushWork {
+    aki::transfer::TransferId transfer;
+};
+
+// 关闭钩子用：终态化全部会话（取消归档链路 + 丢弃在飞续接）。
 struct CancelAllSessionsWork {};
 
-// flush 哨兵：触发排空上下文内的会话回收（有界等待），完成后通知调用方。
+// flush 哨兵：确认泵静止且 IO 在飞归零后通知调用方。
 struct ReapSessionsWork {
     std::shared_ptr<std::promise<void>> done;
 };
@@ -95,20 +121,21 @@ using TransferManagerWork = std::variant<TransferStartedWork,
     PauseTransferWork,
     ResumeTransferWork,
     CancelTransferWork,
+    IoEventWork,
+    ProgressFlushWork,
     CancelAllSessionsWork,
     ReapSessionsWork>;
-
-// M1 会话只有取消退出一种终相；Completed 由 M4 的真实分块循环引入。
-enum class TransferSessionOutcome { CancelledByRequest };
 
 // 构造选项置于命名空间作用域（同 AppStateOwnerOptions 处理，GCC 纪律）。
 struct TransferManagerOptions {
     ManagerPumpOptions pump{};
     aki::device::DeviceId sender;  // 应用发起传输的 sender（本机设备）。
-    // 会话轮询间隔：协作取消的解除阻塞粒度（must be > 0）。
-    std::chrono::milliseconds session_poll_interval{50};
-    // flush 时在排空上下文内回收会话的有界等待预算。
-    std::chrono::milliseconds session_reap_wait{200};
+    // 归档 IO 承载面（组合根注入；null = 无归档链路——会话仅 wire 侧事件
+    // 驱动，测试/无存储配置形态）。生命周期覆盖本对象全程。
+    aki::transfer::TransferIo* io = nullptr;
+    // IO 事件投递满时的有界重试预算（worker 线程退避；泵持续排空下饱和
+    // 不可达，仍失败计数可见——RULE-09）。
+    std::chrono::milliseconds io_delivery_budget{2000};
 };
 
 class TransferManager {
@@ -118,14 +145,39 @@ public:
     TransferManager(executor::Executor& executor, AppStateOwner& state_owner,
         aki::heyaki::HeyakiAdapter& adapter, TransferManagerOptions options = {})
         : options_(std::move(options)),
-          executor_(executor),
           state_owner_(state_owner),
           adapter_(adapter),
           pump_(executor, options_.pump,
-              [this](TransferManagerWork& work) { return handle(work); }) {}
+              [this](TransferManagerWork& work) { return handle(work); }) {
+        if (options_.io != nullptr) {
+            // IO 事件投递面（worker 线程上下文 → 本泵收件箱；装配序：worker
+            // 启动前注册，组合根保证）。
+            options_.io->set_event_sink(
+                [this](const aki::transfer::TransferIoEvent& event) {
+                    deliver_io_event(event);
+                });
+        }
+    }
 
     TransferManager(const TransferManager&) = delete;
     TransferManager& operator=(const TransferManager&) = delete;
+
+    // 兜底闭合（组合根关闭序的第一责任人仍是宿主，§11.1③）：IO 在飞未
+    // 归零时请求 worker 协作停止并等待回调结算——本对象析构后不得再有
+    // IO 事件回调触碰本对象（DEC-011 ③）。
+    ~TransferManager() {
+        if (options_.io != nullptr && !options_.io->idle()) {
+            options_.io->request_stop();
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (!options_.io->idle()) {
+                if (std::chrono::steady_clock::now() >= deadline) {
+                    break;  // 预算耗尽：如实放弃等待（违反关闭序的组合根缺陷）
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+    }
 
     // ---- Sink 路由入口 ----
 
@@ -147,19 +199,17 @@ public:
 
     // ---- 本域出站操作（传输四接口，设计第 7/8.1 节）----
 
-    // 应用发起传输：本地记录 Queued → Adapter admission；成功则派生可取消会话
-    // 任务（TaskHandle 按 TransferId 归本 Manager 持有，EXEC-07）。同 id 在飞
-    // 会话已存在时的重复发起在排空 handler 内拒绝（异步接口——本返回值只
-    // 代表收件箱受理，重复 id 仍返回 true，拒绝经 handler_rejections 可见，
-    // RULE-09）：不替换旧会话记录（其句柄与 future 归属不变）。source_path
-    //（§7.1⑤）经出站 SPI 传 Adapter，默认空——M4-03/04 图片/文件消息面接入
-    // 真实路径。
+    // 应用发起传输：本地记录 Queued → Adapter admission（wire 侧 push_file）；
+    // 归档链路（hash → copy）经 IO 承载面分块驱动（M4-04）。同 id 会话已
+    // 存在时拒绝（不替换旧会话记录）。source_path（§7.1⑤）经出站 SPI 传
+    // Adapter 且为归档源。on_hash_ready 见 StartTransferWork（hash-first）。
     [[nodiscard]] bool start_transfer(aki::device::DeviceId to,
         aki::transfer::TransferId transfer_id, aki::transfer::FileMetadata file,
-        std::filesystem::path source_path = {}) {
-        return pump_.enqueue(
-            StartTransferWork{std::move(to), std::move(transfer_id),
-                std::move(file), std::move(source_path)});
+        std::filesystem::path source_path = {},
+        std::function<void(std::string)> on_hash_ready = {}) {
+        return pump_.enqueue(StartTransferWork{std::move(to),
+            std::move(transfer_id), std::move(file), std::move(source_path),
+            std::move(on_hash_ready)});
     }
 
     [[nodiscard]] bool pause_transfer(aki::transfer::TransferId transfer_id) {
@@ -170,8 +220,8 @@ public:
         return pump_.enqueue(ResumeTransferWork{std::move(transfer_id)});
     }
 
-    // 协作取消：Adapter 侧 + Executor 侧（request_task_cancel）双通道；会话
-    // future 移入回收队列，由排空上下文消费（终态结算不丢，AGENTS 规则 3）。
+    // 协作取消：Adapter 侧 + 会话收尾（续接抑制 + 归档 FIFO cancel 作业：
+    // 在飞块完成后幂等清理 .part，§7.1①）。
     [[nodiscard]] bool cancel_transfer(aki::transfer::TransferId transfer_id) {
         return pump_.enqueue(CancelTransferWork{std::move(transfer_id)});
     }
@@ -180,31 +230,68 @@ public:
         return pump_.enqueue(CancelAllSessionsWork{});
     }
 
-    // 有界等待：存量工作排空 + 在飞会话取消并回收（future 已消费）。宿主关闭
-    // 钩子使用；预算耗尽返回 false（证据不伪造）。
+    // 有界等待：泵静止 + IO 在飞归零（本对象终结前置条件）。宿主关闭钩子
+    // 使用；预算耗尽返回 false（证据不伪造）。
     [[nodiscard]] bool flush(std::chrono::milliseconds budget) {
-        auto done = std::make_shared<std::promise<void>>();
-        auto finished = done->get_future();
-        if (!pump_.enqueue(ReapSessionsWork{std::move(done)})) {
-            return false;
-        }
         const auto deadline = std::chrono::steady_clock::now() + budget;
-        if (finished.wait_until(deadline) != std::future_status::ready) {
-            return false;
+        for (;;) {
+            // 先判 IO 归零：worker 的 in_flight 在 sink 投递（即 IoEventWork
+            // 已入箱）之后才递减——idle 为真 ⇒ 既有 IO 事件已全部入箱且无
+            // 在飞作业。若先泵静止后判 idle，两检查之间落入的 IO 事件会以
+            // 未处理状态滞留箱内却返回 true（TOCTOU）。
+            if (options_.io != nullptr && !options_.io->idle()) {
+                if (std::chrono::steady_clock::now() >= deadline) {
+                    return false;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+            const auto remaining =
+                deadline - std::chrono::steady_clock::now();
+            if (remaining <= std::chrono::milliseconds(0)
+                || !pump_.flush(std::chrono::duration_cast<
+                      std::chrono::milliseconds>(remaining))) {
+                return false;
+            }
+            // 泵排空期间处理 IoEventWork 可派生新 IO 作业（continue_archive）
+            // ——失去 idle 时重走循环；idle 复判为真时无在飞作业亦无待投递
+            // 事件可再落入两检查之间（新作业只可能由泵 handler 派生，而泵
+            // 已静止），此时返回 true 才满足「泵静止且无未回调 IO 作业」。
+            if (options_.io == nullptr || options_.io->idle()) {
+                return true;
+            }
         }
-        finished.get();  // 消费哨兵 future（纪律：保留并消费）。
-        return pump_.flush(std::chrono::duration_cast<std::chrono::milliseconds>(
-            deadline - std::chrono::steady_clock::now()));
     }
 
     // ---- 观测（EXEC-06；跨上下文诊断）----
 
     [[nodiscard]] int active_session_count() const noexcept {
-        return active_sessions_.load();
+        return session_count_.load();
     }
 
     [[nodiscard]] std::uint64_t cancelled_session_count() const noexcept {
         return cancelled_sessions_.load();
+    }
+
+    // IO 承载面 admission 拒绝（通道满/已停止——RULE-09 可观测）。
+    [[nodiscard]] std::uint64_t io_rejected_submissions() const noexcept {
+        return options_.io != nullptr ? options_.io->rejected_submissions() : 0;
+    }
+
+    // 迟到 IO 事件（会话已终结清理后到达——幂等忽略，计数可见）。
+    [[nodiscard]] std::uint64_t late_io_events() const noexcept {
+        return late_io_events_.load();
+    }
+
+    // IO 事件投递重试预算耗尽（收件箱持续满——会话停摆信号，RULE-09）。
+    [[nodiscard]] std::uint64_t io_events_dropped() const noexcept {
+        return io_events_dropped_.load();
+    }
+
+    // 进度 flush 单飞项入箱拒绝（TM 收件箱满——RULE-09 可观测，不吞掉）。
+    // 拒绝时不置 dirty（单飞不变式保持），最新槽随下一进度事件重试投递。
+    [[nodiscard]] std::uint64_t progress_flush_rejections() const noexcept {
+        return progress_flush_rejections_.load();
     }
 
     [[nodiscard]] ManagerPumpStats::Snapshot stats() const noexcept {
@@ -212,13 +299,22 @@ public:
     }
 
 private:
-    struct SessionRecord {
-        executor::TaskHandle handle;
-        std::future<TransferSessionOutcome> future;
+    // 发送会话（仅排空上下文访问；事件驱动状态机，DEC-011①）。
+    struct SendSession {
+        bool has_io = false;          // 归档链路启用（io 承载面注入且 start 成功）
+        bool io_in_flight = false;    // 每会话单飞：一个在飞分块作业
+        bool closing = false;         // 取消/终态后抑制续接
+        bool paused = false;          // 暂停：续接抑制（resume 放行）
+        bool archive_complete = false;
+        bool archive_failed = false;
+        std::function<void(std::string)> on_hash_ready;  // hash-first 延续
+        std::optional<TransferCompletedWork> held_completed;  // 终态闸门
+        std::uint64_t progress_latest = 0;  // 最新进度槽（wire/archive 共用）
+        std::uint64_t progress_total = 0;
+        bool progress_dirty = false;        // 单飞 dirty 标记
     };
 
     bool handle(TransferManagerWork& work) {
-        reap_settled_sessions();  // 排空上下文内的非阻塞回收。
         return std::visit([this](auto& item) { return handle(item); }, work);
     }
 
@@ -235,22 +331,52 @@ private:
         if (work.transfer.empty()) {
             return false;
         }
-        const bool posted =
-            post_event(TransferProgressEvent{work.transfer, work.transferred, work.total});
-        const bool applied = state_owner_.submit_update(
-            UpdateTransferProgress{work.transfer, work.transferred, work.total});
-        return posted && applied;
+        auto it = sessions_.find(work.transfer.value);
+        if (it == sessions_.end()) {
+            // 非会话路径（inject/wire 直达）：保持既有逐条语义。
+            const bool posted = post_event(
+                TransferProgressEvent{work.transfer, work.transferred, work.total});
+            const bool applied = state_owner_.submit_update(
+                UpdateTransferProgress{work.transfer, work.transferred,
+                    work.total});
+            return posted && applied;
+        }
+        // 会话路径：最新槽 + 单飞 dirty（每次排空至多一个进度更新，§7.1③）。
+        it->second.progress_latest = work.transferred;
+        it->second.progress_total = work.total;
+        mark_progress_dirty(work.transfer, it->second);
+        return true;
     }
 
     bool handle(TransferCompletedWork& work) {
         if (work.transfer.empty() || !aki::transfer::is_terminal(work.final_state)) {
             return false;  // final_state 仅取终态（设计第 10.1 节）。
         }
-        const bool posted =
-            post_event(TransferCompletedEvent{work.transfer, work.final_state});
-        const bool applied = state_owner_.submit_update(
-            CompleteTransfer{work.transfer, work.final_state});
-        return posted && applied;
+        auto it = sessions_.find(work.transfer.value);
+        if (it != sessions_.end()) {
+            SendSession& session = it->second;
+            if (work.final_state == aki::transfer::TransferState::Completed
+                && session.has_io && !session.archive_complete
+                && !session.archive_failed) {
+                // 终态闸门（§7.1③）：wire committed 先于归档完成——持有事件，
+                // 归档 copy_done 后放行（M2-06 作业组对不完整 .part 明确失败）。
+                session.held_completed = work;
+                return true;
+            }
+            if (work.final_state == aki::transfer::TransferState::Completed) {
+                // 归档已完整（或无归档链路）：清理 worker 侧状态但保留
+                // .part——M2-06 终态作业组随后消费（提前丢弃会使作业组
+                // 以「.part 缺失」明确失败）。
+                if (session.has_io) {
+                    (void)options_.io->release(work.transfer);
+                }
+            } else {
+                finish_session_io(session, work.transfer);
+            }
+            sessions_.erase(it);
+            session_count_.store(static_cast<int>(sessions_.size()));
+        }
+        return deliver_terminal(work);
     }
 
     bool handle(StartTransferWork& work) {
@@ -259,10 +385,7 @@ private:
         }
         if (sessions_.find(work.transfer_id.value) != sessions_.end()) {
             // 重复 TransferId：拒绝 admission（经 handler_rejections 可见，
-            // RULE-09）。不替换旧会话记录——替换会丢弃未消费的 future（AGENTS
-            // 规则 3）并留下不可取消的常驻会话任务（active_sessions_ 永不归零，
-            // 关闭不再干净，EXEC-01 步骤 4）。已取消会话已移出本表（归回收
-            // 队列），同 id 重启不受此守卫限制。
+            // RULE-09）。不替换旧会话记录。
             return false;
         }
         aki::transfer::Transfer transfer;
@@ -270,6 +393,7 @@ private:
         transfer.sender = options_.sender;
         transfer.receiver = work.to;
         transfer.file = work.file;
+        transfer.total = work.file.size_bytes;
         transfer.state = aki::transfer::TransferState::Queued;
         if (!adapter_.start_file_transfer(work.to, work.transfer_id,
                 work.file, work.source_path)) {
@@ -277,123 +401,255 @@ private:
             return state_owner_.submit_update(UpsertTransfer{std::move(transfer)});
         }
         if (!state_owner_.submit_update(UpsertTransfer{std::move(transfer)})) {
-            return false;  // 本地记录被拒：不派生会话（admission 失败可见）。
+            return false;  // 本地记录被拒：不建会话（admission 失败可见）。
         }
-        auto submission = executor_.submit_cancellable(
-            [this](executor::StopToken stop_token) {
-                return session_loop(std::move(stop_token));
-            });
-        if (!submission.handle.valid()) {
-            return false;  // 提交即拒：会话未派生（拒绝可见，RULE-09）。
+        SendSession session;
+        session.has_io = options_.io != nullptr;
+        if (options_.io != nullptr) {
+            if (options_.io->start(work.transfer_id, work.source_path,
+                    work.file.name, work.file.size_bytes)) {
+                session.io_in_flight = true;  // 首个 hash 分块在飞
+            } else {
+                // 归档 admission 拒绝（通道满/停止）：计数可见（io_rejected）；
+                // wire 侧照常（正交，§6.1②）——hash-first 延续以空 hash 触发。
+                session.archive_failed = true;
+                session.has_io = false;
+            }
         }
-        sessions_.insert_or_assign(work.transfer_id.value,
-            SessionRecord{submission.handle, std::move(submission.future)});
+        const bool direct_empty_hash = !session.has_io && work.on_hash_ready != nullptr;
+        if (work.on_hash_ready != nullptr && session.has_io) {
+            session.on_hash_ready = std::move(work.on_hash_ready);
+        }
+        sessions_.emplace(work.transfer_id.value, std::move(session));
+        session_count_.store(static_cast<int>(sessions_.size()));
+        if (direct_empty_hash) {
+            // 无归档承载/准入失败：空 hash 直通（调用方决定不发消息）。
+            // 注：回调只入队其他 Manager/本泵，不再触碰本会话记录。
+            auto on_ready = work.on_hash_ready;
+            on_ready("");
+        }
         return true;
     }
 
     bool handle(PauseTransferWork& work) {
+        auto it = sessions_.find(work.transfer_id.value);
+        if (it != sessions_.end()) {
+            it->second.paused = true;  // 归档续接抑制（在飞块自然完成）
+        }
         return adapter_.pause_transfer(work.transfer_id);
     }
 
     bool handle(ResumeTransferWork& work) {
+        auto it = sessions_.find(work.transfer_id.value);
+        if (it != sessions_.end()) {
+            SendSession& session = it->second;
+            session.paused = false;
+            if (session.has_io && !session.io_in_flight
+                && !session.archive_complete && !session.archive_failed
+                && !session.closing) {
+                continue_archive(work.transfer_id, session);
+            }
+        }
         return adapter_.resume_transfer(work.transfer_id);
     }
 
     bool handle(CancelTransferWork& work) {
         adapter_.cancel_transfer(work.transfer_id);  // SPI：幂等停止。
-        const auto it = sessions_.find(work.transfer_id.value);
+        auto it = sessions_.find(work.transfer_id.value);
         if (it == sessions_.end()) {
-            return true;  // 无在飞会话（未启动或已回收）：幂等。
+            return true;  // 无会话（未启动或已终结）：幂等。
         }
-        request_session_cancel(it->second);
-        reap_queue_.push_back(std::move(it->second));
+        finish_session_io(it->second, work.transfer_id);
         sessions_.erase(it);
+        session_count_.store(static_cast<int>(sessions_.size()));
+        cancelled_sessions_.fetch_add(1);
         return true;
     }
 
-    bool handle(CancelAllSessionsWork&) {
-        for (auto& [id, record] : sessions_) {
-            request_session_cancel(record);
-            reap_queue_.push_back(std::move(record));
+    bool handle(IoEventWork& work) {
+        const aki::transfer::TransferIoEvent& event = work.event;
+        auto it = sessions_.find(event.transfer.value);
+        if (it == sessions_.end()) {
+            if (event.phase
+                == aki::transfer::TransferIoEvent::Phase::released) {
+                return true;  // Completed 终态后的正常清理回报（不计迟到）
+            }
+            late_io_events_.fetch_add(1);  // 迟到事件（会话已清理）：幂等忽略
+            return true;
         }
+        SendSession& session = it->second;
+        session.io_in_flight = false;
+        switch (event.phase) {
+            case aki::transfer::TransferIoEvent::Phase::hash_progress:
+                continue_archive(event.transfer, session);
+                return true;
+            case aki::transfer::TransferIoEvent::Phase::hash_done:
+                if (session.on_hash_ready != nullptr) {
+                    // hash-first 延续（泵上下文，§7.1④）：stored_sha256 已知，
+                    // 调用方在此发送消息（图片流 v2）。
+                    auto on_ready = std::move(session.on_hash_ready);
+                    session.on_hash_ready = nullptr;
+                    on_ready(event.hash_hex);
+                }
+                continue_archive(event.transfer, session);
+                return true;
+            case aki::transfer::TransferIoEvent::Phase::copy_progress:
+                session.progress_latest = event.bytes_done;
+                session.progress_total = event.bytes_total;
+                mark_progress_dirty(event.transfer, session);
+                continue_archive(event.transfer, session);
+                return true;
+            case aki::transfer::TransferIoEvent::Phase::copy_done:
+                session.archive_complete = true;
+                session.progress_latest = event.bytes_done;
+                session.progress_total = event.bytes_total;
+                mark_progress_dirty(event.transfer, session);
+                if (session.held_completed.has_value()) {
+                    // 终态闸门放行（§7.1③）：归档完成 + wire committed——
+                    // release（保留 .part 给终态作业组）。
+                    TransferCompletedWork held = std::move(*session.held_completed);
+                    if (session.has_io) {
+                        (void)options_.io->release(event.transfer);
+                    }
+                    sessions_.erase(it);
+                    session_count_.store(static_cast<int>(sessions_.size()));
+                    return deliver_terminal(held);
+                }
+                return true;
+            case aki::transfer::TransferIoEvent::Phase::failed:
+                // 归档失败：wire 侧不受影响（正交）；held 终态释放为已知
+                // 边角（M2-06 作业组对不完整 .part 明确失败可见，DEC-011）。
+                session.archive_failed = true;
+                if (session.on_hash_ready != nullptr) {
+                    auto on_ready = std::move(session.on_hash_ready);
+                    session.on_hash_ready = nullptr;
+                    on_ready("");  // 空 hash：调用方决定不发消息
+                }
+                if (session.held_completed.has_value()) {
+                    TransferCompletedWork held = std::move(*session.held_completed);
+                    sessions_.erase(it);
+                    session_count_.store(static_cast<int>(sessions_.size()));
+                    return deliver_terminal(held);
+                }
+                return true;
+            case aki::transfer::TransferIoEvent::Phase::cancelled:
+                sessions_.erase(it);
+                session_count_.store(static_cast<int>(sessions_.size()));
+                return true;
+            case aki::transfer::TransferIoEvent::Phase::released:
+                // Completed 终态的 worker 侧清理回报（正常路径，不计迟到）。
+                sessions_.erase(it);
+                session_count_.store(static_cast<int>(sessions_.size()));
+                return true;
+        }
+        return false;
+    }
+
+    bool handle(ProgressFlushWork& work) {
+        auto it = sessions_.find(work.transfer.value);
+        if (it == sessions_.end()) {
+            return true;  // 会话已终结：进度槽随会话丢弃
+        }
+        SendSession& session = it->second;
+        if (!session.progress_dirty) {
+            return true;  // 已被先前 flush 消费
+        }
+        session.progress_dirty = false;
+        const bool posted = post_event(TransferProgressEvent{work.transfer,
+            session.progress_latest, session.progress_total});
+        const bool applied = state_owner_.submit_update(
+            UpdateTransferProgress{work.transfer, session.progress_latest,
+                session.progress_total});
+        return posted && applied;
+    }
+
+    bool handle(CancelAllSessionsWork&) {
+        for (auto& [key, session] : sessions_) {
+            session.closing = true;
+            if (session.has_io) {
+                // FIFO cancel 作业：在飞块完成后幂等清理（§7.1①）。
+                (void)options_.io->cancel(aki::transfer::TransferId{key});
+            }
+        }
+        cancelled_sessions_.fetch_add(sessions_.size());
         sessions_.clear();
+        session_count_.store(0);
         return true;
     }
 
     bool handle(ReapSessionsWork& work) {
-        reap_sessions_blocking(options_.session_reap_wait);
+        // 泵静止 + IO 归零由 flush() 的外层循环保证（无池任务 future 可回收）。
         if (work.done) {
             work.done->set_value();
         }
         return true;
     }
 
-    void request_session_cancel(const SessionRecord& record) {
-        const auto response = executor_.request_task_cancel(record.handle);
-        // accepted() 含幂等重复请求；AlreadyCompleted/NotFound 是过期句柄的
-        // 预期结果，终态结算统一由回收队列的 future 消费完成（不静默、不
-        // 重复请求）。
-        (void)response;
-    }
+    // ---- 会话推进（泵上下文）----
 
-    // 会话任务（M1 协作取消骨架，M4 替换为真实分块传输循环）：executor 注入
-    // StopToken 首参数；轮询停止请求自行退出——request_task_cancel 不抢占、
-    // 不会打断无 wakeup 的阻塞调用。
-    TransferSessionOutcome session_loop(executor::StopToken stop_token) {
-        const SessionActiveGuard guard{active_sessions_};
-        while (!stop_token.stop_requested()) {
-            std::this_thread::sleep_for(options_.session_poll_interval);
+    void continue_archive(const aki::transfer::TransferId& id,
+        SendSession& session) {
+        if (session.closing || session.paused || session.archive_complete
+            || session.archive_failed) {
+            return;  // 续接抑制
         }
-        return TransferSessionOutcome::CancelledByRequest;
-    }
-
-    struct SessionActiveGuard {
-        std::atomic<int>& count;
-        explicit SessionActiveGuard(std::atomic<int>& target) : count(target) {
-            count.fetch_add(1);
-        }
-        ~SessionActiveGuard() { count.fetch_sub(1); }
-        SessionActiveGuard(const SessionActiveGuard&) = delete;
-        SessionActiveGuard& operator=(const SessionActiveGuard&) = delete;
-    };
-
-    // 非阻塞回收：已就绪的会话 future 消费结算（终态不丢，AGENTS 规则 3）。
-    void reap_settled_sessions() {
-        while (!reap_queue_.empty()
-            && reap_queue_.front().future.wait_for(std::chrono::seconds(0))
-                == std::future_status::ready) {
-            consume_session_future(std::move(reap_queue_.front().future));
-            reap_queue_.pop_front();
+        if (options_.io->advance(id)) {
+            session.io_in_flight = true;
+        } else {
+            // advance 拒绝（通道满/停止）：归档停摆——io_rejected 计数可见，
+            // 会话标记 archive_failed（held 终态按已知边角释放）。
+            session.archive_failed = true;
         }
     }
 
-    // 有界回收（flush 哨兵路径）：等待在飞会话退出并消费 future。
-    void reap_sessions_blocking(std::chrono::milliseconds budget) {
-        const auto deadline = std::chrono::steady_clock::now() + budget;
-        while (!reap_queue_.empty()) {
-            const auto remaining = deadline - std::chrono::steady_clock::now();
-            if (remaining <= std::chrono::milliseconds(0)) {
-                return;  // 预算耗尽：存量保留在队列，后续 drain/flush 继续回收。
-            }
-            auto& front = reap_queue_.front();
-            if (front.future.wait_for(remaining) != std::future_status::ready) {
+    // 会话收尾：续接抑制 + FIFO cancel 作业（在飞块完成后幂等清理 .part）。
+    void finish_session_io(SendSession& session,
+        const aki::transfer::TransferId& id) {
+        session.closing = true;
+        if (session.has_io) {
+            (void)options_.io->cancel(id);
+        }
+    }
+
+    // 终态投递（事件 + CompleteTransfer；held 放行与直达共用出口）。
+    bool deliver_terminal(const TransferCompletedWork& work) {
+        const bool posted =
+            post_event(TransferCompletedEvent{work.transfer, work.final_state});
+        const bool applied = state_owner_.submit_update(
+            CompleteTransfer{work.transfer, work.final_state});
+        return posted && applied;
+    }
+
+    void mark_progress_dirty(const aki::transfer::TransferId& id,
+        SendSession& session) {
+        if (session.progress_dirty) {
+            return;  // 单飞 dirty 项在箱：本批后续事件只更新最新槽
+        }
+        if (!pump_.enqueue(ProgressFlushWork{id})) {
+            // 收件箱满：不置 dirty（单飞不变式——dirty ⇒ 箱内有 flush 项，
+            // 否则后续事件全部提前返回、该会话进度永久停摆），拒绝计数可见
+            //（RULE-09/AGENTS 规则 10，不吞掉）；最新槽保持，随下一次进度
+            // 事件重试投递。
+            progress_flush_rejections_.fetch_add(1);
+            return;
+        }
+        session.progress_dirty = true;
+    }
+
+    // IO 事件投递面（worker 线程上下文；有界 + 不抛出——TransferIo 契约）。
+    // 收件箱满时短退避重试（泵持续排空，饱和不可达）；预算耗尽计数可见。
+    void deliver_io_event(const aki::transfer::TransferIoEvent& event) {
+        const auto deadline =
+            std::chrono::steady_clock::now() + options_.io_delivery_budget;
+        for (;;) {
+            if (pump_.enqueue(IoEventWork{event})) {
                 return;
             }
-            consume_session_future(std::move(front.future));
-            reap_queue_.pop_front();
-        }
-    }
-
-    void consume_session_future(std::future<TransferSessionOutcome> future) {
-        try {
-            const auto outcome = future.get();
-            if (outcome == TransferSessionOutcome::CancelledByRequest) {
-                cancelled_sessions_.fetch_add(1);
+            if (std::chrono::steady_clock::now() >= deadline) {
+                io_events_dropped_.fetch_add(1);
+                return;
             }
-        } catch (const executor::TaskCancelled&) {
-            // 排队期取消：会话从未运行即被结算（TaskCancelled(Explicit)），
-            // 属请求成功的正常终相，计入取消计数。
-            cancelled_sessions_.fetch_add(1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
     }
 
@@ -405,13 +661,14 @@ private:
     }
 
     Options options_;
-    executor::Executor& executor_;
     AppStateOwner& state_owner_;
     aki::heyaki::HeyakiAdapter& adapter_;
-    std::map<std::string, SessionRecord> sessions_;  // 仅排空上下文访问。
-    std::deque<SessionRecord> reap_queue_;           // 仅排空上下文访问。
-    std::atomic<int> active_sessions_{0};
+    std::map<std::string, SendSession> sessions_;  // 仅排空上下文访问。
+    std::atomic<int> session_count_{0};            // 跨上下文诊断镜像。
     std::atomic<std::uint64_t> cancelled_sessions_{0};
+    std::atomic<std::uint64_t> late_io_events_{0};
+    std::atomic<std::uint64_t> io_events_dropped_{0};
+    std::atomic<std::uint64_t> progress_flush_rejections_{0};
     ManagerPump<TransferManagerWork> pump_;
 };
 

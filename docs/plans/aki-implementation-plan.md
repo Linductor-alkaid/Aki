@@ -271,6 +271,29 @@
   稳定。双端图片回环因防火墙受限沿 M3-09 纪律以 [skip] 证据路径降级
   （补跑条件登记，网络无关半边已验证）。详见 M4 里程碑文档 M4-03 验证
   记录 2026-09-26 条目。
+- 2026-09-26：`M4-04` 完成（发送侧真实传输链路，`SCOPE-08`）：调研结论
+  落档 [DEC-011](../decisions/DEC-011-transfer-io-bearing.md)（Accepted）——
+  发送侧固化为「事件驱动会话状态机（无池上会话长任务）+ Aki 侧分块文件
+  IO 走专用 `aki.transfer-io` blocking worker 逐块续接（每会话单飞，
+  offset 基础无状态分块）」，进度最新槽聚合（每排空至多一个
+  UpdateTransferProgress）、终态闸门（Completed 持有至归档完成）、
+  hash-first 消息排序（stored_sha256 随载荷，消息等 hash）、M4-02
+  transfer_session_manager 组件收口删除（会话所有者收敛 app TM）、
+  TransferId 规范生成入口定案（`NodeSession::new_transfer_id()`）；
+  EXEC-04/05 适用面同批修订，设计 §7.1①③④/§8.3/§11.1③④/§14 回填。
+  实现：FileMetadata 补 stored_sha256（codec 字段 5 激活）、
+  transfer/storage 承载面 + persistence IO worker（DatabaseWorker 同款）、
+  app TM 全量重构（单飞续接/闸门/聚合/IO 归零 flush）、真实 Adapter
+  push_file 接线（root 注入）+ Fake source_path 记录 + image_flow v2、
+  组合根双 worker 注册与关闭序；manager_runtime wait_current_pump 持锁
+  等待互锁加固（handler 自续入队暴露的潜伏缺陷，四 Manager 全量零回归）。
+  测试：新建 test_transfer_send_path 10 用例（分块边界三态/hash 交叉验证/
+  进度聚合/终态闸门双序/IO 失败存活/提交拒绝/执行中取消/shutdown/
+  2-worker 停占夹具闭环 M4-03 观察③/完整 DB 组合重启一致性）+
+  test_transfer_send_loopback（防火墙 [skip] 降级沿既定纪律）；
+  debug/release 全量 ctest 35/35 零回归，新/改二进制随机序各 8 连跑稳定；
+  hash-first 延迟实测登记（64MiB ~1.5s 无优化探针量级）。详见 M4 里程碑
+  文档 M4-04 验证记录 2026-09-26 条目。
 
 ## 交付边界
 
@@ -336,10 +359,13 @@
   `LatestMailbox`，UI 消费的一致快照用 `DoubleBuffer`，事件广播用 `Topic`；禁止 ad-hoc
   队列与“共享可变状态 + mutex + 条件变量”。
 - `EXEC-04` 任务承载：有限任务用 `submit_auto()` 并消费 future；文件 I/O 与历史读写用
-  blocking worker 生命周期；presence 刷新、传输进度采样等允许抖动的周期任务用
+  blocking worker 生命周期（传输分块 IO 自 M4-04 走专用 `aki.transfer-io` worker，
+  DEC-011）；presence 刷新、传输进度采样等允许抖动的周期任务用
   `submit_delayed`/`submit_periodic` + `TimerHandle`；第一阶段无固定周期/低延迟控制需求，
   不使用 realtime 能力，如出现先按工程规范 9.4 评估。
-- `EXEC-05` 取消：传输、重连循环等长任务用 `submit_cancellable` + `StopToken` 协作取消；
+- `EXEC-05` 取消：等待型长任务（重连循环等）用 `submit_cancellable` + `StopToken` 协作
+  取消；传输会话自 M4-04 起无池上长任务（DEC-011：wire 侧事件驱动 + 分块 IO 走专用
+  blocking worker，取消经 worker StopToken + 会话控制位）；
   等待、网络与平台动作必须具备可解除阻塞路径；排队期与运行期取消对 Executor 可见。
 - `EXEC-06` 可观测性：admission 拒绝、执行失败、超时/取消、背压与关闭状态经 Executor
   监控设施与 `executor::comm` 统计观察，不建平行任务监控。
@@ -384,7 +410,12 @@ M4-03 扩展冻结常量 `aki.image` 与映射 4 图片消息面）、
 protobuf-wire 编解码（落 conversation/codec/）与收发状态联动——DeliveryState/
 TransferState 正交生命周期 + TransferId 消费侧 join + 发送侧准入期闸门
 「先传输准入、后发消息」+ 运行期零传导；含 ImagePayload 补 transfer_id 与 SPI
-`send_image_message` 增补））。
+`send_image_message` 增补）、[DEC-011](../decisions/DEC-011-transfer-io-bearing.md)
+（2026-09-26，发送侧分块文件 IO 承载形态——事件驱动会话状态机（无池上会话
+长任务）+ 专用 `aki.transfer-io` blocking worker 逐块续接（每会话单飞）+ 进度
+最新槽聚合（每排空至多一个 UpdateTransferProgress）+ 终态闸门（Completed 等
+归档完成）+ hash-first 消息排序 + M4-02 组件收口删除 + TransferId 规范生成
+入口定案））。
 
 ## 跨里程碑通用完成定义
 
