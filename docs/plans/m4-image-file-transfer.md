@@ -363,7 +363,9 @@
   - 观察登记（不在本项修复范围）：① `app/application/manager_runtime.hpp`
     的 drain_loop 存在同类「批间释放在飞代号」窗口（MpscChannel 单消费者
     契约下两个排空任务可并发 `try_receive`）——M1-05 既有组件，建议随后
-    续里程碑以本项修正模式收口；② executor tracked 提交的容量类拒绝经
+    续里程碑以本项修正模式收口（M4-03 PR CI 首轮五档红即此窗口在慢核
+    CI 时序下被闸门用例击中，已随 M4-03 补修复收口，见 M4-03 记录补记）；
+    ② executor tracked 提交的容量类拒绝经
     future 同步结算异常而非句柄无效（`submit_tracked_with_hook` 先分配
     句柄后做 registry admission），`reconnect_loop.hpp` 的
     `!handle.valid()` 提交即拒分支对容量类拒绝不可达——reconnect 组件
@@ -461,3 +463,20 @@
     ——M5 UI 兜底与后续 GC 议题。
   - 同步：本里程碑（M4-03 勾选、本记录）、总计划（当前状态条目 + DEC-010
     决策清单条目）、DEC-010/DEC-006/设计 §6/§6.1/§7.1/§8.1。
+  - 补记（MR 闭环期，2026-09-26；负责人：Linductor）：PR 首轮 CI 五档全红
+    （Linux debug/asan/ubsan/tsan + Windows debug，run 36182858882），失败
+    集中于本项新增闸门用例的 `transfers.flush(2s)` 3 处断言
+    （test_app_managers.cpp:397 quiesce 排空×2 + :1366 直调×1），且该二进制
+    在 CI 耗时 ~915s（本机全量 ~1s）；TSAN 档无数据竞争告警、同为断言
+    超时——指向丢唤醒类时序缺陷而非数据竞争。定位：`app/application/
+    manager_runtime.hpp` drain_loop「批间无条件释放在飞代号 + 释放后仅单次
+    size_approx 检查」窗口（即 M4-02 观察项①）：慢核 CI 上入队者的
+    ensure_pump CAS 先于释放而失败后，其已提交的工作项（flush 哨兵等）滞留
+    收件箱无人排空；批间释放同时违反 MpscChannel 单逻辑消费者契约（双消费
+    者并发 try_receive：工作项丢失 + 节点损坏）。本机 20/2/1 核亲和连跑均
+    不复现（快核时序窗口窄），CI 2 vCPU 稳定复现。修复：drain_loop 收敛为
+    M4-02 已落地的严格单消费者形态（同 transfer_session_manager.hpp 修正
+    模式）：批处理期间不释放在飞代号，仅在退出决策点释放，随后终检续期或
+    让新 spawner 接管（恰其一）。修复后本机验证：debug/release 全量各
+    34/34；test_app_managers 2 核与 1 核亲和连跑通过；ASAN/UBSAN/TSAN 随
+    PR CI 第二轮门禁复核。

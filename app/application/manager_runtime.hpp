@@ -244,8 +244,13 @@ private:
         pending_futures_.emplace_back(generation, std::move(future));
     }
 
-    // 排空任务主体：有界批量消费收件箱；释放单飞标志后复查收件箱（丢失唤醒
-    // 防护，DEC-008 风险 1）。handler 异常不在此捕获——future 携带异常上浮。
+    // 排空任务主体：MpscChannel 是"单逻辑消费者"通道（channel.hpp 契约），
+    // 在飞代号即消费者权——批处理期间不得释放（否则两个排空任务可并发
+    // try_receive：工作项丢失 + 节点损坏；M4-02 观察项①登记、随 M4-03 CI
+    // 修复收口，修正模式同 transfer_session_manager.hpp drain_loop）。释放
+    // 在且仅在退出决策点，随后终检续期或让新 spawner 接管，恰其一，维持单
+    // 消费者；释放与终检之间入箱的工作项由本循环续期处理（丢失唤醒防护，
+    // DEC-008 风险 1）。handler 异常不在此捕获——future 携带异常上浮。
     void drain_loop(std::uint64_t generation) {
         for (;;) {
             Work work;
@@ -257,13 +262,16 @@ private:
                     stats_.add_handler_rejections();
                 }
             }
-            release_in_flight_if_current(generation);
             if (inbox_.size_approx() == 0) {
-                return;
-            }
-            std::uint64_t expected = 0;
-            if (!in_flight_generation_.compare_exchange_strong(expected, generation)) {
-                return;  // 其他入队者已接管后续排空。
+                release_in_flight_if_current(generation);
+                if (inbox_.size_approx() == 0) {
+                    return;
+                }
+                std::uint64_t expected = 0;
+                if (!in_flight_generation_.compare_exchange_strong(
+                        expected, generation)) {
+                    return;  // 新 spawner 已接管后续排空（其任务在途）。
+                }
             }
         }
     }
