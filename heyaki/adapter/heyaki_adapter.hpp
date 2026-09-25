@@ -11,14 +11,16 @@
 #include "transfer/transfer/transfer_types.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <string_view>
 
 namespace aki::heyaki {
 
-// 入站事件入口（Adapter → 应用）。方法与设计第 10 节 9 类事件一一对应；
-// 实现方（M1-05 Manager / 测试桥接）负责把事件转成 Application State 更新与
-// 设计第 10.1 节的事件投递。回调须遵守 EXEC-02：只做有界校验与投递，
-// 业务 handler 不在本接口的调用线程执行。
+// 入站事件入口（Adapter → 应用）。方法与设计第 10 节事件面及 M3-05 增补的
+// 出站投递回报终态对应（on_message_send_failed 为主路径 9 类事件外的出站
+// 失败面，设计第 8.1 节）；实现方（M1-05 Manager / 测试桥接）负责把事件
+// 转成 Application State 更新与设计第 10.1 节的事件投递。回调须遵守
+// EXEC-02：只做有界校验与投递，业务 handler 不在本接口的调用线程执行。
 class HeyakiAdapterSink {
 public:
     virtual ~HeyakiAdapterSink() = default;
@@ -74,12 +76,15 @@ public:
     virtual bool send_text_message(const aki::device::DeviceId& to,
         const aki::conversation::MessageId& message_id, std::string_view text) = 0;
 
-    // 文件传输接口面（设计第 7 节）。M4 前仅签名与 TransferId 语义：
+    // 文件传输接口面（设计第 7/7.1⑤ 节）。M4-02 起签名含发送侧本地路径
+    // `source_path`（std::filesystem::path）——不进入对端可见的 FileMetadata
+    // （携带本地路径即信息外泄）；数据链路与路径真实消费在 M4-04 落地。
     // 一个 TransferId 对应一个传输会话，不可重复启动；文件本体不经本接口
     // 传输（RULE-05）。传输进度与终态经 on_transfer_* 事件异步返回。
     virtual bool start_file_transfer(const aki::device::DeviceId& to,
         const aki::transfer::TransferId& transfer_id,
-        const aki::transfer::FileMetadata& file) = 0;
+        const aki::transfer::FileMetadata& file,
+        const std::filesystem::path& source_path) = 0;
     virtual bool pause_transfer(const aki::transfer::TransferId& transfer_id) = 0;
     virtual bool resume_transfer(const aki::transfer::TransferId& transfer_id) = 0;
     virtual bool cancel_transfer(const aki::transfer::TransferId& transfer_id) = 0;

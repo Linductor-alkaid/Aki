@@ -33,6 +33,7 @@
 #include <chrono>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <future>
@@ -62,6 +63,9 @@ struct StartTransferWork {
     aki::device::DeviceId to;
     aki::transfer::TransferId transfer_id;
     aki::transfer::FileMetadata file;
+    // 发送侧本地路径（§7.1⑤）：随出站 SPI 传 Adapter，不进入对端可见的
+    // FileMetadata；真实取值随 M4-03/04 图片/文件消息面接入。
+    std::filesystem::path source_path;
 };
 
 struct PauseTransferWork {
@@ -146,11 +150,14 @@ public:
     // 应用发起传输：本地记录 Queued → Adapter admission；成功则派生可取消会话
     // 任务（TaskHandle 按 TransferId 归本 Manager 持有，EXEC-07）。同 id 在飞
     // 会话已存在时拒绝（返回 false）：不替换旧会话记录（其句柄与 future 归属
-    // 不变）。
+    // 不变）。source_path（§7.1⑤）经出站 SPI 传 Adapter，默认空——M4-03/04
+    // 图片/文件消息面接入真实路径。
     [[nodiscard]] bool start_transfer(aki::device::DeviceId to,
-        aki::transfer::TransferId transfer_id, aki::transfer::FileMetadata file) {
+        aki::transfer::TransferId transfer_id, aki::transfer::FileMetadata file,
+        std::filesystem::path source_path = {}) {
         return pump_.enqueue(
-            StartTransferWork{std::move(to), std::move(transfer_id), std::move(file)});
+            StartTransferWork{std::move(to), std::move(transfer_id),
+                std::move(file), std::move(source_path)});
     }
 
     [[nodiscard]] bool pause_transfer(aki::transfer::TransferId transfer_id) {
@@ -262,7 +269,8 @@ private:
         transfer.receiver = work.to;
         transfer.file = work.file;
         transfer.state = aki::transfer::TransferState::Queued;
-        if (!adapter_.start_file_transfer(work.to, work.transfer_id, work.file)) {
+        if (!adapter_.start_file_transfer(work.to, work.transfer_id,
+                work.file, work.source_path)) {
             transfer.state = aki::transfer::TransferState::Failed;
             return state_owner_.submit_update(UpsertTransfer{std::move(transfer)});
         }

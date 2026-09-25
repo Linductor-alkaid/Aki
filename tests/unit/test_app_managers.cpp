@@ -30,6 +30,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -198,7 +199,7 @@ struct StubAdapter final : HeyakiAdapter {
     }
 
     bool start_file_transfer(const DeviceId&, const TransferId&,
-        const FileMetadata&) override {
+        const FileMetadata&, const std::filesystem::path&) override {
         return true;
     }
     bool pause_transfer(const TransferId&) override { return true; }
