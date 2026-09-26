@@ -30,6 +30,7 @@
 #include "transfer/transfer/transfer_types.hpp"
 
 #include <filesystem>
+#include <string>
 #include <utility>
 
 namespace aki::app {
@@ -71,6 +72,51 @@ enum class ImageSendFlowResult {
             : ImageSendFlowResult::MessageAdmissionFailedCancelLost;
     }
     return ImageSendFlowResult::Submitted;
+}
+
+// ---- M4-04：hash-first 形态（§7.1④/DEC-011；消息等归档哈希完成）----
+//
+// 与 v1 的差异：消息发送（stored_sha256 随 FileMetadata 携带，DEC-010 字段 5）
+// 延后到发送前 SHA-256 完成后经 TM 泵上下文延续触发（push_file 不等 hash——
+// wire 完整性是 heyaki BLAKE3 职责；大文件的消息可见延迟 = hash 单遍时长，
+// 如实登记）。归档失败/无 io 承载时延续以空 hash 触发且本编排不发消息
+//（wire 侧自行终结，零传导语义保持）。闸门两步的补偿语义同 v1，但第 2 步
+//（消息 enqueue 拒绝的补偿取消）发生在延续内——降级结果不可同步返回，
+// 经各 Manager 计数与 Fake adapter 命令面可观测。
+//
+// 生命周期：延续经值捕获 Manager 指针（宿主保证 Manager 存活覆盖传输会话
+// 全程——同 v1 调用方义务的自然延伸）。
+[[nodiscard]] inline ImageSendFlowResult send_image_message_with_hash(
+    TransferManager& transfers, MessageManager& messages,
+    const aki::device::DeviceId& to,
+    const aki::conversation::MessageId& message_id,
+    const aki::transfer::FileMetadata& file,
+    const aki::transfer::TransferId& transfer_id,
+    const std::filesystem::path& source_path = {}) {
+    if (!transfers.start_transfer(to, transfer_id, file, source_path,
+            [&messages, &transfers, to, message_id, file, transfer_id](
+                std::string hash_hex) {
+                if (hash_hex.empty()) {
+                    // 归档失败/无承载：不发消息（调用方契约），wire 侧自行
+                    // 终结（零传导，§6.1②）。
+                    return;
+                }
+                aki::transfer::FileMetadata with_hash = file;
+                with_hash.stored_sha256 = std::move(hash_hex);
+                if (!messages.send_image(to, message_id, with_hash,
+                        transfer_id)) {
+                    // 闸门第 2 步失败（MM enqueue 拒绝）：补偿取消（同 v1
+                    // 语义；降级经 TM/MM 计数可观测）。
+                    (void)transfers.cancel_transfer(transfer_id);
+                }
+            })) {
+        // 闸门第 1 步失败（TM enqueue 拒绝）：不发送消息；补偿写 Failed 行。
+        return messages.send_image(to, message_id, file, transfer_id,
+                   /*transfer_admitted=*/false)
+            ? ImageSendFlowResult::TransferAdmissionFailed
+            : ImageSendFlowResult::TransferAdmissionFailedRowLost;
+    }
+    return ImageSendFlowResult::Submitted;  // 消息经 hash 延续异步发出
 }
 
 }  // namespace aki::app

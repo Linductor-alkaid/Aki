@@ -123,7 +123,7 @@ TEST_CASE("TransferId bijection and aki.image envelope round-trip",
 
     // aki.image 信封 + ImagePayload 冻结字段号编码：encode → parse 往返
     //（type/schema_version/mode/payload 无损；MessageId 双射同 aki.text）。
-    const aki::transfer::FileMetadata media{"photo.png", 2048, "image/png"};
+    const aki::transfer::FileMetadata media{"photo.png", 2048, "image/png", ""};
     const auto payload_wire =
         aki::conversation::codec::encode_image_payload({media, aki_transfer});
     REQUIRE(payload_wire.has_value());

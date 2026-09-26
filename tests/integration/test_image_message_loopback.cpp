@@ -186,7 +186,7 @@ TEST_CASE("Two-node image messaging over the borrowed runtime",
     const auto aki_id =
         aki::heyaki::NodeSession::to_aki_message_id(fixed_wire_id());
     const auto transfer_id = canonical_transfer_id();
-    const aki::transfer::FileMetadata media{"photo.png", 2048, "image/png"};
+    const aki::transfer::FileMetadata media{"photo.png", 2048, "image/png", ""};
     std::atomic<bool> inbound_seen{false};
     std::atomic<bool> acked_seen{false};
     side_b.set_message_handlers(

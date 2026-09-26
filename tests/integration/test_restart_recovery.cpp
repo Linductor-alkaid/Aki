@@ -125,7 +125,7 @@ Transfer make_transfer(const std::string& id, const std::string& name,
     transfer.id = TransferId{id};
     transfer.sender = DeviceId{"local-1"};
     transfer.receiver = DeviceId{"alpha-01"};
-    transfer.file = aki::transfer::FileMetadata{name, total, "text/plain"};
+    transfer.file = aki::transfer::FileMetadata{name, total, "text/plain", ""};
     return transfer;
 }
 

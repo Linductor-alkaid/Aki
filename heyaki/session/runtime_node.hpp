@@ -36,9 +36,11 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -400,6 +402,25 @@ public:
         return decoded.value;
     }
 
+    // 新 TransferId 生成（DEC-011 ④ 定案，M4-04）：16 随机字节（全零重抽）→
+    // heyaki 规范串（hyt1_ + 26 base32，按构造规范）——ad-hoc 串（如 "t-1"）
+    // 在 push_file 转换与 codec/DEC-010 谓词处被拒；生成入口统一收敛于此
+    //（aki/std 公开面，<random> 为标准库）。
+    [[nodiscard]] static aki::transfer::TransferId new_transfer_id() {
+        std::random_device random;
+        for (;;) {
+            ::heyaki::TransferId::Storage bytes{};
+            for (auto& byte : bytes) {
+                byte = static_cast<std::byte>(random());
+            }
+            const ::heyaki::TransferId candidate{bytes};
+            if (!candidate.is_zero()) {
+                return aki::transfer::TransferId{
+                    ::heyaki::to_string(candidate)};
+            }
+        }
+    }
+
     // 出站文本（DEC-006 映射 4）：MessageEnvelope{message_id = aki MessageId
     // 16B 双射, type = "aki.text", delivery_mode = peer_acked}；Result 失败
     //（peer_offline / 会话缺失等）返回 false——SPI false + 拒绝可见（RULE-09），
@@ -527,6 +548,30 @@ public:
                 ack(aki::device::DeviceId{::heyaki::to_string(peer.device_id)},
                     to_aki_message_id(message_id), mapped);
             });
+    }
+
+    // ---- M4-04：文件传输面（DEC-006 映射 7；aki/std 公开面）----
+
+    // 出站 push（发送侧真实数据链路）：push_file(peer, root, logical_name,
+    // source_path, transfer_id)——wire 侧 heyaki 自读源文件（probing 相位在其
+    // blocking worker），进度/终态经 set_file_event_observer 回报（M4-05 路由
+    // 接线）。TransferId 须为规范形式（双射转换，非规范 admission false，
+    // DEC-011 ④）；root 为对端逻辑根名（组合根注入 Adapter 选项，§7.1⑤）。
+    [[nodiscard]] bool push_file(const aki::device::DeviceId& peer,
+        const std::string& root, const std::string& logical_name,
+        const std::filesystem::path& source_path,
+        const aki::transfer::TransferId& transfer_id) {
+        auto key = endpoint_key_of(peer);
+        if (!key.has_value()) {
+            return false;
+        }
+        auto wire_id = to_heyaki_transfer_id(transfer_id);
+        if (!wire_id.has_value()) {
+            return false;  // 非规范 hyt1_ 形式：编码契约违反，admission 拒绝
+        }
+        auto pushed =
+            node_.push_file(*key, root, logical_name, source_path, *wire_id);
+        return pushed.has_value();
     }
 
     // 关闭（幂等）：Node::shutdown → Runtime::shutdown。borrowed 模式下

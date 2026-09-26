@@ -109,7 +109,7 @@ Transfer make_transfer(const std::string& id) {
     transfer.sender = DeviceId{"local-1"};
     transfer.receiver = DeviceId{"alpha-01"};
     transfer.file =
-        FileMetadata{"原始 名字.gguf", 1024, "application/octet-stream"};
+        FileMetadata{"原始 名字.gguf", 1024, "application/octet-stream", ""};
     transfer.transferred = 0;
     transfer.total = 1024;
     transfer.state = TransferState::Transferring;
@@ -282,12 +282,12 @@ TEST_CASE("Message repository round-trips all payload kinds",
     std::vector<Message> seed;
     seed.push_back(make_message("m-text", TextPayload{"你好，设备"}));
     seed.push_back(make_message("m-image",
-        ImagePayload{FileMetadata{"img.png", 2048, "image/png"},
+        ImagePayload{FileMetadata{"img.png", 2048, "image/png", ""},
             TransferId{"t-img-1"}}));
     seed.push_back(make_message("m-video",
-        VideoPayload{FileMetadata{"clip.mp4", 4096, "video/mp4"}}));
+        VideoPayload{FileMetadata{"clip.mp4", 4096, "video/mp4", ""}}));
     seed.push_back(make_message("m-file",
-        FilePayload{FileMetadata{"policy.pt", 8192, "application/octet-stream"},
+        FilePayload{FileMetadata{"policy.pt", 8192, "application/octet-stream", ""},
             TransferId{"t-1"}}));
     seed.push_back(make_message("m-system", SystemPayload{"device joined"}));
 

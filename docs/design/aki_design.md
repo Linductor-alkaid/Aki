@@ -224,7 +224,7 @@ schema v1（protobuf-wire 形态，编解码器落第 14 节预留的 `conversat
 | 2 | varint | `size_bytes` | — |
 | 3 | length-delimited | `mime_type`（原始字节） | ≤128B |
 | 4 | length-delimited | `transfer_id`（规范字符串） | `hyt1_` 前缀 + 26 个 base32 字符 = 31 字符（heyaki `TransferId` 规范形式，DEC-006 冻结常量） |
-| 5 | length-delimited | `stored_sha256`（**预留**，M4-04） | 旧接收端跳过；v1 解码器不读取 |
+| 5 | length-delimited | `stored_sha256`（M4-04 起承载） | 64 字符小写 hex（codec 常量 `kImageSha256MaxBytes`）；可选字段——缺省视为无，旧接收端跳过（DEC-010 前向兼容条款落地） |
 
 解析规则（前向容忍与有界拒绝）：解码**跳过未知字段号**（前向兼容——新增可选
 字段不破坏旧接收端）；缺字段 1~4 任一、字段超限、transfer_id 非规范形式
@@ -246,18 +246,25 @@ codec 常量，紧于 heyaki 1MiB）→ **有界拒绝可见**：入站不投递
 
 1. **先传输准入、后发消息**（闸门判据为 **enqueue 级 admission**——两命令
    面均异步，返回值只代表收件箱受理）：`start_transfer` enqueue 拒绝（TM
-   收件箱满）则不发送消息，消息行记 `Failed`（Adapter 零 send 调用）；
-   `send_image` enqueue 拒绝（MM 收件箱满）则对刚准入的传输发
-   `cancel_transfer`（传输行 `Cancelled`，本地确定性决策、处于 Negotiating 前
-   准入窗口无竞态）。两笔补偿写入（`Failed` 行 / 补偿取消）自身也是 enqueue
-   admission、可能被收件箱拒——两级降级不吞掉（AGENTS 规则 10），经编排
-   返回值可见（`ImageSendFlowResult` 的 `*RowLost`/`*CancelLost` 档）：补偿
-   `Failed` 行被拒 → 无消息行；补偿取消被拒 → 传输持续在飞、传输行停留
-   `Queued`。**重复 TransferId 不在闸门可见面内**：其 enqueue admission
-   照常受理（闸门通过、消息照常发送），业务拒绝发生在 TM 排空 handler 的
-   会话表守卫（经 `handler_rejections` 可见，RULE-09）——不新增传输行、
-   不替换旧在飞会话，消息引用的仍是既有 TransferId；TransferId 唯一性由
-   调用方生成保证（生成规则随 M4-04 定案冻结，DEC-010）。
+   收件箱满）则不发送消息，消息行记 `Failed`（Adapter 零 send 调用）。
+   消息半边自 M4-04 起为 **hash-first 排序**（§7.1④/DEC-011①）：消息发送
+   （`stored_sha256` 随 `FileMetadata` 携带，DEC-010 字段 5）等发送前
+   SHA-256 完成后经注入延续在 TM 泵上下文触发——闸门第 2 步（MM enqueue
+   拒绝 → 对刚准入的传输发 `cancel_transfer`，传输行 `Cancelled`）因此
+   发生在延续内，降级结果不可同步返回，经各 Manager 计数与 Adapter 命令
+   面可观测（v1 同步编排 `send_image_message_with_transfer` 保留，其
+   `ImageSendFlowResult` 的 `*RowLost`/`*CancelLost` 两级降级档语义不变：
+   补偿 `Failed` 行被拒 → 无消息行；补偿取消被拒 → 传输持续在飞、传输行
+   停留 `Queued`——补偿写入自身也是 enqueue admission，降级不吞掉，
+   AGENTS 规则 10）；归档失败/无 IO 承载时延续以空 hash 触发且编排不发
+   消息（wire 侧自行终结，零传导语义保持）。**重复 TransferId 不在闸门
+   可见面内**：其 enqueue admission 照常受理（闸门通过、消息照常发送），
+   业务拒绝发生在 TM 排空 handler 的会话表守卫（经 `handler_rejections`
+   可见，RULE-09）——不新增传输行、不替换旧在飞会话，消息引用的仍是
+   既有 TransferId；TransferId 唯一性由调用方生成保证——生成入口
+   `NodeSession::new_transfer_id()`：16 随机字节（`std::random_device`，
+   全零重抽）→ `heyaki::to_string` 规范串（`hyt1_` + 26 base32；M4-04
+   定案，DEC-011④）。
 2. **运行期零传导**：peer ack 事件（`on_message_delivered`/
    `on_message_send_failed`）与传输终态事件（`on_transfer_completed`）互不
    跨通道回写——`Delivered→Failed` 非法（§6 状态机）、`ack_timeout` 两可语义
@@ -310,21 +317,28 @@ Transfer 至少包含
 状态。聊天窗口用文件卡片展示当前会话中的任务，同时提供独立的 Transfers
 页面查看正在进行和已经结束的传输。
 
-### 7.1 传输集成契约（M4 契约，M4-01）
+### 7.1 传输集成契约（M4 契约，M4-01；M4-04 修订承载形态，
+[DEC-011](../decisions/DEC-011-transfer-io-bearing.md)）
 
 本小节固化传输的应用层集成契约，供 M4-02~05 直接实现（沿第 11.1 节先例；
-引擎语义以 DEC-004/DEC-006 为准）。
+引擎语义以 DEC-004/DEC-006 为准）。③ 的承载形态由 M4-04 按 DEC-011 定案
+（M4-01 的「分块 IO 不经 DB 通道」硬结论维持，承载主体修订为专用 worker）。
 
-**① TransferManager 职责切分（DEC-008 模式扩展）**：TransferManager 只写
-transfers Store；出站四接口（发起/暂停/恢复/取消）与入站文件事件在其单飞
-排空泵上下文串行处理；传输会话为长任务（`submit_cancellable` + StopToken，
-`EXEC-05`），`TaskHandle` 按业务稳定 ID（TransferId）显式持有（`EXEC-07`，
-DEC-008 传输会话类语义）；有界收件箱 + 排空泵沿 DEC-008 模式。发送侧链路：
-`start_file_transfer` → heyaki `push_file`（本地 `.part` 分块写入经
-DatabaseWorker 承载，见 ③）→ 文件观察事件 → typed 更新。接收侧：对端
+**① TransferManager 职责切分（DEC-008 模式扩展；M4-04 修订）**：TransferManager
+只写 transfers Store；出站四接口（发起/暂停/恢复/取消）与入站文件事件在其
+单飞排空泵上下文串行处理；**传输无池上会话长任务**（M4-04 定案，DEC-011）——
+wire 侧状态由 heyaki 文件事件驱动（`set_file_event_observer` → RouterSink →
+TM 泵，EXEC-02 既有路径），Aki 侧归档由 IO 作业完成事件驱动，取消经
+「worker StopToken（全局）+ 会话控制位（块间检查）+ 续接抑制」表达、不经
+`request_task_cancel`（无池任务句柄）；会话按业务稳定 ID（TransferId）登记
+于会话表（`EXEC-07` 语义），有界收件箱 + 排空泵沿 DEC-008 模式。发送侧链路：
+`start_file_transfer` → heyaki `push_file`（wire 侧 heyaki 自读源文件）→
+文件观察事件 → typed 更新；Aki 侧归档拷贝 `source → files/tmp/<id>.part`
+经专用 transfer IO worker 分块承载（见 ③）。接收侧：对端
 push 的分块由 heyaki 接收根落盘，`Committed` 事件后 Aki 从接收根合并到
-`DEC-004` 存储布局。暂停/恢复：`pause_file_transfer`/`resume_file_transfer`
-驱动状态机 `Transferring ↔ Paused`；heyaki 侧分块进度保持（断点续传），
+`DEC-004` 存储布局（M4-05 接线）。暂停/恢复：`pause_file_transfer`/
+`resume_file_transfer` 驱动状态机 `Transferring ↔ Paused`（wire 侧 +
+归档续接抑制/放行）；heyaki 侧分块进度保持（断点续传），
 Aki 侧 `.part` 与已落库进度保持。取消：`cancel_file_transfer` →
 `Cancelled` 终态 + `.part` 幂等删除作业（M2-06 discard 作业组）。
 图片/文件消息的发送侧准入闸门（先传输准入、后发消息）属编排层契约，
@@ -341,19 +355,35 @@ DB：`pause_file_transfer` / `resume_file_transfer` 指令仅作用于内存会�
 承载**——`paused` 与恢复后的 `Transferring` 推进按本节 ⑤ 的映射入队
 `UpsertTransfer` 作业（进度列已持久化，恢复后从 `transferred` 列续传），
 与 §11.1 ① 的 TRANSFER 作业模型一致。失败语义沿 §11.1 ①：入队拒绝与执行
-失败可观测，不回滚内存态。
+失败可观测，不回滚内存态。进度更新经泵侧每会话最新进度槽聚合（单飞 dirty
+工作项、每次排空至多一个 `UpdateTransferProgress`，见 ③）。
 
-**③ `.part` 写入在 blocking worker 的承载与通道容量复核（DEC-009 触发
-条款履行）**：文件分块写入作为 DatabaseWorker 作业（与 DB 作业共享单一
-blocking worker 通道，容量 256）。批上限重算（64×n≤256 模型）：文件分块
-作业为长作业（单块可达 MiB 级 IO），纳入后 owner drain 批 64 × 每更新至
-多 2 个 DB 作业的既有模型需按「DB 作业 + 分块作业共享通道」重估——结论：
-分块作业由传输会话长任务直接顺序写入 `.part`（不经 DatabaseWorker 通道），
-仅进度列更新与终态作业组经通道（每块一个 `UpdateTransferProgress` 有界批，
-由传输会话聚合后批量提交，频率 ≤ 每 tick 一次）；由此通道批上限维持
-64×2≤256 不变，大文件长作业（单块 IO 秒级）仅占用 blocking worker 执行
-时长、不影响通道排队深度，对 drain 预算（2s）的影响为「至多等待一个在飞
-分块作业完成」，在预算内。**此为 M4-01 复核结论**：分块 IO 不经 DB 通道。
+**③ `.part` 写入承载与通道容量（M4-04 定案，DEC-011；DEC-009 预算复核
+结论维持）**：发送侧为「事件驱动会话状态机 + 专用 blocking worker 分块
+IO」。Aki 侧文件 IO（发送前流式 SHA-256 + 归档拷贝 `source →
+files/tmp/<transfer_id>.part`）走**新增专用 transfer IO worker**（名
+`aki.transfer-io`，与 `aki.db-worker` 同款 `IBlockingIoWorker` + 有界
+`MpscChannel` 作业通道形态，EXEC-04；承载接口声明于
+`transfer/storage/transfer_io.hpp`，实现于 `persistence/storage/`）——分块
+IO **不经 DatabaseWorker 通道**（M4-01 硬结论维持且更干净：DB drain 不等待
+任何分块）。作业为 offset 基础的无状态分块（对齐断点续传：恢复后从持久化
+`transferred` 列续传），**每会话单飞**（per-session single-flight：每会话
+至多一个在飞分块作业，完成事件回到泵后续接下一块——「顺序写 `.part`」
+不变量由单飞保持；通道有界满即拒绝可见，RULE-09）。进度列以 wire 事件
+（heyaki `bytes_done`）为准，泵侧每会话最新进度槽 + 单飞 dirty 工作项——
+**每次排空至多一个 `UpdateTransferProgress`**（不可逐分块入箱：heyaki 逐
+分块事件率可达每秒数千，TM 收件箱仅 256）；仅进度列更新与终态作业组经
+DatabaseWorker 通道，批上限维持 64×2≤256 不变、drain 预算（2s）不受影响。
+终态闸门：`CompleteTransfer(Completed)` 仅在归档 `.part` 写完后放行入队
+（M2-06 终态作业组对不完整 `.part` 按契约明确失败）；`Failed`/`Cancelled`
+终态不等待归档（在飞块结束后幂等清理）。**废除形态**（M4-04 定案）：池上
+`submit_cancellable` 会话长任务内联写 + `sleep_for` 轮询（M1/M4-02 骨架）——
+每会话停占一个池 worker，2 核设备 ≥2 并发传输即饥饿 Manager 泵（M4-03
+观察③ CI 实证）。hash-first 排序（④ 的发送前 SHA-256）：hash 分块作业流
+先行，消息发送（`stored_sha256` 随 `FileMetadata`）等 hash 完成后经注入
+延续在泵上下文触发；`push_file` 不等 hash（wire 完整性是 heyaki BLAKE3
+职责）——大文件的消息可见延迟 = hash 单遍时长；归档 hash 失败时延续以空
+hash 触发、调用方不发消息，wire 侧自行终结。
 
 **④ BLAKE3 wire 校验与 SHA-256 存储哈希的关系（澄清结论）**：heyaki 传输
 协议在 wire 层以 BLAKE3（manifest 32B + 每分块 32B，file.hpp）做传输完整
@@ -362,8 +392,10 @@ blocking worker 通道，容量 256）。批上限重算（64×n≤256 模型）
 `stored_sha256`）。两者层次不同、互不替代：BLAKE3 校验「传输过程中字节
 未损坏」，SHA-256 校验「落盘后的存储内容」——接收方在 heyaki `Committed`
 之后对已落盘文件计算 SHA-256 并回写，**无冲突**，不需要统一决策。发送方
-SHA-256 在发送前对源文件计算（M4-04），随文件 metadata 携带，接收方校验
-时对账。
+SHA-256 在发送前对源文件计算（M4-04 落地：hash-first 分块作业流，见 ③），
+随文件 metadata 携带（`FileMetadata.stored_sha256`，DEC-010 冻结字段号 5；
+**wire + 内存字段**——message 表无对应列，消息行重启重建时为空，传输行
+`stored_*` 回写列是持久权威），接收方校验时对账。
 
 **⑤ DEC-006 映射 7 实现级细化**：`start_file_transfer` →
 `push_file(peer, root, logical_name, source_path, transfer_id)`
@@ -613,19 +645,27 @@ Store 所有权：
   单飞标志后复查收件箱，防止丢失唤醒）。事件与宿主命令（发送、传输控制、
   `ensure_conversation`）共用同一收件箱串行处理，Manager 内部状态（如传输会话
   句柄表）只在排空上下文访问。
-- 长任务（传输会话类）用 `submit_cancellable` + `StopToken`：Manager 按业务稳定 ID
+- 长任务用 `submit_cancellable` + `StopToken`（M4-04 起**重连循环等等待型长
+  任务适用**；传输会话不再有池上长任务——承载形态见第 7.1 节 ③/DEC-011：
+  wire 侧事件驱动 + 分块 IO 走专用 transfer IO worker，取消经 worker
+  StopToken + 会话控制位）：Manager 按业务稳定 ID
   持有 `TaskHandle` + future 作为成员；取消一律经
   `executor().request_task_cancel(handle)` 发起——运行期任务协作轮询
   `stop_requested()` 自行退出，排队期取消由 Executor 以
   `TaskCancelled(Explicit)` 结算且不产生 failure 事件；不经 StopSource 直发，业务
   代码不得主动抛 `TaskCancelled` 做控制流（无取消请求时按任务异常计入 failure）。
+  传输归档长 IO 经 `aki.transfer-io` blocking worker 承载（DatabaseWorker 同款
+  关闭纪律：TM flush 至 IO 在飞归零 → owner `EXEC-01` 步骤 2/3 统一
+  request_stop/stop 回收，见第 11.1 节 ③）。
 - 取消断言经 `get_cancellation_status()` / `ExecutorSnapshot.cancellation`（独立
   计数，不入 failure）；超时断言经 failure 体系 `timeout_count`——`task_timeout_ms`
   是排队软超时（config 级），不打断运行中任务。M1 不引入 `TimerHandle` /
   周期任务：presence 与传输进度均以事件到达，Manager 无自驱周期负载；首个真实
   周期负载（presence 刷新 / 进度采样）出现时再按 `EXEC-04` 启用。
 - Manager 必须先于其任务终结：宿主关闭钩子（下文装配顺序）保证先取消并消费在途
-  任务 future，再进入 `ExecutorOwner` 的 `EXEC-01` 步骤 4/5。
+  任务 future，再进入 `ExecutorOwner` 的 `EXEC-01` 步骤 4/5；TransferManager
+  的对应形态为「泵静止 + IO 在飞归零」（其 IO 事件回调不得晚于 Manager 终结，
+  DEC-011 ③）。
 
 装配与所有权（`EXEC-07`；宿主组合根顺序，M3-02 起固化为下列序（[DEC-009](../decisions/DEC-009-appstate-write-path.md)）；
 M1-06/M2-07 console 的「`AppStateOwner` 先于 control」为过渡形态，随 M3-03+
@@ -905,9 +945,15 @@ DB 排空必须在 `close()` 之后；又因第 8.2 节步骤 4 的 `wait_for_co
 join）才能在不丢作业的前提下回收 worker。`run()` 以有界超时等待工作通道、在
 语句间检查 StopToken（取消粒度为语句间，执行中的语句不被打断）；`wakeup()`
 唤醒通道等待，满足第 8.2 节步骤 3 的可解除阻塞契约。排空完成后通道关闭，新
-作业入队明确拒绝（`RULE-09`）。
+作业入队明确拒绝（`RULE-09`）。**transfer IO worker（`aki.transfer-io`，M4-04，
+DEC-011）复用本节关闭纪律**：注册同经 `start_blocking_worker`（句柄归 owner，
+步骤 2/3 统一回收）；差异仅在排空语义——归档分块无需 DB 式排空（中断归档由
+启动清扫/幂等删除收敛），钩子内只要求 TransferManager flush 至**IO 在飞归零**
+（其事件回调不得晚于 Manager 终结，第 8.3 节），未竟归档残留 `.part` 按第
+11.1 节 ②④ 收敛。
 
-**④ 文件本体生命周期触发点**：`.part` 写入属传输数据链路（M4 接入；M2 以测试
+**④ 文件本体生命周期触发点**：`.part` 写入属传输数据链路（发送侧 M4-04 经
+transfer IO worker 真实接线，接收侧 M4-05；M2 以测试
 内字节源驱动），写入期固定为 `files/tmp/<transfer_id>.part`。终态处理由 DB 作业
 承载、全部在 `DatabaseWorker`（blocking worker，`EXEC-04`）内执行：
 `CompleteTransfer(Completed)` 被接受后排队"TRANSFER 终态更新 + 流式 SHA-256 +
@@ -1031,6 +1077,12 @@ device-messenger/
 ├── assets/
 └── main.cpp
 ```
+
+落位说明（M4-04，DEC-011 ②）：传输会话所有者为 app 层
+`app/application/transfer_manager.hpp`（DEC-008 装配），`transfer/manager/`
+目录自 M4-04 双组件收口后暂空（原 M4-02 独立组件删除，后续如需拆分再启用）；
+`transfer/storage/` 承载归档 IO 抽象面（`transfer_io.hpp`，实现于
+`persistence/storage/transfer_io_worker.hpp`）。
 
 依赖方向为：
 

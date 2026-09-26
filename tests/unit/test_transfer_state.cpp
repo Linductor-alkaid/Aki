@@ -113,7 +113,8 @@ TEST_CASE("TransferState terminals are idempotent and final", "[unit][transfer]"
 
 TEST_CASE("Transfer binds file metadata and devices without file data", "[unit][transfer]") {
     const Transfer transfer{TransferId{"t-1"}, aki::device::DeviceId{"a"},
-        aki::device::DeviceId{"b"}, FileMetadata{"policy.pt", 7340032, "application/octet-stream"},
+        aki::device::DeviceId{"b"}, FileMetadata{"policy.pt", 7340032,
+            "application/octet-stream", ""},
         0, 7340032, TransferState::Queued};
 
     // RULE-05：消息里只有 metadata 与 TransferId，没有文件内容字段。

@@ -22,13 +22,17 @@ struct TransferId {
 };
 
 // 文件 metadata（设计第 7/11 节）。文件本体不经消息通道传输（RULE-05）；
-// hash 等对端可校验字段在 M2/M4 引入持久化与真实数据链路时补充。发送侧
-// 本地存储路径不经本类型（本结构随消息载荷对端可见，携带本地路径即信息
+// 发送侧本地存储路径不经本类型（本结构随消息载荷对端可见，携带本地路径即信息
 // 外泄）——经出站 SPI 参数传递（设计 §7.1⑤/§8.1，2026-09-24 定案）。
+// stored_sha256（M4-04，§7.1④/DEC-010 字段 5）：发送方对源文件发送前的
+// 流式 SHA-256（64 字符小写 hex），随载荷携带供接收方对账——**wire + 内存
+// 字段**：message 表无对应列，消息行重启重建时为空（传输行 stored_* 回写列
+// 是持久权威，DEC-011 风险登记）。
 struct FileMetadata {
     std::string name;
     std::uint64_t size_bytes = 0;
     std::string mime_type;
+    std::string stored_sha256;
 
     friend bool operator==(const FileMetadata&, const FileMetadata&) = default;
 };

@@ -39,6 +39,10 @@ public:
         Kind kind = Kind::Start;
         aki::device::DeviceId peer;  // 仅 Start 时填充。
         aki::transfer::TransferId transfer_id;
+        // M4-04（M4-02 登记的路径真实消费落地）：Start 命令记录发送侧本地
+        // 路径供断言——Fake 本体不做真实 I/O（DEC-002 纪律不变），归档读取
+        // 由 app 层经 TransferIo 承载面执行。
+        std::filesystem::path source_path;
     };
 
     // Sink 由应用侧（Manager / 测试桥接）持有并提供，生命周期由调用方保证。
@@ -85,7 +89,6 @@ public:
         const aki::transfer::TransferId& transfer_id,
         const aki::transfer::FileMetadata& file,
         const std::filesystem::path& source_path) override {
-        (void)source_path;  // 路径真实消费随 M4-04 数据面落地（§7.1⑤）
         if (to.empty() || transfer_id.empty() || file.name.empty()) {
             return false;
         }
@@ -93,7 +96,8 @@ public:
         if (!transfer_sessions_.insert(transfer_id.value).second) {
             return false;
         }
-        record_transfer_command(TransferCommand::Kind::Start, to, transfer_id);
+        transfer_commands_.push_back(TransferCommand{TransferCommand::Kind::Start,
+            to, transfer_id, source_path});
         return true;
     }
 
@@ -207,14 +211,9 @@ private:
         if (transfer_id.empty() || !transfer_session_known(transfer_id.value)) {
             return false;  // 未启动的会话不可控（TransferId 语义）。
         }
-        record_transfer_command(kind, aki::device::DeviceId{}, transfer_id);
+        transfer_commands_.push_back(
+            TransferCommand{kind, aki::device::DeviceId{}, transfer_id, {}});
         return true;
-    }
-
-    void record_transfer_command(
-        TransferCommand::Kind kind, const aki::device::DeviceId& peer,
-        const aki::transfer::TransferId& transfer_id) {
-        transfer_commands_.push_back(TransferCommand{kind, peer, transfer_id});
     }
 
     HeyakiAdapterSink* sink_ = nullptr;

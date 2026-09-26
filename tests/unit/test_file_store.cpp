@@ -85,7 +85,7 @@ Transfer make_transfer_for(const std::string& id, const std::string& name) {
     transfer.id = TransferId{id};
     transfer.sender = aki::device::DeviceId{"local-1"};
     transfer.receiver = aki::device::DeviceId{"alpha-01"};
-    transfer.file = aki::transfer::FileMetadata{name, 0, "application/octet-stream"};
+    transfer.file = aki::transfer::FileMetadata{name, 0, "application/octet-stream", ""};
     return transfer;
 }
 

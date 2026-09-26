@@ -48,6 +48,7 @@
 #include "persistence/storage/file_jobs.hpp"
 #include "persistence/storage/file_store.hpp"
 #include "persistence/storage/sha256.hpp"
+#include "persistence/storage/transfer_io_worker.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -351,6 +352,13 @@ int run_demo(const std::string& run_root) {
     auto db = std::make_shared<DatabaseWorkerControl>(
         std::move(recovery.repositories), db_options);
 
+    // 3.6) 传输归档 IO worker 控制面（M4-04，DEC-011/§7.1③：发送侧分块
+    //      IO 走专用 aki.transfer-io blocking worker——与 DatabaseWorker
+    //      同款形态；TM 构造注入承载面，注册在 Manager 之后见步骤 6.5）。
+    aki::persistence::TransferIoWorkerOptions io_options;
+    auto transfer_io = std::make_shared<aki::persistence::TransferIoControl>(
+        recovery.store, io_options);
+
     // 4) AppStateOwner：以加载结果播种初始快照 + 接受后处理器（DEC-009 ①；
     //    owner 上下文 = 主线程，单写者，RULE-02/EXEC-03）。
     // 全成员显式初始化：GCC -Wmissing-field-initializers（CI Linux -Werror）
@@ -401,6 +409,9 @@ int run_demo(const std::string& run_root) {
     TransferManagerOptions transfer_options;
     transfer_options.pump.name = "aki.tm";
     transfer_options.sender = identity.id;
+    // M4-04（DEC-011/§7.1③）：归档链路承载面注入（事件驱动会话状态机 +
+    // 专用 worker 分块 IO；构造即注册事件投递面，worker 注册见步骤 6.5）。
+    transfer_options.io = transfer_io.get();
     TransferManager transfers{
         executor_owner.executor(), state_owner, adapter, transfer_options};
 
@@ -416,6 +427,22 @@ int run_demo(const std::string& run_root) {
         return 2;
     }
     db->mark_registered();
+
+    // 6.5) 注册 transfer IO worker（M4-04，DEC-011/§11.1③：同 DatabaseWorker
+    //      纪律——TM 事件投递面已在其构造时注册（步骤 5 先于本步骤），
+    //      worker 启动即有完整 sink；关闭序见钩子（flush 至 IO 归零后由
+    //      owner 步骤 2/3 统一回收）。
+    auto transfer_io_runnable =
+        std::make_unique<aki::persistence::TransferIoRunnable>(
+            transfer_io->impl());
+    executor::BlockingWorkerSpec transfer_io_spec;
+    transfer_io_spec.name = "aki.transfer-io";
+    transfer_io_spec.config.thread_name = "aki-transfer-io";
+    transfer_io_spec.worker = std::move(transfer_io_runnable);
+    if (!executor_owner.start_blocking_worker(std::move(transfer_io_spec))) {
+        std::printf("[FATAL] transfer IO worker registration failed\n");
+        return 2;
+    }
 
     // 7) RouterSink 注册（EXEC-02 启动段纪律：恢复完成、worker 就位后才接通
     //    事件源）。
@@ -557,9 +584,10 @@ int run_demo(const std::string& run_root) {
     });
     report(shutdown_report.fully_stopped(),
         "shutdown fully_stopped (Completed + lifecycle Stopped + wait_timeout_count==0)");
-    report(shutdown_report.blocking_workers_requested == 1
-            && shutdown_report.blocking_workers_stopped == 1,
-        "one blocking worker requested and stopped (handle owned by ExecutorOwner)");
+    report(shutdown_report.blocking_workers_requested == 2
+            && shutdown_report.blocking_workers_stopped == 2,
+        "two blocking workers requested and stopped (db + transfer-io,"
+        " handles owned by ExecutorOwner)");
     report(state_owner.is_closed(), "AppStateOwner closed");
     // 复验写路径（DEC-009 ①）：已 admit 作业全部完成、无拒绝、无失败、处理器
     // 无异常（future 逐个消费，RULE-09：结果可见，不静默）。

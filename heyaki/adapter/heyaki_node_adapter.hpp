@@ -4,9 +4,10 @@
 // 消息面）组装为单一 HeyakiAdapter SPI 实现类：
 //   - 出站：start/stop_discovery → LAN 发现观察管道启停；send_text_message →
 //     aki.text 信封（peer_acked）；send_image_message → aki.image 信封
-//     （peer_acked，M4-03——消息面仅 metadata + TransferId，RULE-05）；传输
-//     四接口 M4 前签名语义（false + 记录，DEC-006：TransferId 一个会话不可
-//     重复启动的语义随 M4 数据面落地）；
+//     （peer_acked，M4-03——消息面仅 metadata + TransferId，RULE-05）；
+//     start_file_transfer → heyaki push_file（M4-04 真实接线：wire 侧 heyaki
+//     自读 source_path，root 经 Options 注入；进度/终态事件路由随 M4-05）；
+//     pause/resume/cancel 仍 M4 前 false（M4-05）；
 //   - 入站（EXEC-02：回调只做有界校验 + 经 sink 投递）：发现观察管道 →
 //     on_device_discovered；peer_sessions diff → on_device_connected/
 //     on_device_disconnected（presence，DM）/ on_connection_path_changed
@@ -66,6 +67,10 @@ public:
         // presence/path 观察管道开关（宿主 smoke 置 false 保持确定性；
         // 真实部署 M4/M5 开启）。
         bool peer_observation = true;
+        // push_file 的对端逻辑根名（§7.1⑤：root 由组合根经存储配置注入，
+        // 非 SPI 参数——Aki 侧固定使用会话默认文件根；接收侧 M4-05 配置
+        // 同名接收根）。
+        std::string push_root = "inbox";
     };
 
     HeyakiNodeAdapter(executor::Executor& executor, Options options)
@@ -256,37 +261,40 @@ public:
         return options_.session->send_image(to, message_id, file, transfer_id);
     }
 
-    // 传输四接口（M4 前签名语义，DEC-006：文件数据链路 M4）：
-    // admission false + TransferId 语义（一个 TransferId 一个会话）随 M4
-    // 数据面落地；本版本不伪造进度/终态事件。source_path 签名随 M4-02 按
-    // §7.1⑤ 固化，真实消费随 M4-04。
+    // 传输出站（M4-04 接线，DEC-006 映射 7/§7.1⑤）：start_file_transfer →
+    // heyaki push_file（wire 侧 heyaki 自读源文件；进度/终态经
+    // set_file_event_observer 回报，路由随 M4-05）。TransferId 须规范形式
+    //（双射转换失败 admission false，DEC-011 ④）；source_path 不进入对端
+    // 可见的 FileMetadata。pause/resume/cancel 仍为 M4 前 false 语义——
+    // 接线随 M4-05（本项仅发送侧发起面）。
     [[nodiscard]] bool start_file_transfer(const aki::device::DeviceId& to,
         const aki::transfer::TransferId& transfer_id,
         const aki::transfer::FileMetadata& file,
         const std::filesystem::path& source_path) override {
-        (void)to;
-        (void)transfer_id;
-        (void)file;
-        (void)source_path;
-        return false;  // M4
+        if (to.empty() || transfer_id.empty() || file.name.empty()
+            || source_path.empty()) {
+            return false;  // 有界校验（EXEC-02 出站面）
+        }
+        return options_.session->push_file(
+            to, options_.push_root, file.name, source_path, transfer_id);
     }
 
     [[nodiscard]] bool pause_transfer(
         const aki::transfer::TransferId& transfer_id) override {
         (void)transfer_id;
-        return false;  // M4
+        return false;  // M4-05
     }
 
     [[nodiscard]] bool resume_transfer(
         const aki::transfer::TransferId& transfer_id) override {
         (void)transfer_id;
-        return false;  // M4
+        return false;  // M4-05
     }
 
     [[nodiscard]] bool cancel_transfer(
         const aki::transfer::TransferId& transfer_id) override {
         (void)transfer_id;
-        return false;  // M4
+        return false;  // M4-05
     }
 
     // ---- 观测（EXEC-06）----

@@ -226,7 +226,7 @@ Transfer make_transfer(std::string id, TransferState state, std::uint64_t transf
     transfer.id = TransferId{std::move(id)};
     transfer.sender = DeviceId{"alpha"};
     transfer.receiver = DeviceId{"beta"};
-    transfer.file = FileMetadata{"model.gguf", 1024, "application/octet-stream"};
+    transfer.file = FileMetadata{"model.gguf", 1024, "application/octet-stream", ""};
     transfer.transferred = transferred;
     transfer.total = 1024;
     transfer.state = state;
@@ -495,7 +495,7 @@ TEST_CASE("Fake rejects injections without sink, with invalid payloads, or under
         REQUIRE_FALSE(fake.send_text_message(DeviceId{"beta"}, MessageId{"m-1"}, ""));
         REQUIRE(fake.send_text_message(DeviceId{"beta"}, MessageId{"m-1"}, "hello"));
 
-        const FileMetadata file{"model.gguf", 1024, "application/octet-stream"};
+        const FileMetadata file{"model.gguf", 1024, "application/octet-stream", ""};
         REQUIRE(fake.start_file_transfer(
             DeviceId{"beta"}, TransferId{"t-1"}, file,
             std::filesystem::path{"payloads/model.gguf"}));
