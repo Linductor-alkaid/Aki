@@ -151,6 +151,19 @@ struct RecordingSink final : aki::heyaki::HeyakiAdapterSink {
         (void)from;
         return true;
     }
+    bool on_pairing_completed(DeviceId device, bool success,
+        std::string_view detail) override {
+        pairing_results.emplace_back(PairingResult{
+            std::move(device), success, std::string(detail)});
+        return true;
+    }
+
+    struct PairingResult {
+        DeviceId device;
+        bool success = false;
+        std::string detail;
+    };
+    std::vector<PairingResult> pairing_results;
 };
 
 HeyakiNodeAdapter::Options valid_options(NodeDomain& domain,
@@ -252,7 +265,9 @@ TEST_CASE("HeyakiNodeAdapter inbound injection dispatches to the sink",
     adapter.set_sink(&sink);
     const DeviceId peer{"peer-b"};
 
-    adapter.deliver_connected(peer);
+    // M5-04（DEC-015）：初连路径由 diff 映射随事件携带（宿主不再硬编码
+    // Lan——投递面按传入值转发）。
+    adapter.deliver_connected(peer, ConnectionPath::Lan);
     REQUIRE(sink.connected.size() == 1);
     REQUIRE(sink.connected.front().first == peer);
     REQUIRE(sink.connected.front().second == ConnectionPath::Lan);
@@ -527,7 +542,7 @@ TEST_CASE("HeyakiNodeAdapter without a sink drops injections silently",
 
     // sink 未接：EXEC-02 有界校验后丢弃（观察者缺失不阻塞管道），不崩溃。
     adapter.deliver_discovered(aki::device::DiscoveredDevice{});
-    adapter.deliver_connected(DeviceId{"peer-b"});
+    adapter.deliver_connected(DeviceId{"peer-b"}, ConnectionPath::Lan);
     adapter.deliver_disconnected(DeviceId{"peer-b"});
     adapter.deliver_path_changed(DeviceId{"peer-b"}, ConnectionPath::Relay);
     adapter.deliver_inbound(DeviceId{"peer-b"}, MessageId{"m-1"}, "aki.text", "hello");

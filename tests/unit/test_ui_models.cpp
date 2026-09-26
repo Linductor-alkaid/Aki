@@ -29,6 +29,7 @@ namespace {
 
 using namespace aki::app;
 using namespace aki::ui::models;
+using aki::app::SetDeviceConnectionPath;
 
 aki::device::DeviceIdentity make_device(const std::string& id,
     aki::device::TrustState trust = aki::device::TrustState::Unknown,
@@ -56,29 +57,52 @@ aki::conversation::Message make_text_message(const std::string& id,
 
 }  // namespace
 
-TEST_CASE("Device views derive identity fields plus path summary",
+TEST_CASE("Device views derive identity, per-device path and trust ops",
     "[unit][ui_models]") {
     const aki::app::DeviceStore empty;
-    REQUIRE(derive_device_views(empty, aki::device::ConnectionPath::Lan)
-        .empty());
+    REQUIRE(derive_device_views(empty).empty());
 
     aki::app::DeviceStore store;
-    store.devices.push_back(make_device("alpha",
-        aki::device::TrustState::Trusted, aki::device::PresenceState::Online));
-    store.devices.push_back(make_device("beta"));
+    auto alpha = make_device("alpha",
+        aki::device::TrustState::Trusted, aki::device::PresenceState::Online);
+    alpha.public_key.bytes = {1, 2, 3};
+    store.devices.push_back(alpha);
+    auto pending = make_device("beta", aki::device::TrustState::Pending);
+    store.devices.push_back(pending);  // 公钥为空 → 指纹不可用态。
 
-    const auto views =
-        derive_device_views(store, aki::device::ConnectionPath::Relay);
+    // 逐设备路径（DEC-015）：两台设备两条不同路径同时正确展示——退役的
+    // 全局单值摘要无法表达的形态；无条目 = Unknown。
+    store.connection_paths.push_back(
+        aki::app::DeviceConnectionPathEntry{
+            aki::device::DeviceId{"alpha"},
+            aki::device::ConnectionPath::Lan});
+    store.connection_paths.push_back(
+        aki::app::DeviceConnectionPathEntry{
+            aki::device::DeviceId{"beta"},
+            aki::device::ConnectionPath::Relay});
+
+    const auto views = derive_device_views(store);
     REQUIRE(views.size() == 2);
     REQUIRE(views[0].id.value == "alpha");
     REQUIRE(views[0].display_name == "dev-alpha");
     REQUIRE(views[0].os_name == "test-os");
     REQUIRE(views[0].trust_state == aki::device::TrustState::Trusted);
     REQUIRE(views[0].presence == aki::device::PresenceState::Online);
-    // 连接路径摘要为 LatestMailbox 最新单值，随派生注入每个视图。
-    REQUIRE(views[0].connection_path == aki::device::ConnectionPath::Relay);
-    REQUIRE(views[1].presence == aki::device::PresenceState::Offline);
+    REQUIRE(views[0].connection_path == aki::device::ConnectionPath::Lan);
     REQUIRE(views[1].connection_path == aki::device::ConnectionPath::Relay);
+    REQUIRE(views[1].presence == aki::device::PresenceState::Offline);
+
+    // 指纹可用性：公钥在场 = 可用；缺失 = 显式不可用。
+    REQUIRE(views[0].fingerprint_available);
+    REQUIRE_FALSE(views[1].fingerprint_available);
+
+    // 信任操作可用性（§4 转移边）：仅 Pending 可确认/拒绝、仅 Trusted 可撤销。
+    REQUIRE(views[0].can_revoke());
+    REQUIRE_FALSE(views[0].can_confirm());
+    REQUIRE_FALSE(views[0].can_reject());
+    REQUIRE(views[1].can_confirm());
+    REQUIRE(views[1].can_reject());
+    REQUIRE_FALSE(views[1].can_revoke());
 }
 
 TEST_CASE("Conversation views carry last-message summary per endpoints",
@@ -206,6 +230,7 @@ TEST_CASE("Transfer views expose direction, progress fraction and terminal",
 
 TEST_CASE("consume_ui_state dedups by watermark and re-derives on publish",
     "[unit][ui_models][exec03]") {
+    // （M5-04 起路径随快照派生——DEC-015，无独立路径水位。）
     AppStateOwner owner;
     UiConsumerWatermark watermark;
     UiStateSnapshot view;
@@ -241,8 +266,8 @@ TEST_CASE("consume_ui_state dedups by watermark and re-derives on publish",
     REQUIRE(view.devices[0].presence == aki::device::PresenceState::Online);
 }
 
-TEST_CASE("consume_ui_state advances connection-path mailbox independently",
-    "[unit][ui_models][exec03]") {
+TEST_CASE("Connection path changes ride the snapshot watermark to views",
+    "[unit][ui_models][exec03][dec015]") {
     AppStateOwner owner;
     UiConsumerWatermark watermark;
     UiStateSnapshot view;
@@ -251,18 +276,19 @@ TEST_CASE("consume_ui_state advances connection-path mailbox independently",
     REQUIRE(owner.submit_update(UpsertDevice{make_device("alpha")}));
     owner.drain();
     REQUIRE(consume_ui_state(owner, watermark, view));
-    REQUIRE(view.latest_connection_path == aki::device::ConnectionPath::Unknown);
+    REQUIRE(view.devices[0].connection_path
+        == aki::device::ConnectionPath::Unknown);
 
-    // SetConnectionPath 生效于 LatestMailbox、不触发 Store 快照发布
-    //（§10.1）——快照水位不变，但路径水位推进并回填设备视图摘要。
-    const SetConnectionPath path_update{aki::device::ConnectionPath::Lan};
+    // SetDeviceConnectionPath 置快照脏（DEC-015）：新快照携带逐设备路径，
+    // 消费面重派生后视图可见；无新快照时 consume false（水位去重不变）。
+    const SetDeviceConnectionPath path_update{
+        aki::device::DeviceId{"alpha"}, aki::device::ConnectionPath::Lan};
     REQUIRE(owner.submit_update(path_update));
-    owner.drain();
-    REQUIRE(owner.snapshot_sequence() == watermark.snapshot_sequence);
     REQUIRE_FALSE(consume_ui_state(owner, watermark, view));
-    REQUIRE(view.latest_connection_path == aki::device::ConnectionPath::Lan);
-    REQUIRE(view.devices[0].connection_path == aki::device::ConnectionPath::Lan);
-    REQUIRE(watermark.connection_path_sequence > 0);
+    owner.drain();
+    REQUIRE(consume_ui_state(owner, watermark, view));
+    REQUIRE(view.devices[0].connection_path
+        == aki::device::ConnectionPath::Lan);
 }
 
 TEST_CASE("on_publish fires after publish; throwing hook stays contained",

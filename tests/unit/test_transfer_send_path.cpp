@@ -184,6 +184,9 @@ struct TransferOnlySink final : aki::heyaki::HeyakiAdapterSink {
         aki::device::ConnectionPath) override {
         return true;
     }
+    bool on_pairing_completed(DeviceId, bool, std::string_view) override {
+        return true;
+    }
 };
 
 // 发送路径组合（网络无关）：ExecutorOwner + AppStateOwner（预置会话 conv-beta）

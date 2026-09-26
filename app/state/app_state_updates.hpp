@@ -40,9 +40,11 @@ struct UpdateTransferProgress {
     std::uint64_t total = 0;
 };
 
-// 覆盖式单值状态摘要（设计第 10.1 节 LatestMailbox 落点）：owner 应用该更新时
-// 同步发布到连接路径 LatestMailbox；不修改任何 Store、不触发快照发布。
-struct SetConnectionPath {
+// 逐设备连接路径部分更新（M5-04，DEC-015）：DeviceStore 级易失集合按设备
+// 键 upsert；未知 id 拒绝并可观测（SetPresence 先例）。取代退役的全局
+// 退役的全局 SetConnectionPath/LatestMailbox 单值摘要（设计 §10.1 同批修订）。
+struct SetDeviceConnectionPath {
+    aki::device::DeviceId device;
     aki::device::ConnectionPath path = aki::device::ConnectionPath::Unknown;
 };
 
@@ -73,7 +75,7 @@ using AppStateUpdate = std::variant<UpsertDevice,
     UpsertMessage,
     UpsertTransfer,
     UpdateTransferProgress,
-    SetConnectionPath,
+    SetDeviceConnectionPath,
     SetPresence,
     SetDeliveryState,
     CompleteTransfer>;

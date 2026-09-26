@@ -173,8 +173,8 @@ TEST_CASE("Full closure over the real adapter SPI: pair, text, recover",
         [&](const DeviceId&, bool ok, const std::string&) {
             if (ok) paired.store(true);
         });
-    REQUIRE(side_a.pair_peer(identity_b.id, "aki-ra-pw"));
-    REQUIRE(side_b.pair_peer(identity_a.id, "aki-ra-pw"));
+    REQUIRE(side_a.pair_peer(identity_b.id, aki::heyaki::kAkiPairingPassword));
+    REQUIRE(side_b.pair_peer(identity_a.id, aki::heyaki::kAkiPairingPassword));
     if (!wait_until([&] { return paired.load(); }, 20s)) {
         // 环境受限降级（沿 M3-04~07 纪律，不冒充已验证）：会话已到
         // pairing_restricted 但握手未在预算内完成（CI 偶发停滞，run
