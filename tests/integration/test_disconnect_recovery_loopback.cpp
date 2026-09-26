@@ -234,9 +234,12 @@ TEST_CASE("Disconnect recovery: reconnect loop restores the session (SCOPE-11)",
     REQUIRE(pipeline.start(200ms));
 
     // 强制断开（close_lan）→ Disconnected → 协调器自动重连 → authenticated。
+    // 等待预算 30s（run 36275566912 ubsan 档单点超时：15s 预算下
+    // on_disconnected 未到，同 run 其余四档与既有 ubsan 轮次均过——
+    // sanitizer 档 CI 并行噪声下的时序余量不足，断言语义不变）。
     REQUIRE(side_a.close_lan(identity_b.id));
     REQUIRE(wait_until(
-        [&] { return disconnected_events.load() >= 1; }, 15s));
+        [&] { return disconnected_events.load() >= 1; }, 30s));
     executor::comm::Snapshot<aki::app::AppState> snapshot;
     REQUIRE(state_owner.try_load_snapshot(snapshot));
     bool presence_offline = false;
@@ -247,8 +250,9 @@ TEST_CASE("Disconnect recovery: reconnect loop restores the session (SCOPE-11)",
     }
     REQUIRE(presence_offline);
 
+    // 同一事件链的下游等待（断连事件晚到则重连相应顺延）：30s。
     REQUIRE(wait_until(
-        [&] { return side_a.session_authenticated(identity_b.id); }, 20s));
+        [&] { return side_a.session_authenticated(identity_b.id); }, 30s));
     REQUIRE(connected_events.load() >= 1);
     REQUIRE(state_owner.try_load_snapshot(snapshot));
     bool presence_online = false;
