@@ -177,7 +177,15 @@
   test_transfer_state 重启降级边、test_transfer_full_loopback 全链路回环
   二进制（防火墙 [skip] 降级沿既定纪律）；debug/release 全量 ctest 38/38。
   详见下方 2026-09-26（M4-06）验证记录与退出-1 证据归集。）
-- [ ] `M4-07` 收口审计与退出证据归集（沿用 M1-08/M2-08/M3-09 纪律）。
+- [x] `M4-07` 收口审计与退出证据归集（沿用 M1-08/M2-08/M3-09 纪律）。
+  （2026-09-26 完成：设计-实现审计矩阵逐项一致（§6/§6.1/§7/§7.1①~⑥/
+  §8.1/§8.3/§10.1/§11.1①~④/§14 与实现及 DEC-004~013；M4-03~06 四项已知
+  偏差锚点逐一核实，未记录偏差数 0）；RULE-07/RULE-10 边界 grep 通过；
+  退出-1~5 证据归集完整（含可复现命令）；本地 debug/release 全量 ctest 复跑
+  38/38；gh 逐 PR 核实 #30~#37 CI 五档全绿（#38 为本项 PR，CI 随其门禁）；
+  退出-1 沿 M3-09 先例部分验证 + 如实降级，M4 保持 In Progress、关闭待
+  补跑（同批条件，负责人 Linductor）。详见下方 2026-09-26（M4-07）验证
+  记录。）
 
 ## 风险与阻塞
 
@@ -783,3 +791,151 @@
   - 同步：本里程碑（M4-06 勾选、退出-1 处置标注、本记录）、总计划（当前
     状态条目 + 决策清单 DEC-013/DEC-005 + 暂定表清空 + RISK-2026-002）、
     DEC-013/DEC-005/设计 §7/§7.1⑥/§11.1②④。
+
+- 2026-09-26（`M4-07` 完成；Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0；负责人：Linductor；纯审计与文档，无产品代码变更——本条目
+  落档前工作树仅含 docs 变更，`git status` 复核见文末）：
+  - **设计-实现审计矩阵**（逐项一致；偏差仅下列四项且均为设计先行声明、
+    实现有锚点；未记录偏差数 0）：
+    - §6/§6.1（消息模型 + Image wire 契约）↔ `conversation/message/
+      message_types.hpp`（ImagePayload{media,transfer_id}，M4-03）、
+      `conversation/codec/image_payload_codec.hpp`（冻结常量锚点：`aki.image`
+      :39、sha256 ≤64B :47、载荷 ≤4KiB :49；字段 1~5 编解码 + 前向容忍 +
+      规范谓词）↔ DEC-010/DEC-006（映射 4 图片面扩展 + 冻结常量 `aki.image`
+      /`hyt1_`）。一致。
+    - §7（七状态 + M4-06 边扩展）↔ `transfer/transfer/transfer_types.hpp`
+      （`Negotiating→Paused` 边 :73、`Queued→Paused`）↔ DEC-013；覆盖
+      test_transfer_state（8 用例 77 断言，含重启降级用例）。一致。
+    - §7.1①（TM 职责/承载形态）↔ `transfer/storage/transfer_io.hpp`
+      （TransferIo 域承载面 :55）、`app/application/transfer_manager.hpp`
+      （事件驱动会话、单飞排空泵；`session_loop` grep 零命中——池上会话
+      长任务废除）、`transfer/manager/` 仅 .gitkeep（§14 落位说明一致，
+      DEC-011② 收口）。一致。
+    - §7.1②（typed 更新→作业映射）↔ TM 三类更新 + `main.cpp` WritePathSink
+      （Completed=1 作业含接收供源、Failed/Cancelled=2 作业，n=2 模型）。
+      一致。
+    - §7.1③（分块承载/进度聚合）↔ `persistence/storage/
+      transfer_io_worker.hpp`（作业通道名 `aki.transfer-io.jobs` :93、
+      轮询环/单飞/停止清理）+ TM `ProgressFlushWork`/`mark_progress_dirty`
+      （:110/:424——每排空至多一个进度更新）+ DatabaseWorker 通道预算不变
+      （WritePathSink n≤2，DEC-009 复核维持）。一致。
+    - §7.1④（哈希层次 + 供源参数化 + 对账策略）↔ `FileMetadata.
+      stored_sha256`（wire+内存字段口径）+ `FileStore::complete_transfer`
+      供源回退 + 对账由消费者执行（test_transfer_recovery 组合断言）。
+      一致。
+    - §7.1⑤（DEC-006 映射 7）↔ `NodeSession::push_file`/`new_transfer_id`
+      + Adapter `start_file_transfer` 接线（root 经 Options `push_root`，
+      M4-04）+ `pause/resume/cancel_file_transfer`（M4-05）。一致。
+    - §7.1⑥（重启处置）↔ `startup_recovery`（`orphan_rows_paused` :69/:74、
+      先于清扫）+ TM `seeded_rows`（:148/:171，main.cpp:441 传播种行）+
+      无会话 cancel 直接终态写入。一致。
+    - §8.1（SPI）↔ `heyaki_adapter.hpp`：出站 8 虚方法（发现 2 + 消息 2 +
+      传输 4）、sink 11 个 `on_` 方法（grep 计数实测）；Fake/真实同契约
+      static_assert。一致。
+    - §8.3（Manager/路由/装配）↔ RouterSink 11 方法路由、四 Manager 单飞
+      泵（manager_runtime）、main.cpp 装配序（七步 + 3.6/6.5 双 worker）。
+      一致。
+    - §10.1（comm 语义/typed 更新）↔ app/state 三组件 grep 命中
+      （DoubleBuffer/LatestMailbox/Topic）+ PostAcceptHandler
+      （app_state_owner.hpp:59/:79）。一致。
+    - §11.1①（写路径/容量）↔ DEC-009 写路径（main.cpp 处理器映射、拒绝
+      双计数）；n=2 维持（DEC-012 复核）。一致。
+    - §11.1②（恢复流程）↔ startup_recovery（open/迁移/加载/**孤儿降级
+      先于清扫**/播种数据）；单一连接移交。一致。
+    - §11.1③（worker 关闭序）↔ 双 blocking worker（aki.db-worker +
+      aki.transfer-io）owner 步骤 2/3 统一回收（main.cpp 断言
+      blocking_workers==2）；transfer-io 复用 DatabaseWorker 关闭纪律。
+      一致。
+    - §11.1④（文件本体生命周期）↔ `receive_source_path`（file_store.cpp
+      :37/:187 段拼接有界校验）、接收原件同作业删除、discard 幂等 no-op、
+      清扫仍仅 files/tmp（接收根 GC 归 M5 议题，DEC-012③）。一致。
+    - §14（目录）↔ `conversation/codec/`（image_payload_codec）、
+      `transfer/storage/`（transfer_io）、`transfer/manager/`（暂空落位
+      说明）、`heyaki/{session,adapter}`、`app/lifecycle/`——ls 实测。
+      一致。
+    - DEC 逐一：DEC-004（布局/终态组/discard）、DEC-005（冻结，M5 前置，
+      无本里程碑代码）、DEC-006（映射 3 scope 增补/4 图片面/7 传输细化）、
+      DEC-008（泵/取消纪律）、DEC-009（写路径/容量复核触发条款履行×2）、
+      DEC-010（字段 5/前向兼容/TransferId 生成入口）、DEC-011（发送承载/
+      组件收口）、DEC-012（接收承载/对账策略/scope）、DEC-013（孤儿降级）
+      ——实现与记录一致。
+    - **已知偏差锚点核实（4 项，均为设计先行声明）**：M4-03 图片闸门在
+      编排层（image_flow.hpp:49/:89，TM/MM 不互相感知）；M4-04 专用 IO
+      worker（transfer_io_worker.hpp，池上会话废除）；M4-05 接收合并经
+      DatabaseWorker 供源参数化（file_store.cpp，不上 transfer-io）；
+      M4-06 孤儿降级（startup_recovery）。未记录偏差数 0。
+  - **RULE-07/RULE-10 边界 grep（本会话执行，命令与输出）**：
+    - `grep -rn "std::thread |std::jthread|std::async(" app/ conversation/
+      device/ heyaki/ persistence/ transfer/ main.cpp`（排除 this_thread）
+      → 仅 main.cpp:8 注释命中；第一方无线程创建（`std::this_thread` 睡眠/
+      让步 7 文件，属轮询等待纪律内）。
+    - `grep -rln "sqlite3" app/ conversation/ device/ heyaki/ transfer/
+      tests/ main.cpp ui/` → 仅 tests 5 文件且全为注释/既定豁免
+      （test_sqlite_sourceid 按 DEC-004 直测 vendored 副本、
+      test_persistence_public_surface 即 RULE-10 守卫本体——M2-08 审计
+      既有状态）；产品代码 sqlite3 封死 persistence 4 编译单元。
+    - `grep -rln "heyaki::" conversation/ transfer/ device/ app/state/` →
+      conversation/codec 仅注释命中（不依赖 heyaki/third_party，DEC-010）；
+      `#include <heyaki/` 产品面仅 heyaki/session+adapter；`#include
+      <executor/` 领域面（conversation/device/transfer/transfer）零命中。
+  - **退出-1（部分验证 + 如实降级，沿 M3-09 先例）**：M4-06 已归集证据
+    复核完整——网络无关半边清单（发送归档/接收合并/暂停恢复/取消幂等/
+    孤儿降级/播种推进/无会话 cancel/对账断言/重启一致）覆盖
+    test_transfer_recovery + test_transfer_receive_path +
+    test_transfer_send_path + 各回环二进制网络无关断言；[skip] 三级降级点
+    实测留证（本会话 release 模式复跑三回环输出 `[skip] pairing handshake
+    blocked (firewall)`：full/send/image 三二进制）；补跑条件同批汇总
+    （M3-04~09 + M4-03~06：防火墙放行入站 TCP / LAN 双端真机，负责人
+    Linductor）；DEC-012 风险④ direction 取值动态核实与 heyaki 簿记观察
+    并入补跑。8 个回环集成二进制的 [skip] 点位 grep 清单已留档。
+  - **退出-2（DOD-02 用例映射）**：泵级六项——test_app_managers 5 个
+    DOD-02 标签用例（异常 :737/提交拒绝 :781/执行中取消 :866/超时 :971/
+    shutdown :1042 + 用例 1 正常完成）；DatabaseWorker 路径——
+    test_database_worker（M2 退出-2 载体）；传输会话/真实 IO 路径——
+    test_transfer_send_path（正常完成=分块边界、任务异常 :556、提交拒绝
+    :615、执行中取消 :639、shutdown :689；超时沿泵级既有覆盖——记录
+    说明）；接收/控制路径——test_transfer_receive_path（命令路径行为 +
+    既有泵/worker 六项沿用）。映射完整。
+  - **退出-3（状态机映射）**：合法/非法转移全覆盖——test_transfer_state
+    （8 用例 77 断言：happy path/暂停恢复/全活动态取消/失败入口/重启降级
+    边/非法边表/终态幂等/绑定）；终态幂等与迟到不复活——test_app_managers
+    迟到事件用例（:1103）+ test_transfer_receive_path 迟到三连；暂停/
+    恢复——test_app_managers 用例 1 合法链（Negotiating→Transferring→
+    Paused→Transferring→Completed）+ test_transfer_receive_path +
+    test_transfer_send_path 终态闸门（:495）；取消 `.part` 删除——
+    test_transfer_send_path 执行中取消（:641）+ test_transfer_receive_path
+    discard no-op + M2-06 file_store 作业组测试。含 M4-06 状态边表更新
+    （重启降级用例）。映射完整。
+  - **退出-4（构建/测试/CI）**：本地复跑（本会话执行）：`ctest
+    --test-dir build/debug -C Debug` → `100% tests passed, 0 tests failed
+    out of 38`；`ctest --test-dir build/release -C Release` → `100% tests
+    passed, 0 tests failed out of 38`（38 = 36 基线 + test_transfer_
+    recovery + test_transfer_full_loopback）。gh 逐 PR 核实（本会话执行
+    `gh pr checks`）：#30/#31/#32/#33/#34/#35/#36/#37 全部五档（Linux
+    debug/asan/ubsan/tsan + Windows MSVC）最终态 pass——PR #30（M4 文档）
+    run 35973664871、#31（M4-01）run 35979068164、#32（M4-02 受阻记录）
+    run 36004250563、#33（M4-02）run 36165064709、#34（M4-03）run
+    36191724907、#35（M4-04）run 36203303746、#36（M4-05）run
+    36209753701、#37（M4-06）run 36215429176；#34/#35 过程红轮（CI 第三轮
+    复核）已在其里程碑记录留痕，最终门禁全绿。#38 为本项 PR，CI 随其
+    门禁执行（本记录归档时点尚未创建，如实声明）。
+  - **退出-5（文档同步）**：里程碑（M4-01~07 勾选 + 验证记录 + 状态
+    In Progress + 退出-1 未勾选标注）、总计划（当前状态 M4-01~06 条目 +
+    决策清单 DEC-010/011/012/013 + DEC-005 冻结 + 暂定表清空 + RISK-2026-
+    002 Mitigated + EXEC-04/05 修订）、设计（§6/§6.1/§7/§7.1①~⑥/§8.1/
+    §8.3/§11.1②③④/§14）、决策（DEC-010/011/012/013 新建 + DEC-005 转正
+    + DEC-006 增补）——逐项核对一致。**链接核验复跑（M4-06 移交项，本
+    会话执行）**：14 个 M4 系列变更文档（设计/总计划/M3+M4 里程碑/
+    DEC-004/005/006/008/009/010/011/012/013/aki_ui_design）相对链接
+    `links checked: 219, broken: 0`。
+  - **里程碑状态处置**：退出-1 双端真链路属环境受限（防火墙拦截至端
+    TLS），沿 M3-09 先例「部分验证 + 如实降级声明」——**M4 保持
+    In Progress 不冒充完成**；M4-01~07 工作项全部勾选（M4-07 范围完成）；
+    退出-1 保持未勾选（降级标注 + 补跑条件 + 负责人 Linductor），M4 关闭
+    待补跑后复核；如需缩小退出口径须先经决策记录重新划界（§14 纪律，
+    未启动）。
+  - 限制：无产品代码变更（本条目为纯审计与文档）；`test_heyaki_client_
+    surface` 二进制在最新链接产物上仍按 M3-01 契约运行（ctest 38/38 含
+    该项），双 SQLite 符号单份性由 M3-01 dumpbin 取证 + 链接序未变的
+    既有审计覆盖（未重复 dumpbin——链接结构无变更，如实声明）。
+  - 同步：本里程碑（M4-07 勾选、本记录）、总计划（当前状态 M4-07 条目）。
