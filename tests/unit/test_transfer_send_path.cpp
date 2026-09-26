@@ -747,7 +747,7 @@ TEST_CASE("flush drains IO events landing between pump quiescence and idle",
             return;
         }
         io.deliver({TransferId{"t-flush"},
-            aki::transfer::TransferIoEvent::Phase::cancelled});
+            aki::transfer::TransferIoEvent::Phase::cancelled, 0, 0, {}, {}});
         std::this_thread::sleep_for(200ms);
         io.release_gate();
         std::this_thread::sleep_for(300ms);

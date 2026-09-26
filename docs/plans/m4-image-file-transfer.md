@@ -592,3 +592,15 @@
     为空（传输行 stored_* 列为持久权威）——M4-06 回环断言按此口径。
   - 同步：本里程碑（M4-04 勾选、本记录）、总计划（当前状态条目 + EXEC-04/05
     + DEC-011 决策清单条目）、DEC-011/设计 §7.1/§8.3/§11.1/§14。
+  - 补记（MR 闭环期，2026-09-26；负责人：Linductor）：PR CI 前两轮 Linux
+    四档构建红（Windows 过）——GCC `-Werror=missing-field-initializers`
+    对 M4-04 新增聚合成员后省略尾字段的聚合初始化报错（MSVC 无此警告，
+    本机验证未暴露）：①首轮 FileMetadata.stored_sha256（15 处报错位 +
+    全仓 grep 补齐未编译 TU，13 文件约 40 处补空初始化，语义均为无 hash，
+    与 DEC-011 登记一致）；②次轮 TransferIoEvent.hash_hex/error
+    （transfer_io_worker.hpp 8 处 emit + test_transfer_send_path 1 处
+    deliver，补全 6 成员初始化）。次轮修复同时以本机 mingw g++ 15.2
+    `-Werror=missing-field-initializers -fsyntax-only` 对全部一方头文件/
+    测试 TU/main.cpp 做预防性审计（零残留，同类问题一次收口）；修复后
+    MSVC debug/release 全量各 35/35 复验。ASAN/UBSAN/TSAN 随 PR CI 第三轮
+    门禁复核。

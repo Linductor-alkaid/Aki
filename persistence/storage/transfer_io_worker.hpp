@@ -293,14 +293,16 @@ private:
     void cancel_session(const aki::transfer::TransferId& transfer) {
         sessions_.erase(transfer.value);  // 析构关闭源句柄
         impl_->store->discard_part(transfer.value);  // 幂等删除（noexcept）
-        emit({transfer, aki::transfer::TransferIoEvent::Phase::cancelled},
+        emit({transfer, aki::transfer::TransferIoEvent::Phase::cancelled, 0, 0,
+                 {}, {}},
             /*accounted=*/true);
     }
 
     // 终态 Completed 路径：清理会话状态、保留 .part（M2-06 作业组消费）。
     void release_session(const aki::transfer::TransferId& transfer) {
         sessions_.erase(transfer.value);
-        emit({transfer, aki::transfer::TransferIoEvent::Phase::released},
+        emit({transfer, aki::transfer::TransferIoEvent::Phase::released, 0, 0,
+                 {}, {}},
             /*accounted=*/true);
     }
 
@@ -318,7 +320,7 @@ private:
                 if (session.offset < session.total) {
                     emit({transfer,
                              aki::transfer::TransferIoEvent::Phase::hash_progress,
-                             session.offset, session.total},
+                             session.offset, session.total, {}, {}},
                         /*accounted=*/true);
                     return;
                 }
@@ -328,7 +330,7 @@ private:
             session.copying = true;
             session.offset = 0;
             emit({transfer, aki::transfer::TransferIoEvent::Phase::hash_done,
-                     0, session.total, hex},
+                     0, session.total, hex, {}},
                 /*accounted=*/true);
             return;
         }
@@ -346,7 +348,7 @@ private:
                      session.offset >= session.total
                          ? aki::transfer::TransferIoEvent::Phase::copy_done
                          : aki::transfer::TransferIoEvent::Phase::copy_progress,
-                     session.offset, session.total},
+                     session.offset, session.total, {}, {}},
                 /*accounted=*/true);
             return;
         }
@@ -356,7 +358,7 @@ private:
             impl_->store->write_part(transfer.value, {}, false);
         }
         emit({transfer, aki::transfer::TransferIoEvent::Phase::copy_done,
-                 session.total, session.total},
+                 session.total, session.total, {}, {}},
             /*accounted=*/true);
     }
 
@@ -401,13 +403,15 @@ private:
         sessions_.clear();
         for (const auto& key : keys) {
             emit({aki::transfer::TransferId{key},
-                     aki::transfer::TransferIoEvent::Phase::cancelled},
+                     aki::transfer::TransferIoEvent::Phase::cancelled, 0, 0,
+                     {}, {}},
                 /*accounted=*/false);
         }
         TransferIoControl::Job job;
         while (impl_->channel.try_receive(job)) {
             emit({job.transfer,
-                     aki::transfer::TransferIoEvent::Phase::cancelled},
+                     aki::transfer::TransferIoEvent::Phase::cancelled, 0, 0,
+                     {}, {}},
                 /*accounted=*/true);
         }
         impl_->channel.close();  // 此后提交明确拒绝
