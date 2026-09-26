@@ -19,9 +19,15 @@
 #pragma once
 
 #include "app/lifecycle/executor_owner.hpp"
+#include "app/application/conversation_manager.hpp"
+#include "app/application/device_manager.hpp"
+#include "app/application/message_manager.hpp"
+#include "app/application/transfer_manager.hpp"
 #include "app/state/app_state.hpp"
+#include "app/state/app_state_owner.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -86,12 +92,17 @@ public:
     HostRuntime(const HostRuntime&) = delete;
     HostRuntime& operator=(const HostRuntime&) = delete;
 
-    // 首帧装配（主线程；幂等——重复调用返回首次结果，data_root 参数被忽略）。
+    // 首帧装配（主线程；幂等——重复调用返回首次结果，两参数均被忽略）。
     // data_root 为空时缺省 resolve_data_root()（GUI 宿主：框架 main 无 argv，
-    // 设计 §9.1）。装配失败：内部执行受控回收（部分构造件按关闭序拆除），
+    // 设计 §9.1）。wake 为快照发布唤醒回调（M5-03，设计 §9.1 跨线程唤醒
+    // 接线）：转发给 AppStateOwnerOptions::on_publish——owner 上下文、
+    // snapshot_.publish 之后同步调用（GUI 宿主传 app::requestUpdate()，
+    // console/测试宿主传计数器或 no-op；类型 std::function<void()> EUI-NEO
+    // 无关，RULE-10）。装配失败：内部执行受控回收（部分构造件按关闭序拆除），
     // assembled()==false 且 failure_reason 非空——调用方以错误占位呈现，
     // 关闭仍经 shutdown_with_report()（幂等）闭合。
-    const HostAssemblyReport& ensure_assembled(std::string data_root = {});
+    const HostAssemblyReport& ensure_assembled(std::string data_root = {},
+        std::function<void()> wake = {});
 
     [[nodiscard]] bool assembled() const noexcept;
     [[nodiscard]] bool assembly_failed() const noexcept;
@@ -118,6 +129,24 @@ public:
     // 宿主 executor 访问（前置 assembled；DOD-02 沿宿主生命周期路径提交任务的
     // 测试面；executor 类型属 app 接线层公开面，同 executor_owner.hpp）。
     [[nodiscard]] executor::Executor& executor();
+
+    // ---- M5-03 消费面/出站面装配访问器（组合根公开面；前置 assembled）----
+    // 生命周期：全部指向 Impl 内成员（host 单例进程生命周期覆盖），调用方
+    // 不得跨 shutdown 持有引用。线程契约沿各成员既有纪律：state_owner 的
+    // drain/close 仅主线程（owner 上下文），快照/路径读取任意上下文；
+    // Manager 访问器仅供组合根绑定 UiActions（ui/models，RULE-01 方向：
+    // ui→application），页面不得直接持有。
+    [[nodiscard]] AppStateOwner& state_owner();
+    [[nodiscard]] DeviceManager& device_manager();
+    [[nodiscard]] ConversationManager& conversation_manager();
+    [[nodiscard]] MessageManager& message_manager();
+    [[nodiscard]] TransferManager& transfer_manager();
+
+    // 有界状态推进（主线程 = owner 上下文；compose 上下文可调用——单次
+    // drain 有界：至多 64 更新/128 事件，无等待无 IO，§9.1 三不纪律的
+    // 有界工作单元同款）。Manager 泵任务随时入队更新，本调用把存量推进为
+    // 快照发布（发布后触发 on_publish 唤醒回调）。
+    void pump_state();
 
 private:
     HostRuntime();

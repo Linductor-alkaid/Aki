@@ -49,6 +49,11 @@ struct AppStateOwnerStats {
     // 接受后处理器异常的全捕获计数（DEC-009：处理器契约不抛出，owner 兜底
     // 捕获使异常不上浮、不中断 drain；非零即处理器缺陷信号）。
     std::uint64_t post_accept_failures = 0;
+    // 快照发布钩子异常的全捕获计数（M5-03，on_publish 契约不抛出；非零即
+    // 唤醒回调缺陷信号，不中断 drain——RULE-09/EXEC-06 可观测）。
+    std::uint64_t publish_hook_failures = 0;
+    // 钩子成功调用次数（发布→唤醒调用序断言的计数面）。
+    std::uint64_t publish_hook_calls = 0;
 };
 
 // 接受后处理器（DEC-009 ①，设计第 10.1 节；对齐 ManagerPump 的 Handler 先例）：
@@ -66,6 +71,12 @@ struct AppStateOwnerOptions {
     std::size_t update_capacity = 1024;
     std::size_t event_inbox_capacity = 1024;
     std::size_t event_outbox_capacity = 1024;
+    // 快照发布钩子（M5-03，设计 §9.1 跨线程唤醒接线；EXEC-03）：publish_if_dirty
+    // 在 snapshot_.publish() 之后于 owner 单写者上下文同步调用——这是「状态变更
+    // 对消费者可见」的唯一时点，唤醒回调（如 GUI 的 app::requestUpdate）在
+    // 此注入。类型保持 EUI-NEO 无关（RULE-10）；实现纪律同接受后处理器：
+    // 不得抛出（owner 全捕获计入 publish_hook_failures，不中断本批 drain）。
+    std::function<void()> on_publish{};
 };
 
 class AppStateOwner {
@@ -287,6 +298,21 @@ private:
         snapshot_dirty_ = false;
         snapshot_.publish(current_);
         ++stats_.snapshots_published;
+        run_publish_hook();
+    }
+
+    // 快照发布钩子调用（M5-03）：仅 owner 上下文、发布之后；异常全捕获计数，
+    // 不上浮、不中断 drain（同 run_post_accept 纪律）。
+    void run_publish_hook() {
+        if (!options_.on_publish) {
+            return;
+        }
+        try {
+            options_.on_publish();
+            ++stats_.publish_hook_calls;
+        } catch (...) {
+            ++stats_.publish_hook_failures;
+        }
     }
 
     // 返回 false 表示更新被拒绝（非法状态转移、终态复活或容量超限）。

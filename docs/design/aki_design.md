@@ -804,6 +804,22 @@ EUI-NEO 组合模型为 M5-01 探针实测——compose 为**保留模式、事�
   11 次开合转换全部拾取）；compose 内不等待、不轮询、不做 IO
   （`EXEC-02` 对称纪律）。页面持有 UI 态（dialog open/toast visible/输入
   草稿/滚动位置）存于页面模型，重组时读入。
+  消费面装配的具体化（M5-03）：`ui/models` 为 EUI-NEO 无关的独立构建目标
+  `aki_ui_models`（纯 std/aki 类型，测试 exe 直链——DEC-005「测试 exe 不链
+  eui」的落地面）；快照消费水位（快照 sequence + 连接路径 sequence）与最近
+  一份派生视图存于页面模型（`UiStateSnapshot` + `UiConsumerWatermark`），
+  compose 上下文以 `load_snapshot_newer_than`/
+  `try_load_connection_path_newer_than` 有界消费、有新快照时重派生（纯函数）。
+  跨线程唤醒回调经状态 owner 构造选项注入（`AppStateOwnerOptions::on_publish`，
+  owner 上下文、`snapshot_.publish` 之后同步调用，异常全捕获计数
+  `publish_hook_failures` 不中断 drain；类型 `std::function<void()>` EUI-NEO
+  无关，RULE-10）——组合根（`HostRuntime::ensure_assembled`）装配参数传入，
+  GUI 宿主传 `app::requestUpdate()`，console/测试宿主传计数器或 no-op。
+  UI 操作出站面以注入接口 `UiActions` 承载（`ui/models`，`std::function`
+  绑定四 Manager 公开出站方法——send_text/send_image、传输四接口、发现
+  启停、ensure_conversation；页面只持 `UiActions`，不持有 Manager/transport
+  对象，RULE-01/RULE-02），由组合根绑定、页面经模型读取；信任判定操作
+  （Pending 确认/拒绝/Revoked 撤销）待 Manager 补建后扩展（M5-04）。
 - **首帧装配例外（M5-02 增补）**：宿主组合根（第 8.3 节七步 + 数据根解析 +
   Node 启动）落位为 EUI-NEO 无关的 `app/lifecycle/host_runtime`
   （`HostRuntime::ensure_assembled(data_root)` / `shutdown_with_report()`，

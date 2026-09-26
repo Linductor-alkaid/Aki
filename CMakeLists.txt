@@ -186,6 +186,7 @@ aki_apply_warnings(aki PRIVATE)
 target_link_libraries(aki PRIVATE
     aki_host
     aki_ui
+    aki_ui_models
     heyaki::client)
 aki_deploy_openssl_dlls(aki)
 eui_neo_configure_app(aki)

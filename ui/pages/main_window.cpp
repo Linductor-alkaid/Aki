@@ -115,8 +115,15 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
             .fontWeight(600)
             .color(tokens.text)
             .build();
-        components::text(ui, "aki.list.subtitle")
-            .text("Aki 0.1.0")
+        // M5-03 消费面展示（最小接线）：四域视图模型计数（派生自最近消费的
+        // 快照；具体列表展示归 M5-04~07）。
+        const std::string list_counts =
+            std::to_string(model.state_view.devices.size()) + " devices · "
+            + std::to_string(model.state_view.conversations.size())
+            + " conversations · "
+            + std::to_string(model.state_view.transfers.size()) + " transfers";
+        components::text(ui, "aki.list.counts")
+            .text(list_counts)
             .position(list_x + metrics.spacing.content,
                 metrics.spacing.content + metrics.typography.title
                     + metrics.spacing.tiny)
@@ -174,13 +181,65 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 .color(tokens.text)
                 .build();
             components::text(ui, "aki.content.placeholder.hint")
-                .text("awaiting Application State (M5-03)")
+                .text("state consumption wired (M5-03); page views land in"
+                      " M5-04..07")
                 .position(content_x + metrics.spacing.section,
                     metrics.spacing.section + metrics.typography.title
                         + metrics.spacing.tiny)
                 .fontSize(metrics.typography.hint)
                 .color(semantic.text_subtlest)
                 .build();
+            if (model.page == NavPage::Devices && model.actions) {
+                // M5-03 出站面示范（设计 §9.1「操作一律经 Application 出站
+                // 面」）：发现启停经注入 UiActions → DeviceManager 泵；
+                // admission 结果写页面模型反馈（RULE-09 拒绝可见）。信任
+                // 操作面归 M5-04。
+                const float action_y = metrics.spacing.section
+                    + metrics.typography.title + metrics.spacing.content * 2.0f;
+                components::button(ui, "aki.content.action.discover")
+                    .position(content_x + metrics.spacing.section, action_y)
+                    .size(160.0f, metrics.control.field)
+                    .text("Start Discovery")
+                    .fontSize(metrics.typography.body)
+                    .theme(tokens, true)
+                    .radius(metrics.radius.small)
+                    .onClick([&model] {
+                        const bool admitted = model.actions->start_discovery(
+                            aki::device::DiscoveryMethod::LanDiscovery);
+                        model.last_action_feedback =
+                            admitted ? "start_discovery admitted"
+                                     : "start_discovery rejected (pump inbox"
+                                       " full)";
+                    })
+                    .build();
+                components::button(ui, "aki.content.action.stop")
+                    .position(content_x + metrics.spacing.section + 172.0f,
+                        action_y)
+                    .size(160.0f, metrics.control.field)
+                    .text("Stop Discovery")
+                    .fontSize(metrics.typography.body)
+                    .theme(tokens, false)
+                    .radius(metrics.radius.small)
+                    .onClick([&model] {
+                        const bool admitted = model.actions->stop_discovery();
+                        model.last_action_feedback =
+                            admitted ? "stop_discovery admitted"
+                                     : "stop_discovery rejected (pump inbox"
+                                       " full)";
+                    })
+                    .build();
+            }
+            if (!model.last_action_feedback.empty()) {
+                components::text(ui, "aki.content.action.feedback")
+                    .text(model.last_action_feedback)
+                    .position(content_x + metrics.spacing.section,
+                        metrics.spacing.section + metrics.typography.title
+                            + metrics.spacing.content * 2.0f
+                            + metrics.control.field + metrics.spacing.content)
+                    .fontSize(metrics.typography.caption)
+                    .color(semantic.text_subtle)
+                    .build();
+            }
         }
     }).build();
 }

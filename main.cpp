@@ -20,6 +20,8 @@
 // 无控制台）；启动装配耗时、主题覆写对拍、onShutdown 关闭序与关闭报告均在
 // 日志内，复现命令见 M5-02 验证记录。
 #include "app/lifecycle/host_runtime.hpp"
+#include "ui/models/ui_actions.hpp"
+#include "ui/models/ui_state_consumer.hpp"
 #include "ui/pages/main_window.hpp"
 #include "ui/theme/aki_theme.hpp"
 
@@ -27,6 +29,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <memory>
 #include <string>
 
 namespace {
@@ -61,9 +64,19 @@ void log_line(const std::string& line) {
 
 // 页面模型（§9.1「页面持有 UI 态」：当前页/主题档/装配降级文案；主线程
 // compose 上下文读写，函数级 static 与宿主单例同为进程生命周期）。
+// M5-03：消费水位 + 最近派生视图（UiStateSnapshot）与注入出站接口
+// （UiActions）同属页面模型持有面。
 aki::ui::MainWindowModel& main_window_model() {
     static aki::ui::MainWindowModel model;
     return model;
+}
+
+// 出站接口（M5-03，设计 §9.1「操作一律经 Application 出站面」）：组合根
+// 绑定一次（Manager 访问器直呼公开出站方法），页面经模型读取——页面不持
+// Manager/transport 对象（RULE-01/RULE-02）。
+std::shared_ptr<aki::ui::models::UiActions>& ui_actions() {
+    static std::shared_ptr<aki::ui::models::UiActions> actions;
+    return actions;
 }
 
 // 主题覆写回归对照（M5-01 探针同款对拍落盘：上游默认 → akiTheme 覆写值；
@@ -189,7 +202,17 @@ void app::compose(eui::Ui& ui, const eui::Screen& screen) {
         log_line("compose: first frame — host assembly starting (data root"
                  " default resolve_data_root(), GUI host has no argv)");
         const auto started = std::chrono::steady_clock::now();
-        const auto& assembly = host.ensure_assembled();
+        // M5-03 跨线程唤醒接线（设计 §9.1）：executor 侧快照发布后调用
+        // app::requestUpdate() 唤醒主循环重组（原子标志 + postEmptyEvent，
+        // 线程安全）。首次触发留一条日志（RULE-11 证据面）。
+        const auto& assembly = host.ensure_assembled({}, [] {
+            static const bool first = [] {
+                log_line("wake: on_publish fired -> app::requestUpdate()");
+                return true;
+            }();
+            (void)first;
+            app::requestUpdate();
+        });
         log_assembly(assembly,
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - started));
@@ -197,6 +220,17 @@ void app::compose(eui::Ui& ui, const eui::Screen& screen) {
             // 降级：错误占位 UI + 关窗后仍经 onShutdown 闭合（§9.1；禁
             // std::exit——不销毁自动对象，main.cpp console 先例）。
             model.startup_error = assembly.failure_reason;
+        } else {
+            // 消费面与出站面装配（M5-03，§9.1）：本地身份喂给消费水位面
+            // （传输方向/会话端点归属判定），UiActions 绑定四 Manager 出站
+            // 方法——页面经模型读取，不持有 Manager/transport 对象。
+            model.state_view.local_device =
+                aki::device::DeviceId{assembly.local_device_id};
+            ui_actions() = std::make_shared<aki::ui::models::UiActions>(
+                aki::ui::models::make_ui_actions(host.device_manager(),
+                    host.conversation_manager(), host.message_manager(),
+                    host.transfer_manager()));
+            model.actions = ui_actions();
         }
         log_theme_override();
         char screen_line[128] = {};
@@ -205,7 +239,16 @@ void app::compose(eui::Ui& ui, const eui::Screen& screen) {
         log_line(screen_line);
     }
 
-    // 首帧之后的 compose：只读派生页面模型（三不纪律回归；业务状态消费面
-    // 与 requestUpdate 唤醒随 M5-03 接入）。
+    // M5-03 消费面（§9.1 快照消费与唤醒）：主线程先有界推进状态 owner
+    //（pump_state：单写者 owner 上下文的有界 drain，无等待无 IO——发布后
+    // 经 on_publish 回调触发 requestUpdate），再以水位去重消费快照并重派生
+    // 四域视图模型；无新快照时 consume 返回 false（不阻塞、不轮询）。
+    if (host.assembled()) {
+        host.pump_state();
+        (void)aki::ui::models::consume_ui_state(
+            host.state_owner(), model.watermark, model.state_view);
+    }
+
+    // 首帧之后的 compose：只读派生页面模型（三不纪律回归）。
     aki::ui::composeMainWindow(ui, screen, model);
 }
