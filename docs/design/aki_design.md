@@ -114,6 +114,9 @@ struct DiscoveredDevice {
 
 新发现的设备默认处于未信任状态。客户端显示设备名称、类型、Device
 ID、公钥指纹和发现来源，用户确认后建立信任关系。在这个模型下，"添加联系人"对应的实际操作就是信任一个设备。
+公钥指纹的展示形式即 `DeviceId` 规范串（`hy1_` + 52 位小写 base32，
+SHA-256 摘要的规范编码——确认面两个显示项同值合并，不引入第二种编码；
+M5-04）。
 
 ``` text
 Unknown -> Pending -> Trusted
@@ -556,7 +559,28 @@ message)`——出站文本的投递回报终态失败面（DEC-006 映射 4 的
 ——对端驱动的传输暂停投递面：heyaki `paused` 相位含**断线自动暂停**、
 可发生于接收侧（`file.hpp`，`FileTransferPhase::paused`），无此方法则
 `paused → UpsertTransfer(Paused)` 对端驱动时无投递路径；映射
-`UpsertTransfer`（`Paused`），不新增 AppEvent 主路径类型。
+`UpsertTransfer`（`Paused`），不新增 AppEvent 主路径类型。M5 起追加
+第 12 个方法 `on_pairing_completed(device, success, detail)`（M5-04，
+[DEC-006](../decisions/DEC-006-heyaki-api-contract.md) 映射 3 落地面）——
+配对一次性结果投递面（Node 上下文回调 → Adapter 有界校验 + 投递，
+`EXEC-02`）：`success` 映射 `UpsertDevice(→ Trusted)`、失败映射
+`UpsertDevice(→ Rejected)`（`detail` 供诊断日志，不进 Store）；不新增
+AppEvent 主路径类型（状态经 Store 快照可见，同 `on_transfer_paused`
+先例）。口令处理：`pair_peer` 提交值为组合根配置的冻结常量
+（[DEC-016](../decisions/DEC-016-pairing-password-verifier.md)），在
+Adapter/Manager 内部传递，不进 SPI/UiActions 签名（M5-07 设置面收敛）。
+
+出站增补（M5-04，[DEC-006](../decisions/DEC-006-heyaki-api-contract.md)
+映射 3 落地面）：`confirm_pairing(device)`——指纹确认后发起配对（→
+`pair_peer`，scope 冻结 `{message.send, file.push:inbox}`；提交被拒
+= 会话缺失/非 pairing_restricted/重复 pending，admission false 可见）；
+`revoke_trust(device)`——撤销既有信任（→ `revoke_trust_grants`，无有效
+grant 时 false 可见）。本地拒绝无 wire 面（`Pending → Rejected` 为纯本地
+判定，不经 Adapter）。信任状态转移合法性由应用层状态机校验（第 4 节
+固定转移边；非法转移经 `updates_rejected` 可见，`RULE-08`/`RULE-09`）。
+指纹展示形式：公钥指纹即 `DeviceId` 规范串（`hy1_` + base32，SHA-256
+摘要——确认弹窗中 Device ID 与公钥指纹同值合并展示，不引入第二种编码；
+上游已在 LAN 帧 in-band 校验 `device_id == derive_device_id(public_key)`）。
 
 纪律：Adapter 回调只做有界校验与投递（`EXEC-02`），业务处理一律在 Manager 的执行
 上下文（M1-05）；事件从 Sink 到 Application State 的桥接由应用层完成——Sink 实现把
@@ -679,8 +703,8 @@ Store 所有权：
 | Sink 事件 | 路由与状态更新 | 主路径事件 |
 | --- | --- | --- |
 | `on_device_discovered` | DM：`UpsertDevice` | DeviceDiscovered |
-| `on_device_connected` | DM：`SetPresence(Online)`；CM 扇出：已建会话则 `UpsertConversation → Active` | DeviceConnected（仅 DM 投递一次） |
-| `on_device_disconnected` | DM：`SetPresence(Offline)`；CM 扇出：已建会话则 `UpsertConversation → Disconnected` | DeviceDisconnected（仅 DM 投递一次） |
+| `on_device_connected` | DM：`SetPresence(Online)` + `SetDeviceConnectionPath{device, path}`（M5-04 起，[DEC-015](../decisions/DEC-015-per-device-connection-path.md)：初连即携带映射路径）；CM 扇出：已建会话则 `UpsertConversation → Active` | DeviceConnected（仅 DM 投递一次） |
+| `on_device_disconnected` | DM：`SetPresence(Offline)` + `SetDeviceConnectionPath{device, Unknown}`（离线不展示陈旧路径，[DEC-015](../decisions/DEC-015-per-device-connection-path.md)）；CM 扇出：已建会话则 `UpsertConversation → Disconnected` | DeviceDisconnected（仅 DM 投递一次） |
 | `on_message_received` | MM：`UpsertMessage`（收到的消息本地记录为 `Delivered`，第 6 节） | MessageReceived |
 | `on_message_delivered` | MM：`SetDeliveryState(Delivered)` | MessageDelivered |
 | `on_message_send_failed`（M3-05） | MM：`SetDeliveryState(Failed)` | —（Failed 为终态，RULE-08；无主路径事件） |
@@ -688,7 +712,7 @@ Store 所有权：
 | `on_transfer_progress` | TM：首个进度事件整行 upsert 推进 `Negotiating/Paused → Transferring`，后续 `UpdateTransferProgress` | TransferProgress |
 | `on_transfer_completed` | TM：`CompleteTransfer(final_state)`（接收侧无会话直达；发送侧经终态闸门，§7.1③） | TransferCompleted |
 | `on_transfer_paused`（M4-05） | TM：`UpsertTransfer`（`Paused`；对端驱动与本地暂停确认同此映射；发送会话归档续接抑制） | —（不新增主路径事件类型，状态经 Store 快照可见，§8.1） |
-| `on_connection_path_changed` | DM：`SetConnectionPath(to)` | ConnectionPathChanged |
+| `on_connection_path_changed` | DM：`SetDeviceConnectionPath{device, to}`（M5-04 起，[DEC-015](../decisions/DEC-015-per-device-connection-path.md)；`from` 为诊断信息） | ConnectionPathChanged |
 
 执行上下文与任务承载（`EXEC-04` / `EXEC-05` / `EXEC-07`）：
 
@@ -806,10 +830,12 @@ EUI-NEO 组合模型为 M5-01 探针实测——compose 为**保留模式、事�
   草稿/滚动位置）存于页面模型，重组时读入。
   消费面装配的具体化（M5-03）：`ui/models` 为 EUI-NEO 无关的独立构建目标
   `aki_ui_models`（纯 std/aki 类型，测试 exe 直链——DEC-005「测试 exe 不链
-  eui」的落地面）；快照消费水位（快照 sequence + 连接路径 sequence）与最近
-  一份派生视图存于页面模型（`UiStateSnapshot` + `UiConsumerWatermark`），
-  compose 上下文以 `load_snapshot_newer_than`/
-  `try_load_connection_path_newer_than` 有界消费、有新快照时重派生（纯函数）。
+  eui」的落地面）；快照消费水位与最近一份派生视图存于页面模型
+  （`UiStateSnapshot` + `UiConsumerWatermark`），compose 上下文以
+  `load_snapshot_newer_than` 有界消费、有新快照时重派生（纯函数）。
+  M5-04 起（[DEC-015](../decisions/DEC-015-per-device-connection-path.md)）：
+  连接路径为 DeviceStore 逐设备易失字段（随快照水位消费），退役 M5-03 的
+  独立路径水位分支。
   跨线程唤醒回调经状态 owner 构造选项注入（`AppStateOwnerOptions::on_publish`，
   owner 上下文、`snapshot_.publish` 之后同步调用，异常全捕获计数
   `publish_hook_failures` 不中断 drain；类型 `std::function<void()>` EUI-NEO
@@ -817,9 +843,10 @@ EUI-NEO 组合模型为 M5-01 探针实测——compose 为**保留模式、事�
   GUI 宿主传 `app::requestUpdate()`，console/测试宿主传计数器或 no-op。
   UI 操作出站面以注入接口 `UiActions` 承载（`ui/models`，`std::function`
   绑定四 Manager 公开出站方法——send_text/send_image、传输四接口、发现
-  启停、ensure_conversation；页面只持 `UiActions`，不持有 Manager/transport
-  对象，RULE-01/RULE-02），由组合根绑定、页面经模型读取；信任判定操作
-  （Pending 确认/拒绝/Revoked 撤销）待 Manager 补建后扩展（M5-04）。
+  启停、ensure_conversation、M5-04 起信任三操作 confirm/reject/revoke；
+  页面只持 `UiActions`，不持有 Manager/transport 对象，RULE-01/RULE-02），
+  由组合根绑定、页面经模型读取；信任判定操作随 M5-04 落地（DeviceManager
+  三操作 + 配对结果路由，§8.1 第 12 sink 方法）。
 - **首帧装配例外（M5-02 增补）**：宿主组合根（第 8.3 节七步 + 数据根解析 +
   Node 启动）落位为 EUI-NEO 无关的 `app/lifecycle/host_runtime`
   （`HostRuntime::ensure_assembled(data_root)` / `shutdown_with_report()`，
@@ -913,7 +940,7 @@ Application State 的跨上下文交付落在 pinned executor（v0.5.0-7 @ `74a9
 | 交付语义 | 组件 | 说明 |
 | --- | --- | --- |
 | Application State 本体（网络侧 ↔ 渲染侧状态边界） | `DoubleBuffer<AppState>` | 完整一致快照，单写多读（SWMR）；消费侧持有 `sequence`，经 `try_load` / `load_newer_than` 去重取新 |
-| 只关心最新值的单值状态（如当前连接路径摘要） | `LatestMailbox<T>` | 覆盖式 latest-wins；中间值可被覆盖，不承载逐条必达事件 |
+| 只关心最新值的单值状态（当前无实例——M5-04 起连接路径改逐设备 Store 字段，[DEC-015](../decisions/DEC-015-per-device-connection-path.md)） | `LatestMailbox<T>` | 覆盖式 latest-wins；中间值可被覆盖，不承载逐条必达事件 |
 | 事件广播（诊断 / 日志 / 后续 Agent 观察者） | `Topic<std::shared_ptr<const AppEvent>>` | in-process、无重放、best-effort；每订阅者独立有界队列（默认 `RejectNewest`），发布方必须检查 `TopicPublishResult` 的拒绝计数 |
 | 上表 9 类必达事件的投递主路径 | `MpscChannel<AppEvent>` | 逐条 FIFO 必达；有界容量，满即拒绝（`EXEC-02` 维持不变） |
 
@@ -928,7 +955,9 @@ Manager → owner 的状态更新为类型化指令（`AppStateUpdate`，与 9 �
 （整体 upsert）、`UpdateTransferProgress`（进度部分更新）、`SetPresence`（设备在线
 状态，仅 presence 字段，不触发信任状态机）、`SetDeliveryState`（送达回报部分更新）、
 `CompleteTransfer`（传输终态宣告，`final_state` 仅取 `Completed` / `Failed` /
-`Cancelled`）与 `SetConnectionPath`（覆盖式单值摘要，落 `LatestMailbox`）。owner
+`Cancelled`）与 `SetDeviceConnectionPath`（M5-04 起，[DEC-015](../decisions/DEC-015-per-device-connection-path.md)：
+逐设备连接路径部分更新——DeviceStore 级易失集合按设备键 upsert，未知 id
+拒绝；取代退役的全局 `SetConnectionPath`/LatestMailbox 单值摘要）。owner
 逐条校验：目标与当前一致为幂等 no-op；非法转移、终态复活与未知 id 一律拒绝并经
 `updates_rejected` 可观测（`RULE-08` / `RULE-09`）。
 
@@ -1031,9 +1060,9 @@ POSIX 相对路径，`hash` 为终态流式 SHA-256，`size_bytes` / `mime_type`
 （不新建行）；`CompleteTransfer` → TRANSFER 终态更新；`SetDeliveryState` →
 MESSAGE 送达状态列更新（不新建行）——送达回报是消息历史的组成部分，持久化
 保证重启恢复后已发消息不丢失送达终态（`M2` 计划退出-1「消息历史逐域一致」）。
-`SetPresence` 与 `SetConnectionPath` 不持久化：presence 是易失在线状态（恢复后
-默认 `Offline`，由连接事件重建），连接路径是第 10.1 节 LatestMailbox 覆盖式
-单值摘要。写入时机（M3-02 正式落点，[DEC-009](../decisions/DEC-009-appstate-write-path.md)）：
+`SetPresence` 与 `SetDeviceConnectionPath` 不持久化：presence 是易失在线状态（恢复后
+默认 `Offline`，由连接事件重建），连接路径是 DeviceStore 级易失集合（恢复后默认
+无条目即 `Unknown`，由连接事件重建，[DEC-015](../decisions/DEC-015-per-device-connection-path.md)）。写入时机（M3-02 正式落点，[DEC-009](../decisions/DEC-009-appstate-write-path.md)）：
 更新被状态 owner 接受（计入 `updates_applied`）后，owner 在 `drain_updates` 内调用
 其构造注入的接受后处理器（第 10.1 节；对齐 `ManagerPump` Handler 先例，`DEC-008`），
 处理器于 owner 单写者上下文按接受顺序同步入队对应 DB 作业——入队不新增执行上下文

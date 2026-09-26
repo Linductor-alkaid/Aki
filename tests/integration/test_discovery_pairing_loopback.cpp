@@ -297,8 +297,8 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
                 pairing_failure_b = detail;
             }
         });
-    REQUIRE(side_a.pair_peer(identity_b.id, "aki-loopback-pw"));
-    REQUIRE(side_b.pair_peer(identity_a.id, "aki-loopback-pw"));
+    REQUIRE(side_a.pair_peer(identity_b.id, aki::heyaki::kAkiPairingPassword));
+    REQUIRE(side_b.pair_peer(identity_a.id, aki::heyaki::kAkiPairingPassword));
     if (!wait_until([&] { return paired_a.load() && paired_b.load(); }, 20s)) {
         // 环境受限降级（不冒充已验证）：M3-04 验证记录如实声明——配对→信任
         // 全链路在本机被防火墙拦截至端 TLS 入站；CI 侧在 UB 修复
@@ -363,7 +363,7 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
         == rejected_before_revive_b + 1);
 
     // 重复配对不重复：pair_peer 在已认证会话上被拒（非 pairing_restricted）。
-    REQUIRE_FALSE(side_a.pair_peer(identity_b.id, "aki-loopback-pw"));
+    REQUIRE_FALSE(side_a.pair_peer(identity_b.id, aki::heyaki::kAkiPairingPassword));
 
     // 验收 ④：stop（TimerHandle 取消）后不再产生 discovered 事件。
     const auto events_before_stop = discovered_events.load();
@@ -394,8 +394,11 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
                 domain_d.profile.identity().id);
         },
         15s));
-    REQUIRE(node_c.pair_peer(domain_d.profile.identity().id, "right-password"));
-    REQUIRE(node_d.pair_peer(domain_c.profile.identity().id, "wrong-password"));
+    // DEC-016：目标端 verifier 只接受 kAkiPairingPassword——本用例两侧均
+    // 提交非匹配值验证失败面（历史 right/wrong-password 命名在假 verifier
+    // 下无区分度，已随真实验证器退役；成功面提交常量见上方主流程）。
+    REQUIRE(node_c.pair_peer(domain_d.profile.identity().id, "aki-invalid-pw-c"));
+    REQUIRE(node_d.pair_peer(domain_c.profile.identity().id, "aki-invalid-pw-d"));
     REQUIRE(wait_until([&] { return c_failed.load(); }, 20s));
     // 失败映射 Rejected：经状态机合法边 Pending→Rejected（复活拒绝经
     // stats().updates_rejected 增量观测，submit_update 仅是通道 admission）。

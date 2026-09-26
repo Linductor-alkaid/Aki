@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -113,6 +114,34 @@ public:
         return control_transfer(transfer_id, TransferCommand::Kind::Cancel);
     }
 
+    // 信任操作出站（M5-04，DEC-006 映射 3）：记录调用（含配对提交确认）；
+    // 成功语义可由测试经 queue_pairing_result 预设一次性结果（与真实
+    // NodeSession::pair_peer + set_pairing_observer 的异步形态对齐）。
+    bool confirm_pairing(const aki::device::DeviceId& peer) override {
+        if (peer.empty()) {
+            return false;
+        }
+        pairing_submits_.push_back(peer);
+        const bool success = pairing_result_override_.has_value()
+            ? *pairing_result_override_
+            : true;
+        if (sink_ != nullptr) {
+            (void)sink_->on_pairing_completed(peer, success, {});
+        }
+        return true;
+    }
+
+    bool revoke_trust(const aki::device::DeviceId& peer) override {
+        if (peer.empty() || !has_valid_grant_) {
+            return false;  // 无有效 grant（DEC-006 映射 3：无操作可见）。
+        }
+        revoked_peers_.push_back(peer);
+        if (sink_ != nullptr) {
+            (void)sink_->on_pairing_completed(peer, true, {});
+        }
+        return true;
+    }
+
     // ---- 编程式注入（Adapter → 应用，EXEC-02：有界校验 + 投递）----
     // 未设置 sink 或载荷校验失败返回 false；投递结果透传 sink 的返回值。
 
@@ -196,6 +225,25 @@ public:
         return sink_->on_connection_path_changed(std::move(device), from, to);
     }
 
+    // 配对一次性结果注入（M5-04，sink 第 12 方法）：Fake/真实 Adapter 的
+    // 配对结果路径对称（EXEC-02）。
+    bool inject_pairing_completed(aki::device::DeviceId device, bool success,
+        std::string_view detail = {}) {
+        if (sink_ == nullptr || device.empty()) {
+            return false;
+        }
+        return sink_->on_pairing_completed(std::move(device), success, detail);
+    }
+
+    // ---- 测试配置面（M5-04）----
+    // 预设 confirm_pairing 的一次性结果（空 = 默认成功）。
+    void queue_pairing_result(bool success) {
+        pairing_result_override_ = success;
+    }
+    // 设定是否持有有效 trust grant（默认 true；false 时 revoke_trust
+    // 返回 false——「无操作可见」语义）。
+    void set_has_valid_grant(bool has) noexcept { has_valid_grant_ = has; }
+
     // ---- 观测（测试 / 冒烟宿主断言用）----
 
     [[nodiscard]] bool discovery_running() const noexcept { return discovery_running_; }
@@ -214,6 +262,15 @@ public:
     }
     [[nodiscard]] bool transfer_session_known(const std::string& transfer_id) const {
         return transfer_sessions_.count(transfer_id) != 0;
+    }
+    // 信任操作观测（M5-04）：配对提交与撤销记录。
+    [[nodiscard]] const std::vector<aki::device::DeviceId>& pairing_submits()
+        const noexcept {
+        return pairing_submits_;
+    }
+    [[nodiscard]] const std::vector<aki::device::DeviceId>& revoked_peers()
+        const noexcept {
+        return revoked_peers_;
     }
 
 private:
@@ -237,6 +294,10 @@ private:
     std::vector<SentImage> sent_images_;
     std::vector<TransferCommand> transfer_commands_;
     std::set<std::string> transfer_sessions_;
+    std::vector<aki::device::DeviceId> pairing_submits_;
+    std::vector<aki::device::DeviceId> revoked_peers_;
+    std::optional<bool> pairing_result_override_;
+    bool has_valid_grant_ = true;
 };
 
 }  // namespace aki::heyaki

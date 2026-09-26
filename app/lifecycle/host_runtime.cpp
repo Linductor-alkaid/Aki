@@ -186,7 +186,8 @@ private:
                                 store, concrete.transfer.value));
                     }
                 }
-                // SetPresence / SetConnectionPath：不持久化（§11.1 ①），无作业。
+                // SetPresence / SetDeviceConnectionPath：不持久化（§11.1 ①，
+                // DEC-015），无作业。
             },
             update);
         return jobs;
@@ -463,9 +464,12 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
             impl.executor_owner.executor(), *impl.node_session,
             aki::heyaki::PeerSessionEvents{
                 .on_connected =
-                    [router_for_hooks](const DeviceId& peer) {
+                    // M5-04（DEC-015）：初连即携带 diff 映射路径（删除 M3-06
+                    // 的 Lan 硬编码——初连不发独立路径事件）。
+                    [router_for_hooks](const DeviceId& peer,
+                        ConnectionPath path) {
                         (void)router_for_hooks->on_device_connected(peer,
-                            ConnectionPath::Lan);
+                            path);
                     },
                 .on_disconnected =
                     [router_for_hooks, node_for_reconnect,

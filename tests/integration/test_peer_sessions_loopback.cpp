@@ -3,7 +3,7 @@
 // authenticated 会话经 peer_sessions diff 管道合成 connected 事件 →
 // 双扇出（DM SetPresence Online + CM UpsertConversation Active，经 RouterSink
 // 语义的 owner 直接投递）；连接路径映射 LatestMailbox 单值语义（SetConnection
-// Path 覆盖式）；不持久化（SetPresence/SetConnectionPath 无 DB 作业，重启后
+// Path 覆盖式）；不持久化（SetPresence/SetDeviceConnectionPath 无 DB 作业，重启后
 // presence 归一化 Offline）。握手被拦环境按 M3-04 先例降级。
 //
 // 二进制边界（2026-09-24 评审拆分，工程规范第 7 节）：本用例原追加于
@@ -143,7 +143,7 @@ TEST_CASE("Peer session pipeline drives presence and path state over the loopbac
     }
 
     // 不持久化断言的载体：DB 控制面 + 处理器（DEC-009 ①）。SetPresence/
-    // SetConnectionPath 在映射中无作业（§11.1 ①）——统计最终对账。
+    // SetDeviceConnectionPath 在映射中无作业（§11.1 ①）——统计最终对账。
     auto control = std::make_shared<aki::persistence::DatabaseWorkerControl>(
         std::make_unique<aki::persistence::Repositories>(
             aki::persistence::Database::open(":memory:")));
@@ -168,7 +168,7 @@ TEST_CASE("Peer session pipeline drives presence and path state over the loopbac
                 future.get();
                 ++device_jobs;
             }
-            // SetPresence / SetConnectionPath：无作业（§11.1 ①）。
+            // SetPresence / SetDeviceConnectionPath：无作业（§11.1 ①）。
         }};
 
     // 发现 + 连接 + 配对（沿 M3-04；握手被拦 → 降级退出）。
@@ -205,8 +205,8 @@ TEST_CASE("Peer session pipeline drives presence and path state over the loopbac
         [&](const DeviceId&, bool ok, const std::string&) {
             if (ok) paired.store(true);
         });
-    REQUIRE(side_a.pair_peer(identity_b.id, "aki-ps-pw"));
-    REQUIRE(side_b.pair_peer(identity_a.id, "aki-ps-pw"));
+    REQUIRE(side_a.pair_peer(identity_b.id, aki::heyaki::kAkiPairingPassword));
+    REQUIRE(side_b.pair_peer(identity_a.id, aki::heyaki::kAkiPairingPassword));
     if (!wait_until([&] { return paired.load(); }, 20s)) {
         // 环境受限降级（沿 M3-04/M3-05 纪律，不冒充已验证）：会话已到
         // pairing_restricted 但握手未在预算内完成——本机防火墙拦截至端
@@ -236,13 +236,14 @@ TEST_CASE("Peer session pipeline drives presence and path state over the loopbac
     std::atomic<int> path_events{0};
     aki::heyaki::PeerSessionEvents events;
     events.on_connected =
-        [&](const aki::device::DeviceId& peer) {
+        [&](const aki::device::DeviceId& peer,
+            aki::device::ConnectionPath path) {
             if (peer == identity_b.id) {
-                // DM 语义：SetPresence Online（DEC-008 双扇出中的 DM 半边；
-                // CM 半边 = UpsertConversation Active，此处以既有会话行语义
-                // 直接推进——会话已以 Pending/Trusted 行存在）。
+                // DM 语义：SetPresence Online + 初连路径（DEC-015）。
                 REQUIRE(state_owner.submit_update(
                     aki::app::SetPresence{peer, PresenceState::Online}));
+                REQUIRE(state_owner.submit_update(
+                    aki::app::SetDeviceConnectionPath{peer, path}));
                 ++connected_events;
             }
         };
@@ -257,9 +258,9 @@ TEST_CASE("Peer session pipeline drives presence and path state over the loopbac
         [&](const aki::device::DeviceId& peer,
             aki::device::ConnectionPath path) {
             if (peer == identity_b.id) {
-                // LatestMailbox 覆盖式单值（第 10.1 节）：无事件洪泛。
+                // 逐设备路径 upsert（DEC-015）：随 drain 合并，无事件洪泛。
                 REQUIRE(state_owner.submit_update(
-                    aki::app::SetConnectionPath{path}));
+                    aki::app::SetDeviceConnectionPath{peer, path}));
                 ++path_events;
             }
         };
@@ -278,22 +279,28 @@ TEST_CASE("Peer session pipeline drives presence and path state over the loopbac
     }
     REQUIRE(presence_online);
 
-    // 不持久化断言（验收 ③ 半边）：SetPresence/SetConnectionPath 无 DB 作业
+    // 不持久化断言（验收 ③ 半边）：SetPresence/SetDeviceConnectionPath 无 DB 作业
     //——device_jobs 不因 presence/path 事件增长（仅 UpsertDevice 作业计入）。
     const auto device_jobs_at_connected = device_jobs;
     // 路径事件在本回环（lan_only 直连）可能仅一次或零次——不强制出现。
     (void)wait_until([&] { return path_events.load() >= 1; }, 15s);
     REQUIRE(device_jobs == device_jobs_at_connected);
 
-    // LatestMailbox 覆盖式：连续 SetConnectionPath 仅保留最新值（验收 ②）。
-    REQUIRE(state_owner.submit_update(
-        aki::app::SetConnectionPath{aki::device::ConnectionPath::P2p}));
-    REQUIRE(state_owner.submit_update(
-        aki::app::SetConnectionPath{aki::device::ConnectionPath::Relay}));
+    // 逐设备 upsert 覆盖式（DEC-015）：连续同设备路径更新仅保留最新值。
+    REQUIRE(state_owner.submit_update(aki::app::SetDeviceConnectionPath{
+        identity_b.id, aki::device::ConnectionPath::P2p}));
+    REQUIRE(state_owner.submit_update(aki::app::SetDeviceConnectionPath{
+        identity_b.id, aki::device::ConnectionPath::Relay}));
     state_owner.drain();
-    aki::device::ConnectionPath latest = aki::device::ConnectionPath::Unknown;
-    REQUIRE(state_owner.try_load_connection_path(latest));
-    REQUIRE(latest == aki::device::ConnectionPath::Relay);  // 仅最新
+    executor::comm::Snapshot<aki::app::AppState> paths;
+    REQUIRE(state_owner.try_load_snapshot(paths));
+    bool latest_seen = false;
+    for (const auto& entry : paths.value.devices.connection_paths) {
+        if (entry.device == identity_b.id) {
+            latest_seen = entry.path == aki::device::ConnectionPath::Relay;
+        }
+    }
+    REQUIRE(latest_seen);  // 仅最新
 
     // 停止后零事件（TimerHandle 取消生效）。
     pipeline.stop();

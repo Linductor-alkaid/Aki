@@ -4,7 +4,8 @@
 //   - Manager -> owner 更新汇聚：MpscChannel<AppStateUpdate>（有界，满即拒绝）
 //   - Manager -> owner 事件入口：MpscChannel<AppEvent>（有界，满即拒绝）
 //   - owner -> 渲染侧一致快照：DoubleBuffer<AppState>（SWMR，单写者硬契约）
-//   - 单值最新状态（连接路径摘要）：LatestMailbox<ConnectionPath>（覆盖式）
+//   - 单值最新状态：当前无实例——M5-04 起连接路径为 DeviceStore 逐设备易失
+//     字段（DEC-015，随快照水位消费），退役 LatestMailbox 单值摘要
 //   - owner -> 观察者（诊断/日志/Agent）：Topic<AppEventPtr>（best-effort 广播）
 //   - owner -> 应用事件消费主路径：MpscChannel<AppEvent>（9 类必达事件，FIFO）
 //
@@ -12,7 +13,7 @@
 //   - submit_update()/post_event()：任意上下文（Manager 侧）。
 //   - drain()/close()/stats()：仅状态 owner 的单一执行上下文。
 //   - try_load_snapshot()/load_snapshot_newer_than()/try_receive_event()/
-//     receive_event_for()/subscribe_observer()/连接路径读取：任意上下文。
+//     receive_event_for()/subscribe_observer()：任意上下文。
 //   - close() 由外部 lifecycle owner 在停止生产者之后调用（EXEC-01；
 //     正式 owner 由 M1-04 提供）。comm 组件不参与 Executor shutdown。
 #pragma once
@@ -101,7 +102,6 @@ public:
           event_outbox_(executor::comm::ChannelOptions{.capacity = options_.event_outbox_capacity,
               .enable_stats = true,
               .name = options_.name + ".event_outbox"}),
-          connection_path_(options_.name + ".connection_path"),
           observers_(options_.name + ".observers"),
           post_accept_(std::move(post_accept)) {}
 
@@ -190,19 +190,9 @@ public:
         return event_outbox_.receive_for(out, timeout);
     }
 
-    // 覆盖式单值状态摘要（LatestMailbox latest-wins）。
-    [[nodiscard]] bool try_load_connection_path(aki::device::ConnectionPath& out) const {
-        return connection_path_.try_load(out);
-    }
-
-    [[nodiscard]] bool try_load_connection_path_newer_than(std::uint64_t last_seen_sequence,
-        aki::device::ConnectionPath& out, std::uint64_t& new_sequence) const {
-        return connection_path_.try_load_newer_than(last_seen_sequence, out, new_sequence);
-    }
-
-    [[nodiscard]] std::uint64_t connection_path_sequence() const noexcept {
-        return connection_path_.sequence();
-    }
+    // 覆盖式单值状态摘要访问器：M5-04 起无实例（连接路径改 DeviceStore 逐
+    // 设备易失字段，随快照水位消费——DEC-015）；LatestMailbox 组件保留于
+    // comm 组件选型面（设计 §10.1 映射表）。
 
     // best-effort 观察者订阅：只收到订阅创建之后的发布，无重放；
     // 慢订阅者按自身 DropPolicy 被拒，不影响其他订阅者。
@@ -221,9 +211,6 @@ public:
     }
     [[nodiscard]] executor::comm::CommStats event_outbox_stats() const noexcept {
         return event_outbox_.stats();
-    }
-    [[nodiscard]] executor::comm::CommStats connection_path_stats() const noexcept {
-        return connection_path_.stats();
     }
 
 private:
@@ -439,9 +426,29 @@ private:
         return false;
     }
 
-    bool apply_impl(const SetConnectionPath& set_path) {
-        connection_path_.publish(set_path.path);
-        return true;  // 生效于 LatestMailbox，不触发 Store 快照发布。
+    // 逐设备连接路径（M5-04，DEC-015）：未知 id 拒绝（RULE-09 可观测）；
+    // 已知 id 按设备键 upsert 条目并发布快照。同值幂等 no-op（不重复发布）。
+    bool apply_impl(const SetDeviceConnectionPath& set_path) {
+        for (const auto& existing : current_.devices.devices) {
+            if (existing.id == set_path.device) {
+                auto& paths = current_.devices.connection_paths;
+                for (auto& entry : paths) {
+                    if (entry.device == set_path.device) {
+                        if (entry.path == set_path.path) {
+                            return true;  // 幂等 no-op。
+                        }
+                        entry.path = set_path.path;
+                        snapshot_dirty_ = true;
+                        return true;
+                    }
+                }
+                paths.push_back(DeviceConnectionPathEntry{set_path.device,
+                    set_path.path});
+                snapshot_dirty_ = true;
+                return true;
+            }
+        }
+        return false;  // 未知设备：拒绝并可观测（updates_rejected）。
     }
 
     // 仅改 presence（无转移约束，设计第 3 节）；不经过信任状态机。未知 id 拒绝。
@@ -511,7 +518,6 @@ private:
     executor::comm::MpscChannel<AppStateUpdate> updates_;
     executor::comm::MpscChannel<AppEvent> event_inbox_;
     executor::comm::MpscChannel<AppEvent> event_outbox_;
-    executor::comm::LatestMailbox<aki::device::ConnectionPath> connection_path_;
     executor::comm::Topic<AppEventPtr> observers_;
     PostAcceptHandler post_accept_;  // 仅 owner 上下文调用（DEC-009）。
     AppStateOwnerStats stats_;

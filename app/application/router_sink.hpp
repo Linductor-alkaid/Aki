@@ -18,6 +18,8 @@
 #include "heyaki/adapter/heyaki_adapter.hpp"
 
 #include <cstdint>
+#include <string>
+#include <string_view>
 
 namespace aki::app {
 
@@ -87,6 +89,14 @@ public:
         aki::device::ConnectionPath from, aki::device::ConnectionPath to) override {
         return devices_.enqueue_connection_path_changed(
             std::move(device), from, to);
+    }
+
+    // 配对一次性结果（M5-04，sink 第 12 方法）：路由到 DM 信任转移
+    //（detail 供诊断日志面，不进 Store）。
+    bool on_pairing_completed(aki::device::DeviceId device, bool success,
+        std::string_view detail) override {
+        return devices_.enqueue_pairing_completed(
+            std::move(device), success, std::string(detail));
     }
 
 private:

@@ -14,8 +14,22 @@
 
 namespace aki::app {
 
+// 逐设备连接路径条目（M5-04，DEC-015）：当前会话的连接方式摘要——易失
+// （不持久化，恢复后默认无条目即 Unknown），仅由 SetDeviceConnectionPath
+// 写入（UpsertDevice 碰不到，避免发现事件整行替换覆写易失字段）。
+struct DeviceConnectionPathEntry {
+    aki::device::DeviceId device;
+    aki::device::ConnectionPath path = aki::device::ConnectionPath::Unknown;
+
+    friend bool operator==(const DeviceConnectionPathEntry&,
+        const DeviceConnectionPathEntry&) = default;
+};
+
 struct DeviceStore {
     std::vector<aki::device::DeviceIdentity> devices;
+    // 逐设备连接路径（DEC-015）：按设备键 upsert；向量形态（设备预算
+    // 256，线性查找在预算内，RULE-09）保持 AppState 值语义可比较。
+    std::vector<DeviceConnectionPathEntry> connection_paths;
 };
 
 struct ConversationStore {

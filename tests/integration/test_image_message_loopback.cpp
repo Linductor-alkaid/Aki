@@ -161,8 +161,8 @@ TEST_CASE("Two-node image messaging over the borrowed runtime",
         [&](const DeviceId& peer, bool ok, const std::string&) {
             if (ok && peer == identity_a.id) paired_b.store(true);
         });
-    REQUIRE(side_a.pair_peer(identity_b.id, "aki-img-pw"));
-    REQUIRE(side_b.pair_peer(identity_a.id, "aki-img-pw"));
+    REQUIRE(side_a.pair_peer(identity_b.id, aki::heyaki::kAkiPairingPassword));
+    REQUIRE(side_b.pair_peer(identity_a.id, aki::heyaki::kAkiPairingPassword));
     if (!wait_until(
             [&] { return (paired_a.load() && paired_b.load()); }, 20s)) {
         // 环境受限降级（沿 M3-04/05/09 纪律，不冒充已验证）。

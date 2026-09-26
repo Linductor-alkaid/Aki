@@ -38,6 +38,7 @@ using aki::app::AppStateOwnerOptions;
 using aki::app::ExecutorOwner;
 using aki::app::ExecutorOwnerOptions;
 using aki::app::ReconnectCoordinator;
+using aki::app::SetDeviceConnectionPath;
 using aki::app::SetPresence;
 using aki::app::UpsertDevice;
 using aki::device::ConnectionPath;
@@ -163,8 +164,8 @@ TEST_CASE("Disconnect recovery: reconnect loop restores the session (SCOPE-11)",
         [&](const DeviceId&, bool ok, const std::string&) {
             if (ok) paired.store(true);
         });
-    REQUIRE(side_a.pair_peer(identity_b.id, "aki-rec-pw"));
-    REQUIRE(side_b.pair_peer(identity_a.id, "aki-rec-pw"));
+    REQUIRE(side_a.pair_peer(identity_b.id, aki::heyaki::kAkiPairingPassword));
+    REQUIRE(side_b.pair_peer(identity_a.id, aki::heyaki::kAkiPairingPassword));
     if (!wait_until([&] { return paired.load(); }, 20s)) {
         // 环境受限降级（沿 M3-04/05/06 纪律，不冒充已验证）：会话已到
         // pairing_restricted 但握手未在预算内完成（CI 偶发停滞，run
@@ -219,10 +220,13 @@ TEST_CASE("Disconnect recovery: reconnect loop restores the session (SCOPE-11)",
             }
         };
     events.on_connected =
-        [&](const aki::device::DeviceId& peer) {
+        [&](const aki::device::DeviceId& peer,
+            aki::device::ConnectionPath path) {
             if (peer == identity_b.id) {
                 REQUIRE(state_owner.submit_update(
                     SetPresence{peer, PresenceState::Online}));
+                (void)state_owner.submit_update(
+                    SetDeviceConnectionPath{peer, path});
                 ++connected_events;
             }
         };

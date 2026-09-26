@@ -45,15 +45,23 @@ bool message_belongs_to(const aki::conversation::Message& message,
 
 }  // namespace
 
-std::vector<DeviceView> derive_device_views(
-    const aki::app::DeviceStore& store,
-    aki::device::ConnectionPath latest_connection_path) {
+std::vector<DeviceView> derive_device_views(const aki::app::DeviceStore& store) {
     std::vector<DeviceView> views;
     views.reserve(store.devices.size());
     for (const aki::device::DeviceIdentity& device : store.devices) {
-        views.push_back(DeviceView{device.id, device.display_name,
-            device.os_name, device.device_class, device.trust_state,
-            device.presence, latest_connection_path});
+        DeviceView view{device.id, device.display_name, device.os_name,
+            device.device_class, device.trust_state, device.presence,
+            aki::device::ConnectionPath::Unknown,
+            !device.public_key.bytes.empty()};
+        // 逐设备路径 join（DEC-015：DeviceStore.connection_paths 按设备键
+        // 查找；无条目保持 Unknown）。设备预算 256，线性查找在预算内。
+        for (const auto& entry : store.connection_paths) {
+            if (entry.device == view.id) {
+                view.connection_path = entry.path;
+                break;
+            }
+        }
+        views.push_back(std::move(view));
     }
     return views;
 }

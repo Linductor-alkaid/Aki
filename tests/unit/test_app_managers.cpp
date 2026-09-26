@@ -199,6 +199,18 @@ struct StubAdapter final : HeyakiAdapter {
 
     void set_sink(HeyakiAdapterSink*) noexcept {}
 
+    // M5-04 SPI 信任操作面：Stub 记录提交（本文件用例不消费 wire 结果）。
+    bool confirm_pairing(const DeviceId& peer) override {
+        pairing_submits.push_back(peer);
+        return true;
+    }
+    bool revoke_trust(const DeviceId& peer) override {
+        revoked_peers.push_back(peer);
+        return true;
+    }
+    std::vector<DeviceId> pairing_submits;
+    std::vector<DeviceId> revoked_peers;
+
     bool start_discovery(DiscoveryMethod) override {
         if (discovery_gate) {
             discovery_gate->await();
@@ -637,13 +649,24 @@ TEST_CASE("RouterSink routes the eleven sink methods to per-domain stores in FIF
         REQUIRE(snapshot.value.transfers.transfers.front().state == TransferState::Completed);
     }
 
-    // ⑧ connection path changed：LatestMailbox 摘要（不落 Store）。
+    // ⑧ connection path changed：逐设备 Store 字段（DEC-015，不落 DB）。
     REQUIRE(fake.inject_connection_path_changed(DeviceId{"dev-a"}, ConnectionPath::P2p,
         ConnectionPath::Relay));
     settle();
-    ConnectionPath path = ConnectionPath::Unknown;
-    REQUIRE(owner.try_load_connection_path(path));
-    REQUIRE(path == ConnectionPath::Relay);
+    executor::comm::Snapshot<AppState> path_snapshot;
+    int path_attempts = 0;
+    while (!owner.try_load_snapshot(path_snapshot) && path_attempts < 64) {
+        ++path_attempts;
+    }
+    REQUIRE(path_attempts < 64);
+    bool dev_a_path_seen = false;
+    for (const auto& entry :
+        path_snapshot.value.devices.connection_paths) {
+        if (entry.device == DeviceId{"dev-a"}) {
+            dev_a_path_seen = entry.path == ConnectionPath::Relay;
+        }
+    }
+    REQUIRE(dev_a_path_seen);
 
     // 必达事件主路径：10 个事件按注入顺序 FIFO，双投递事件各只投递一次。
     REQUIRE(owner.stats().updates_rejected == 0);

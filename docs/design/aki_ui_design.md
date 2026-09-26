@@ -113,7 +113,7 @@ Tailwind 默认调色板取值（hex→归一化在实现时完成）：
 | 领域状态 | 视觉 |
 | --- | --- |
 | Presence Online / Offline | 实心/空心圆点（`full`），Online `success`，Offline `subtlest`，旁注 Last seen |
-| Trust Unknown / Pending | `subtlest`/`warning` 徽标；Pending 触发信任确认弹窗（mono 展示公钥指纹） |
+| Trust Unknown / Pending | `subtlest`/`warning` 徽标；Pending 触发信任确认弹窗（mono 展示公钥指纹——公钥指纹=DeviceId 规范串（`hy1_`+base32，SHA-256 摘要），Device ID 与指纹同值合并展示、不引入第二种编码；弹窗无口令输入框，M5-04） |
 | Trust Trusted | `success` 徽标，可进入会话 |
 | Trust Rejected / Revoked | `destructive` 徽标，会话入口禁用 |
 | Delivery Queued/Sending/Sent/Delivered/Failed | 时钟 / 单勾（中性）/ 双勾 `success` / `destructive` + 重试 |

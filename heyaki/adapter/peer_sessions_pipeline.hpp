@@ -60,9 +60,14 @@ namespace aki::heyaki {
 }
 
 // 会话事件（DEC-008 双 Manager 扇出的入口面：connected/disconnected 由
-// DM+CM 双扇出，connection_path 变化落 DM 的 LatestMailbox）。
+// DM+CM 双扇出，connection_path 变化/初连路径落 DM 的逐设备 Store 字段
+// ——DEC-015）。
 struct PeerSessionEvents {
-    std::function<void(const aki::device::DeviceId&)> on_connected;
+    // 初连即携带映射路径（DEC-015：初连不发独立路径事件，本回调一并承载，
+    // 消费方无需硬编码默认路径）。
+    std::function<void(const aki::device::DeviceId&,
+        aki::device::ConnectionPath)>
+        on_connected;
     std::function<void(const aki::device::DeviceId&)> on_disconnected;
     std::function<void(const aki::device::DeviceId&,
         aki::device::ConnectionPath)>
@@ -70,7 +75,7 @@ struct PeerSessionEvents {
 };
 
 // 纯函数 diff：prev → curr 的 authenticated↔closed 变化与路径变化。
-//   - 新 authenticated → on_connected；
+//   - 新 authenticated → on_connected（含映射路径）；
 //   - 原 authenticated 现缺失/closed/非 authenticated → on_disconnected；
 //   - 两侧均 authenticated 且 data_path/signaling_route 变化 →
 //     on_connection_path_changed（映射后比较，RULE-06：仅路径摘要，不新建
@@ -94,7 +99,9 @@ inline void diff_peer_sessions(
             previous != prev_by_key.end() && previous->second.authenticated;
         if (view.authenticated && !was_authenticated) {
             if (events.on_connected) {
-                events.on_connected(view.device_id);
+                events.on_connected(view.device_id,
+                    map_connection_path(
+                        view.data_path, view.signaling_route));
             }
         }
         if (view.authenticated && was_authenticated) {
