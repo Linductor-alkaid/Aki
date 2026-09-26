@@ -142,6 +142,10 @@ struct TransferManagerOptions {
     // IO 事件投递满时的有界重试预算（worker 线程退避；泵持续排空下饱和
     // 不可达，仍失败计数可见——RULE-09）。
     std::chrono::milliseconds io_delivery_budget{2000};
+    // 重启播种行（M4-06，DEC-013②：恢复段改写后的非终态行——组合根从
+    // 恢复结果注入）：构造期种入已知行缓存，使重启后 wire 进度事件能走
+    // 「已知的 Paused 行」路径（Paused→Transferring 合法推进）。
+    std::vector<aki::transfer::Transfer> seeded_rows;
 };
 
 class TransferManager {
@@ -162,6 +166,12 @@ public:
                 [this](const aki::transfer::TransferIoEvent& event) {
                     deliver_io_event(event);
                 });
+        }
+        // 重启播种（DEC-013②）：恢复段改写的非终态行种入已知行缓存。
+        for (const auto& row : options_.seeded_rows) {
+            if (!row.id.empty() && !aki::transfer::is_terminal(row.state)) {
+                known_rows_[row.id.value] = row;
+            }
         }
     }
 
@@ -525,7 +535,12 @@ private:
         adapter_.cancel_transfer(work.transfer_id);  // SPI：幂等停止。
         auto it = sessions_.find(work.transfer_id.value);
         if (it == sessions_.end()) {
-            return true;  // 无会话（未启动或已终结）：幂等。
+            // 无会话行（M4-06，DEC-013②③：重启降级 Paused 行/接收行的
+            // 「待用户」出口）：直接终态写入——owner 状态机校验（行缺失/
+            // 已终态为可见拒绝，RULE-09）；discard 作业经接受后处理器入队。
+            return state_owner_.submit_update(
+                CompleteTransfer{work.transfer_id,
+                    aki::transfer::TransferState::Cancelled});
         }
         finish_session_io(it->second, work.transfer_id);
         sessions_.erase(it);

@@ -126,6 +126,7 @@ using aki::persistence::perform_startup_recovery;
 using aki::transfer::Transfer;
 using aki::transfer::TransferId;
 using aki::transfer::TransferState;
+using aki::transfer::is_terminal;
 
 int g_checks_failed = 0;
 int g_run_counter = 0;
@@ -433,6 +434,13 @@ int run_demo(const std::string& run_root) {
     // M4-04（DEC-011/§7.1③）：归档链路承载面注入（事件驱动会话状态机 +
     // 专用 worker 分块 IO；构造即注册事件投递面，worker 注册见步骤 6.5）。
     transfer_options.io = transfer_io.get();
+    // M4-06（DEC-013②）：恢复段改写后的非终态行播种 TM 已知行缓存
+    // （重启后 wire 进度事件走「已知的 Paused 行」路径）。
+    for (const auto& row : recovery.state.transfers) {
+        if (!is_terminal(row.state)) {
+            transfer_options.seeded_rows.push_back(row);
+        }
+    }
     TransferManager transfers{
         executor_owner.executor(), state_owner, adapter, transfer_options};
 

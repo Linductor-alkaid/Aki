@@ -162,9 +162,21 @@
   供源回退明确失败、Failed/Cancelled 幂等删除 + RULE-08、控制命令路径；
   debug/release 全量 ctest 36/36；回环 B 侧接收观察沿 [skip] 降级纪律。
   详见下方 2026-09-26（M4-05）验证记录。）
-- [ ] `M4-06` 双端传输回环验证：全链路（图片 + 文件 + 进度 + 暂停/恢复/取消 +
+- [x] `M4-06` 双端传输回环验证：全链路（图片 + 文件 + 进度 + 暂停/恢复/取消 +
   重启恢复一致）；环境受限沿 M3 降级纪律（网络无关断言拆分、[skip] 显式 +
-  补跑条件）。
+  补跑条件）。（2026-09-26 完成：调研结论按工程规范 6.2 落档
+  [DEC-013](../decisions/DEC-013-orphan-row-recovery.md)（Accepted——孤儿
+  活动行重启处置定稿「降级 Paused 待显式再驱动」：恢复段主线程同步改写
+  （先于清扫、诊断计数）+ 播种 TM 已知行缓存（接收行经 wire 进度推进/
+  committed 幂等收敛）+ 无会话 cancel 直接终态写入（发送行 M4 唯一出口）+
+  状态机边 Queued/Negotiating→Paused；否决自动恢复与判 Failed）；设计 §7
+  （边扩展）/§7.1⑥（重启处置小节）/§11.1②④ 回填。实现——startup_recovery
+  孤儿改写 + TransferManagerOptions 播种行 + 无会话 cancel 终态写入 + 组合根
+  传播种行。测试——新建 test_transfer_recovery 3 用例（降级+清扫次序、播种
+  推进+started 一次性可见拒绝+无会话 cancel、全链路组合含对账断言）、
+  test_transfer_state 重启降级边、test_transfer_full_loopback 全链路回环
+  二进制（防火墙 [skip] 降级沿既定纪律）；debug/release 全量 ctest 38/38。
+  详见下方 2026-09-26（M4-06）验证记录与退出-1 证据归集。）
 - [ ] `M4-07` 收口审计与退出证据归集（沿用 M1-08/M2-08/M3-09 纪律）。
 
 ## 风险与阻塞
@@ -193,7 +205,13 @@
 - [ ] 退出-1：双端回环图片 + 文件传输全链路——发起 → 进度 → 终态文件本体
   SHA-256 一致 + 暂停/恢复/取消语义 + 历史/传输行重启恢复一致
   （`SCOPE-07`/`SCOPE-08`）；环境受限时按 M3-09 先例「部分验证 + 如实降级
-  声明」处置并登记补跑条件。
+  声明」处置并登记补跑条件。（2026-09-26 M4-06 处置：部分验证 + 如实降级——
+  网络无关半边全部验证（归档/合并/控制/恢复/对账组合断言，test_transfer_
+  recovery + test_transfer_receive_path + test_transfer_send_path）；
+  双端真链路（含 DEC-012 风险④ direction 取值动态核实与 heyaki 簿记观察）
+  因防火墙拦截至端 TLS 未执行，test_transfer_full_loopback 以 [skip] 证据
+  路径通过；补跑条件与 M3-04~09/M4-03~05 登记同批（防火墙放行入站 TCP /
+  LAN 双端真机）。本项保持未勾选，随 M4-07 收口审计复核。）
 - [ ] 退出-2：DOD-02 六项沿传输并发路径通过——正常完成、任务异常、提交拒绝、
   执行中取消（重连/传输长任务 StopToken）、超时、shutdown（含在途文件作业
   drain 语义）。
@@ -696,3 +714,72 @@
   - 同步：本里程碑（M4-05 勾选、本记录）、总计划（当前状态条目 + 决策
     清单 DEC-012）、DEC-012/DEC-006（映射 3 增补）/设计 §7.1/§8.1/§8.3/
     §11.1④。
+
+- 2026-09-26（`M4-06` 完成；Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0；负责人：Linductor）：
+  - 设计先行（DOD-04，M1-08 纪律；开工首步调研结论按工程规范 6.2 落档）：
+    新建 [DEC-013](../decisions/DEC-013-orphan-row-recovery.md)（Accepted）——
+    孤儿活动传输行重启处置定稿「降级 Paused 待显式再驱动」（Option B）：
+    ① 恢复段把全部非终态行主线程同步改写 Paused（播种前、不经 blocking
+    worker/owner 状态机，先于清扫——Paused 非终态故 `.part` 保留，诊断计数
+    可见）；② 恢复显式且按方向分化：接收行经 wire 进度事件自 Paused 推进
+    `Transferring`（恢复段播种 TM 已知行缓存）+ committed-窗口以重发
+    `CompleteTransfer(Completed)` 幂等收敛；发送行 M4 范围只能显式 Cancelled
+    （无会话 cancel 补直接终态写入——owner 状态机校验、行缺失/已终态可见
+    拒绝；完整断点续传需 source_path 持久化 + hash 全前缀，登记 M5+ 前提）；
+    ③ 状态机边扩展 `Queued→Paused`/`Negotiating→Paused`（设计 §7 同批回填，
+    transfer_types 同步）；④ started 对 Paused 行一次性可见拒绝计入断言
+    基线。否决 A（自动恢复：committed-窗口恶化为重传 + source_path/schema
+    强制变更）与 C（判 Failed：对抗 heyaki attach 自动 re-manifest + 主动
+    销毁可收敛进度）。同批：新建
+    [DEC-005](../decisions/DEC-005-eui-neo-integration.md)（Accepted——
+    EUI-NEO 集成方式按暂定默认值冻结：pinned submodule 单一构建图 +
+    eui_neo_configure_app、构建开关 CACHE FORCE、并发边界禁用
+    app::async/core::network/audio；RISK-2026-002 静态盘点完成、运行复核挂
+    M5 首工作项；本项属 M5 前置冻结，随本会话调研结论一并落档，不涉及
+    M4-06 代码）；总计划（暂定决策表清空、已生效清单 + DEC-013/DEC-005、
+    RISK-2026-002 → Mitigated）。设计回填：§7（边扩展）、§7.1⑥（重启处置
+    小节）、§11.1②（孤儿改写+清扫次序）、§11.1④（恢复路径）。
+  - 实现（沿既有承载，不自建并发原语）：`transfer_types.hpp` 状态边；
+    `startup_recovery`（加载后、清扫前改写非终态行 + `orphan_rows_paused`
+    诊断）；`TransferManagerOptions::seeded_rows`（构造期种入已知行缓存）
+    + `handle(CancelTransferWork)` 无会话分支直接
+    `CompleteTransfer(Cancelled)` 写入；组合根 main.cpp 恢复行过滤传播种行。
+  - 测试：`test_transfer_state` 重启降级边用例（降级后恢复仍合法）+ 非法
+    边表更新（移除两条已合法化边）；新建 `test_transfer_recovery` 3 用例
+    50 断言——孤儿降级（2 非终态改写 + 终态不动 + 诊断计数 + `.part` 保留
+    + 独立重开 DB 读回）；播种推进（started 一次性可见拒绝 =1 + progress
+    走 Paused→Transferring + 无会话 cancel 收敛 Cancelled + 行缺失 cancel
+    可见拒绝）；全链路组合（发送归档 hash-first + 图片消息 stored_sha256 →
+    接收合并（独立 recv_id 建模，多段名）→ M2-06 作业组自接收根供源 →
+    对账断言「消息 media.stored_sha256 == 传输行 stored_sha256 == 源文件
+    SHA-256」→ 重启一致（stored_* SQL 断言 + 文件本体 + 原件删除））；
+    新建 `test_transfer_full_loopback`（单用例全链路回环二进制：发现→信任
+    （file.push scope）→图片消息→归档→暂停/恢复→B 侧 committed→本体
+    SHA-256 一致→发送侧终态+对账→快照重启一致；`[skip]` 三级降级点沿
+    M3-05 先例——no LAN interface / 握手被拦 / 握手未完成）。
+  - 验证（本会话执行）：MSVC debug 全量 `ctest --test-dir build/debug -C
+    Debug` 38/38 通过（36 基线 + 新 recovery/full_loopback）；release 全量
+    `ctest --test-dir build/release -C Release` 38/38 通过；
+    test_transfer_recovery/test_transfer_state/test_transfer_receive_path/
+    test_transfer_send_path/test_app_managers 随机顺序各 6 连跑零失败；
+    文档相对链接核验见收口（M4-07 复跑）。ASAN/UBSAN/TSAN 随本 PR CI。
+  - 退出-1 证据归集（M3-09 先例，部分验证 + 如实降级）：
+    - 已验证（本机可执行、已执行）：网络无关半边——发送归档/接收合并/
+      暂停恢复/取消幂等/孤儿降级/播种推进/无会话 cancel/对账断言/重启一致
+      （test_transfer_recovery + test_transfer_receive_path +
+      test_transfer_send_path + test_transfer_full_loopback 网络无关断言，
+      可复现命令：`ctest --test-dir build/debug -C Debug -R
+      "test_transfer_(recovery|receive_path|send_path|state)"` 38/38 全量）。
+    - 未验证（环境受限，不冒充）：双端真链路——test_transfer_full_loopback
+      本机输出 `[skip] pairing handshake blocked (firewall): full transfer
+      loopback not verified; rerun with inbound TCP allowed`（证据路径
+      通过）；DEC-012 风险④ direction 接收侧取值动态核实与 heyaki 断点
+      续传簿记观察并入补跑条件。补跑条件（与 M3-04~09/M4-03~05 同批）：
+      防火墙放行入站 TCP 或 LAN 双端真机；负责人 Linductor。
+  - 已知边角：供源全缺时行 Completed 与存储缺失并存（DEC-012，可见失败 +
+    幂等重跑）；接收根残留不扩清扫面（M5 GC）；孤儿接收行的 restart 再驱动
+    依赖对端 re-push（本端无 UI 触发面，M5 Transfers 页）。
+  - 同步：本里程碑（M4-06 勾选、退出-1 处置标注、本记录）、总计划（当前
+    状态条目 + 决策清单 DEC-013/DEC-005 + 暂定表清空 + RISK-2026-002）、
+    DEC-013/DEC-005/设计 §7/§7.1⑥/§11.1②④。
