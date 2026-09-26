@@ -319,6 +319,24 @@
   观察（防火墙 [skip] 降级沿既定纪律）；debug/release 全量 ctest 36/36，
   新/改二进制随机序各 8 连跑稳定。详见 M4 里程碑文档 M4-05 验证记录
   2026-09-26 条目。
+- 2026-09-26：`M4-06` 完成（双端传输回环验证，`SCOPE-07/08`）：调研结论
+  落档 [DEC-013](../decisions/DEC-013-orphan-row-recovery.md)（Accepted——
+  孤儿活动行重启处置「降级 Paused 待显式再驱动」：恢复段主线程同步改写
+  非终态行（先于清扫）+ 播种 TM 已知行缓存（接收行 wire 进度推进/committed
+  幂等收敛）+ 无会话 cancel 直接终态写入（发送行 M4 唯一出口）+ 状态机边
+  Queued/Negotiating→Paused；否决自动恢复与判 Failed）；设计 §7/§7.1⑥/
+  §11.1②④ 回填。实现：startup_recovery 孤儿改写（orphan_rows_paused 诊断）
+  + TM 播种行/无会话 cancel 终态 + 组合根传播种行。测试：新建
+  test_transfer_recovery（孤儿降级+清扫次序/播种推进+可见拒绝/无会话
+  cancel/全链路组合含「消息 stored_sha256 == 传输行 stored_sha256」对账与
+  重启一致）+ test_transfer_state 重启降级边 + test_transfer_full_loopback
+  全链路回环二进制（[skip] 降级沿既定纪律）；debug/release 全量 ctest 38/38
+  零回归，五个受影响二进制随机序各 6 连跑稳定。同批冻结
+  [DEC-005](../decisions/DEC-005-eui-neo-integration.md)（EUI-NEO 集成，
+  M5 前置——暂定决策表清空，RISK-2026-002 → Mitigated，运行复核挂 M5）。
+  退出-1 按降级纪律归集：网络无关半边全部验证；双端真链路 + DEC-012 风险④
+  动态核实未执行（防火墙 [skip] 显式，补跑条件与 M3/M4-03~05 同批）。详见
+  M4 里程碑文档 M4-06 验证记录 2026-09-26 条目。
 
 ## 交付边界
 
@@ -414,11 +432,14 @@ M3 引入真实 Heyaki；M5 整合 UI 并按设计第 15 节逐项验收 MVP。�
 
 ## 尚未冻结的决策（暂定默认值）
 
-| 编号 | 主题 | 暂定默认值 | 负责人 | 最迟冻结里程碑 |
-| --- | --- | --- | --- | --- |
-| `DEC-005` | EUI-NEO 集成方式 | 源码/子模块引入 + CMake target，不用 WebView | Linductor | M5 开始前 |
+（无——2026-09-26 起 `DEC-005` 已冻结为
+[DEC-005](../decisions/DEC-005-eui-neo-integration.md)，见上。）
 
-`DEC-005` 在冻结时创建正式决策记录文件；已生效决策见
+`DEC-005` 已于 2026-09-26 冻结为
+[DEC-005](../decisions/DEC-005-eui-neo-integration.md)（Accepted——pinned
+submodule + 单一构建图 + eui_neo_configure_app 接入、构建开关 CACHE FORCE
+冻结、并发边界禁用 app::async/core::network/audio、RISK-2026-002 静态盘点
+完成）；已生效决策见
 [docs/decisions/](../decisions/)（含已冻结的 [DEC-003](../decisions/DEC-003-dependency-locking.md)、
 [DEC-004](../decisions/DEC-004-local-persistence-sqlite.md)（2026-09-22 提前冻结）、
 [DEC-006](../decisions/DEC-006-heyaki-api-contract.md)（2026-09-23，Heyaki API 契约
@@ -445,7 +466,12 @@ TransferState 正交生命周期 + TransferId 消费侧 join + 发送侧准入�
 参数化（.part → 接收根回退，原件删除同作业，仍经 DatabaseWorker 通道）、
 接收侧无归档相位/终态闸门/接收会话、八相位→Aki 状态映射与 sink 第 11 方法
 on_transfer_paused 落地、stored_sha256 对账策略（作业内不对账，消费者执行）、
-配对 scope 扩展 {message.send, file.push:<root>}；DEC-009 复核 n=2 维持））。
+配对 scope 扩展 {message.send, file.push:<root>}；DEC-009 复核 n=2 维持）、
+[DEC-013](../decisions/DEC-013-orphan-row-recovery.md)（2026-09-26，孤儿活动
+传输行重启处置——降级 Paused 待显式再驱动：恢复段主线程同步改写（先于清扫）
++ 播种 TM 已知行缓存（接收行经 wire 进度推进/committed 幂等收敛）+ 无会话
+cancel 直接终态写入（发送行 M4 范围唯一出口）+ 状态机边扩展 Queued/Negotiating
+→ Paused；否决自动恢复与判 Failed））。
 
 ## 跨里程碑通用完成定义
 
@@ -482,7 +508,7 @@ on_transfer_paused 落地、stored_sha256 对账策略（作业内不对账，�
 | 编号 | 状态 | 风险/阻塞 | 影响 | 负责人 | 解除条件 |
 | --- | --- | --- | --- | --- | --- |
 | `RISK-2026-001` | Resolved (2026-09-21) | executor / EUI-NEO / heyaki 来源与 pinned commit 未定 | 曾阻塞 M1 并发代码、M3、M5 | Linductor | 已解除：[DEC-003](../decisions/DEC-003-dependency-locking.md) 冻结为 Accepted，submodule + 锁文件校验通过 |
-| `RISK-2026-002` | Open | EUI-NEO 组件能力与三栏布局匹配度未验证 | M5 范围可能调整 | Linductor | M5 开始前完成组件能力盘点 |
+| `RISK-2026-002` | Mitigated (2026-09-26) | EUI-NEO 组件能力与三栏布局匹配度未验证 | M5 范围可能调整 | Linductor | 静态盘点完成（[DEC-005](../decisions/DEC-005-eui-neo-integration.md)：映射表 16 组件 pinned v0.6.0 全部存在 + theme tokens 可覆写 + 3 项不阻塞缺口定位）；运行复核挂 M5 首工作项 |
 | `RISK-2026-003` | Resolved (2026-09-22) | 本机 Windows/MinGW 工具链对 sanitizer 支持有限 | 曾致 TSAN/部分 ASAN 证据缺失 | Linductor | 已解除：Linux CI 门禁建立（`.github/workflows/ci.yml`，PR #1 首轮 asan/ubsan 全绿），sanitizer 证据由 CI 常规提供 |
 
 2026-09-21 复核 `RISK-2026-003`：本机 w64devkit GCC 15.2 工具链未随附 sanitizer

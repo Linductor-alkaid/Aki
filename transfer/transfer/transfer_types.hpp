@@ -68,9 +68,14 @@ constexpr bool is_terminal(TransferState state) noexcept {
 constexpr bool can_transition(TransferState from, TransferState to) noexcept {
     switch (from) {
         case TransferState::Queued:
-            return to == TransferState::Negotiating || to == TransferState::Cancelled;
+            // Queued -> Paused（DEC-013：重启降级边——恢复段把非终态行改写
+            // 为 Paused，运行期语义一致）。
+            return to == TransferState::Negotiating || to == TransferState::Paused
+                || to == TransferState::Cancelled;
         case TransferState::Negotiating:
-            return to == TransferState::Transferring || to == TransferState::Failed
+            // Negotiating -> Paused（同上：重启降级边）。
+            return to == TransferState::Transferring || to == TransferState::Paused
+                || to == TransferState::Failed
                 || to == TransferState::Cancelled;
         case TransferState::Transferring:
             return to == TransferState::Paused || to == TransferState::Completed

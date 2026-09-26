@@ -457,6 +457,34 @@ target_link_libraries(test_transfer_receive_path PRIVATE
 add_test(NAME test_transfer_receive_path COMMAND test_transfer_receive_path)
 set_tests_properties(test_transfer_receive_path PROPERTIES LABELS "unit")
 
+# M4-06：重启恢复语义与全链路组合断言单测（DEC-013/DEC-012⑤——孤儿降级/
+# 播种推进/无会话 cancel/对账与重启一致；网络无关 + DB 全量）。
+add_executable(test_transfer_recovery unit/test_transfer_recovery.cpp)
+target_compile_features(test_transfer_recovery PRIVATE cxx_std_20)
+aki_apply_warnings(test_transfer_recovery PRIVATE)
+target_link_libraries(test_transfer_recovery PRIVATE
+    Catch2::Catch2WithMain
+    aki_app
+    aki_persistence)
+add_test(NAME test_transfer_recovery COMMAND test_transfer_recovery)
+set_tests_properties(test_transfer_recovery PROPERTIES LABELS "unit")
+
+# M4-06：双端传输全链路回环（SCOPE-07/08；单用例二进制，[skip] 纪律沿
+# M3-05/M4-03~05——防火墙受限环境降级，补跑条件见里程碑验证记录）。
+add_executable(test_transfer_full_loopback
+    integration/test_transfer_full_loopback.cpp)
+target_compile_features(test_transfer_full_loopback PRIVATE cxx_std_20)
+aki_apply_warnings(test_transfer_full_loopback PRIVATE)
+target_link_libraries(test_transfer_full_loopback PRIVATE
+    Catch2::Catch2WithMain
+    aki_app
+    aki_persistence
+    aki_heyaki
+    heyaki::client)
+aki_deploy_openssl_dlls(test_transfer_full_loopback)
+add_test(NAME test_transfer_full_loopback COMMAND test_transfer_full_loopback)
+set_tests_properties(test_transfer_full_loopback PROPERTIES LABELS "integration")
+
 # M4-04：发送侧传输链路双节点回环（真实 Adapter push_file 接线 + Aki 归档；
 # 单用例二进制，[skip] 纪律沿 M3-05/M4-03；接收侧归 M4-05）。
 add_executable(test_transfer_send_loopback

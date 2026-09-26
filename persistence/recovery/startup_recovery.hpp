@@ -34,6 +34,7 @@ struct RecoveryDiagnostics {
     std::string db_path;
     std::size_t migrations_applied = 0;   // 本次恢复实际应用的迁移步数（幂等重开为 0）
     std::size_t tmp_orphans_removed = 0;  // files/tmp/ 残留清扫数
+    std::size_t orphan_rows_paused = 0;   // 非终态传输行改写 Paused 数（DEC-013①）
 };
 
 // 逐域加载结果（领域类型；宿主据此构造 AppState 播种）。

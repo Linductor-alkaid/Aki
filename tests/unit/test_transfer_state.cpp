@@ -1,4 +1,5 @@
-// TransferState 状态机单测（M1-01）：正常完成、暂停恢复、取消/失败入口、终态幂等。
+// TransferState 状态机单测（M1-01；M4-06 重启降级边）：正常完成、暂停恢复、
+// 取消/失败入口、重启降级（Queued/Negotiating -> Paused，DEC-013）、终态幂等。
 #include "transfer/transfer/transfer_types.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -27,6 +28,23 @@ TEST_CASE("TransferState supports pause and resume", "[unit][transfer]") {
     REQUIRE(machine.transition_to(TransferState::Paused));
     REQUIRE(machine.transition_to(TransferState::Transferring));
     REQUIRE(machine.state == TransferState::Transferring);
+}
+
+// M4-06（DEC-013）：重启降级边——Queued/Negotiating -> Paused 合法
+//（恢复段把非终态行改写 Paused，运行期语义一致）。
+TEST_CASE("TransferState allows restart demotion into Paused", "[unit][transfer]") {
+    for (const TransferState from :
+        {TransferState::Queued, TransferState::Negotiating}) {
+        INFO(to_string(from) << " -> Paused (restart demotion)");
+        TransferStateMachine machine;
+        machine.state = from;
+        REQUIRE(can_transition(from, TransferState::Paused));
+        REQUIRE(machine.transition_to(TransferState::Paused));
+        REQUIRE(machine.state == TransferState::Paused);
+        // 降级后恢复仍走既有合法边。
+        REQUIRE(machine.transition_to(TransferState::Transferring));
+        REQUIRE(machine.state == TransferState::Transferring);
+    }
 }
 
 TEST_CASE("TransferState can be cancelled from every active state", "[unit][transfer]") {
@@ -59,10 +77,8 @@ TEST_CASE("TransferState rejects illegal transitions", "[unit][transfer]") {
     };
     const Case illegal[] = {
         {TransferState::Queued, TransferState::Transferring},
-        {TransferState::Queued, TransferState::Paused},
         {TransferState::Queued, TransferState::Completed},
         {TransferState::Queued, TransferState::Failed},
-        {TransferState::Negotiating, TransferState::Paused},
         {TransferState::Negotiating, TransferState::Completed},
         {TransferState::Transferring, TransferState::Negotiating},
         {TransferState::Paused, TransferState::Completed},

@@ -314,7 +314,9 @@ struct Transfer {
 Transfer 至少包含
 `Queued`、`Negotiating`、`Transferring`、`Paused`、`Completed`、`Failed`
 和 `Cancelled`
-状态。聊天窗口用文件卡片展示当前会话中的任务，同时提供独立的 Transfers
+状态（M4-06 边扩展，[DEC-013](../decisions/DEC-013-orphan-row-recovery.md)：
+`Queued → Paused` 与 `Negotiating → Paused` 为合法边——重启降级语义，见
+§7.1⑥）。聊天窗口用文件卡片展示当前会话中的任务，同时提供独立的 Transfers
 页面查看正在进行和已经结束的传输。
 
 ### 7.1 传输集成契约（M4 契约，M4-01；M4-04 修订承载形态，
@@ -414,6 +416,23 @@ SHA-256 在发送前对源文件计算（M4-04 落地：hash-first 分块作业�
 （CompleteTransfer(Completed) 仍为 1 作业）。收发 SHA-256 对账不在作业内
 执行（发送方哈希无持久面）——由持有消息载荷的消费者执行（M4-06 回环断言
 /M5 UI），失配即断言失败/可见呈现，不静默。
+
+**⑥ 孤儿活动行的重启处置（M4-06 定稿，[DEC-013](../decisions/DEC-013-orphan-row-recovery.md)）**：
+孤儿活动行是受控关闭的常态产物（关闭钩子第一步取消在途会话但不写终态）。
+定稿为**降级 Paused 待显式再驱动**：启动恢复段（主线程、播种前、同步落库、
+不经 owner 状态机，§11.1②）把全部非终态 TRANSFER 行改写为 `Paused`（先于
+清扫——Paused 非终态故 `.part` 保留；诊断计数可见）。恢复为显式动作且按
+方向分化：**接收行**恢复 = 行自 Paused 经 wire 进度事件推进 `Transferring`
+（合法边；恢复段把改写后的非终态行播种进 TM 已知行缓存使 wire 事件走
+「已知的 Paused 行」路径）后自然收敛，committed-崩溃窗口行由重发
+`CompleteTransfer(Completed)` 幂等收敛（供源=接收根文件，④）；**发送行**
+M4 范围内只能显式 Cancelled 终结（无会话行 `cancel_transfer` 补直接终态
+写入——`CompleteTransfer(Cancelled)` 交 owner 状态机校验，行缺失/已终态
+为可见拒绝；完整 push_file same-id 断点续传需 `source_path` 持久化 + hash
+全前缀，登记 M5+ 前提）。不做自动恢复（committed-窗口会被重推恶化为整体
+重传）、不判 Failed（对抗 heyaki attach 自动 re-manifest + 主动销毁可收敛
+进度，与断线恢复目标相悖）。重启后 `started(Negotiating)` 对 Paused 行为
+一次性可见拒绝（owner 状态机，计入断言基线）。
 
 **⑤ DEC-006 映射 7 实现级细化**：`start_file_transfer` →
 `push_file(peer, root, logical_name, source_path, transfer_id)`
@@ -954,7 +973,9 @@ MESSAGE 送达状态列更新（不新建行）——送达回报是消息历史
 启动之前，于主线程同步执行恢复——此时尚无并发事件源，不经 blocking worker，
 `DatabaseWorker` 在播种完成后才注册：解析数据根目录 → `open`（DB 损坏即干净
 失败，不静默）→ `PRAGMA user_version` 迁移 → 逐域加载 DEVICE / CONVERSATION /
-MESSAGE / TRANSFER → 清扫无活动 Transfer 行的 `files/tmp/` 残留（依据加载到的
+MESSAGE / TRANSFER → 孤儿活动行降级（M4-06，[DEC-013](../decisions/DEC-013-orphan-row-recovery.md)：
+全部非终态 TRANSFER 行同步落库改写 `Paused`、诊断计数可见，先于清扫——
+Paused 非终态故 `.part` 保留）→ 清扫无活动 Transfer 行的 `files/tmp/` 残留（依据加载到的
 活动行判定，`DEC-004` 崩溃恢复纪律）→ 以加载结果构造 `AppState` 作为初始快照
 播种状态 owner（`AppStateOwner` 构造入参；第 10.1 节单写者纪律在启动段的对应
 形式：恢复期 owner 尚未运行、无并发写者，恢复数据即首个权威快照）。时序对齐
@@ -1004,7 +1025,11 @@ DEC-012⑤）——由持有消息载荷的消费者执行，失配即断言失�
 `Failed` / `Cancelled` 被接受后排队 `.part` 幂等删除作业（接收侧无 `.part`
 时幂等 no-op，heyaki 失败/取消自清其接收侧残留）；
 启动清扫见 ②（仍仅覆盖 `files/tmp`；接收根残留靠作业幂等重跑收敛，长期 GC
-归 §6.1 已登记的 M5 兜底议题）。Manager 不做文件 I/O——第 8.3 节职责切分不变：
+归 §6.1 已登记的 M5 兜底议题）。**恢复路径（M4-06，DEC-013②）**：重启后
+Paused 行的收敛为显式动作——接收行经 wire 进度事件推进（恢复段播种 TM
+已知行缓存）或 committed-窗口重发 `CompleteTransfer(Completed)` 幂等收敛；
+发送行经无会话 `cancel_transfer` 直接终态写入（owner 状态机校验，discard
+作业经接受后处理器入队）。Manager 不做文件 I/O——第 8.3 节职责切分不变：
 TransferManager 只写权威状态并经状态更新触发上述作业。数据根目录解析为
 Platform Adapter 职责的最小落点：persistence 层内平台条件编译单元（Windows `%APPDATA%` / Linux XDG）提供
 数据根目录解析，公开面仅 `std::string` 路径（`RULE-10`，平台相关编译单元保持

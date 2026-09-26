@@ -61,8 +61,23 @@ RecoveryResult perform_startup_recovery(const std::string& data_root,
     result.state.messages = repos.messages.load_all();
     result.state.transfers = repos.transfers.load_all();
 
+    // 孤儿活动行降级（M4-06，DEC-013①）：全部非终态 TRANSFER 行改写为
+    // Paused（受控关闭/崩溃的在途行常态产物——恢复为显式动作、语义见
+    // §7.1⑥）。主线程同步落库（§11.1② 纪律——不经 blocking worker、不经
+    // owner 状态机），先于清扫（Paused 非终态故 .part 保留，清扫判定以
+    // 改写后的行集为准）。诊断计数可见（RULE-09）。
+    std::size_t orphan_rows_paused = 0;
+    for (auto& transfer : result.state.transfers) {
+        if (!aki::transfer::is_terminal(transfer.state)) {
+            transfer.state = aki::transfer::TransferState::Paused;
+            repos.transfers.upsert(transfer);
+            ++orphan_rows_paused;
+        }
+    }
+
     // 清扫按加载到的活动 Transfer 行判定（§11.1 ②：加载之后执行）。
     result.diagnostics = std::move(diagnostics);
+    result.diagnostics.orphan_rows_paused = orphan_rows_paused;
     result.diagnostics.tmp_orphans_removed =
         result.store->sweep_tmp_orphans(result.state.transfers);
     return result;
