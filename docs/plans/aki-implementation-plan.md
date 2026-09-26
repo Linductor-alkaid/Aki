@@ -348,6 +348,17 @@
   如实降级——M4 保持 In Progress、关闭待补跑（防火墙放行入站 TCP / LAN
   双端真机，与 M3 同批，负责人 Linductor）；退出-1 保持未勾选，M4-01~07
   工作项全部勾选。详见 M4 里程碑文档 M4-07 验证记录 2026-09-26 条目。
+- 2026-09-26：[M5 里程碑文档](m5-eui-neo-ui-mvp.md) 创建（Planned，
+  `M5-01`~`M5-09`，里程碑索引 M5 文档链接更新）。范围：EUI-NEO 主窗口与
+  基础主题、四页导航与 MVP 全链路验收（`SCOPE-04`/`SCOPE-12` + `SCOPE-05`
+  ~`08` UI 面 + `SCOPE-01`~`12` 逐项验收）。前置说明：M3/M4 工作项均已
+  完成但两里程碑 In Progress（退出-1/3 待防火墙放行/LAN 双端环境补跑，
+  见 M3-09/M4-07 记录）——沿 M4 文档创建先例，环境补跑不阻塞本里程碑
+  文档与设计先行工作项（`M5-01`，含 `RISK-2026-002` 运行复核收口），UI
+  实现工作项开工时复核 M3/M4 状态。开工前无待冻结决策（`DEC-005` 已于
+  2026-09-26 冻结）；关键风险已在 M5 文档登记：EUI-NEO 运行时能力复核
+  （virtuallist 行高/dialog open 状态/文件对话框）、CI 无显示环境的
+  渲染验证策略、主题档位逐项覆写、`onShutdown` 关闭序覆盖。
 
 ## 交付边界
 
@@ -435,7 +446,7 @@
 | M2 | 本地持久化 | Done | M1 | v0.2.0 | [m2-local-persistence.md](m2-local-persistence.md) |
 | M3 | Heyaki 真实接入与文本消息 | In Progress | M1、M2、DEC-006 | v0.3.0 | [m3-heyaki-integration.md](m3-heyaki-integration.md) |
 | M4 | 图片消息与文件传输 | In Progress | M3 | v0.4.0 | [m4-image-file-transfer.md](m4-image-file-transfer.md) |
-| M5 | EUI-NEO UI 与 MVP 验收 | Planned | M2、M3、M4、DEC-005 | v0.5.0（MVP） | 待创建 |
+| M5 | EUI-NEO UI 与 MVP 验收 | Planned | M2、M3、M4、DEC-005 | v0.5.0（MVP） | [m5-eui-neo-ui-mvp.md](m5-eui-neo-ui-mvp.md) |
 
 依赖说明：M1 先以契约与假实现交付可运行的领域骨架（先契约后实现、先假实现后真实依赖）；
 M3 引入真实 Heyaki；M5 整合 UI 并按设计第 15 节逐项验收 MVP。每个里程碑必须产生可独立
