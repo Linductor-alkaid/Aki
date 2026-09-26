@@ -94,6 +94,16 @@ function(aki_apply_warnings target scope)
             target_compile_options(${target} ${scope}
                 "$<$<COMPILE_LANGUAGE:CXX>:-Wno-error=tsan>")
         endif()
+        # M5-02 CI（Linux GNU 档首跑）：EUI-NEO 公开头文件自带尾成员省略式聚合
+        # 初始化（components/theme.h light()/dark() 省略末位 metrics 成员，
+        # theme.h:165/178；C++ 聚合初始化其余成员值初始化，语义合法），在消费
+        # TU 内命中 -Wextra 的 -Wmissing-field-initializers 并被 -Werror 放大
+        # 为构建失败（MSVC 无对应告警，本机 /W4 /WX 全量构建 0 warning 已证；
+        # eui 消费面为 aki_ui 与根 main.cpp，DEC-005 单一构建图）。third_party
+        # 不可改动（仓库纪律），按本函数既定纪律「第三方头文件告警不进第一方
+        # 门禁」仅解除升错、保留诊断可见（与上方 -Wno-error=tsan 同型）。
+        target_compile_options(${target} ${scope}
+            "$<$<COMPILE_LANGUAGE:CXX>:-Wno-error=missing-field-initializers>")
     endif()
     if(AKI_WARNINGS_AS_ERRORS)
         if(MSVC)
