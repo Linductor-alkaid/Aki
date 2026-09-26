@@ -194,8 +194,25 @@ TEST_CASE("Full closure over the real adapter SPI: pair, text, recover",
     }
 
     // 信任行 + Conversation（DEC-009 ② 归属先行——FK 前置校验依赖）。
+    // 本地行（identity_a）先行：conversation 表对 local_device/remote_device
+    // 双外键（schema_v1），本地行为 local_device 的父行。CI 历史绿色运行
+    // 均为 restricted [skip] 路径、本段从未实跑；run 36277569656 tsan 首次
+    // 配对完成即暴露本地行缺失（FOREIGN KEY constraint failed）。
     const ConversationId conversation{
         std::string{"conv-"} + identity_b.id.value};
+    {
+        auto job = aki::persistence::make_device_upsert_job(
+            [&] {
+                DeviceIdentity local;
+                local.id = identity_a.id;
+                local.display_name = "local-a";
+                local.public_key = identity_a.public_key;
+                return local;
+            }());
+        auto future = job.done->get_future();
+        REQUIRE(control->enqueue(std::move(job)));
+        future.get();
+    }
     {
         auto job = aki::persistence::make_device_upsert_job(
             [&] {
@@ -279,9 +296,17 @@ TEST_CASE("Full closure over the real adapter SPI: pair, text, recover",
 
     // 重启恢复（验收 ②）：逐域一致 + conversation 归属列 SQL 断言。
     RecoveryResult reopened = perform_startup_recovery(root_a);
-    REQUIRE(reopened.state.devices.size() == 1);
-    REQUIRE(reopened.state.devices[0].id == identity_b.id);
-    REQUIRE(reopened.state.devices[0].trust_state == TrustState::Trusted);
+    REQUIRE(reopened.state.devices.size() == 2);
+    bool local_row = false;
+    bool peer_row = false;
+    for (const auto& device : reopened.state.devices) {
+        if (device.id == identity_a.id) local_row = true;
+        if (device.id == identity_b.id) {
+            peer_row = device.trust_state == TrustState::Trusted;
+        }
+    }
+    REQUIRE(local_row);
+    REQUIRE(peer_row);
     REQUIRE(reopened.state.conversations.size() == 1);
     REQUIRE(reopened.state.conversations[0].id == conversation);
     REQUIRE(reopened.state.conversations[0].state
