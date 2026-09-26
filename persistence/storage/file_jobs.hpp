@@ -18,9 +18,12 @@
 
 namespace aki::persistence {
 
-// Completed 终态作业组（幂等；.part 缺失时作业以 runtime_error 失败）。
+// Completed 终态作业组（幂等；供源见 FileStore::complete_transfer——
+// M4-05 参数化：.part → 接收根回退，全部缺失时作业以 runtime_error 失败）。
+// receive_dir 为空 = 仅发送侧供源（M2-06 既有语义）。
 [[nodiscard]] DbJob make_transfer_complete_job(
-    std::shared_ptr<FileStore> store, std::string transfer_id);
+    std::shared_ptr<FileStore> store, std::string transfer_id,
+    std::string receive_dir = {});
 
 // Failed / Cancelled：.part 幂等删除作业。
 [[nodiscard]] DbJob make_transfer_discard_job(

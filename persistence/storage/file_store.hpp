@@ -60,12 +60,17 @@ public:
     // Completed 终态作业组（设计第 11.1 节 ④；经 DatabaseWorker 串行执行）：
     //   - 行缺失 → runtime_error；
     //   - 行已 Completed 且目标文件存在 → 幂等跳过（重复终态宣告计成功）；
-    //   - .part 缺失（且无法从既有最终文件恢复）→ 明确失败（RULE-09）；
-    //   - 流式 SHA-256 + 复制 + 原子改名到 files/<id>/<净化名> →
+    //   - 供源（M4-05 参数化，DEC-012①）：`.part` → 接收根文件
+    //     （receive_dir + row.file.name 段拼接，段经有界校验——拒绝绝对
+    //     路径/`..`；接收源的就位与原件删除折进本作业）→ final 恢复分支；
+    //     全部供源缺失 → 明确失败（RULE-09）；
+    //   - 流式 SHA-256 + 复制到临时名 + 原子改名到 files/<id>/<净化名> →
     //     TRANSFER 终态更新 + 回写位（relative_path/sha256/size）。
     // 崩溃恢复：改名已发生但回写未完成时，从最终文件补算哈希回写收敛。
+    // receive_dir 为空 = 仅发送侧供源（.part/final，M2-06 既有语义）。
     void complete_transfer(TransferRepository& transfers,
-        const std::string& transfer_id) const;
+        const std::string& transfer_id,
+        const std::string& receive_dir = {}) const;
 
     // Failed / Cancelled：.part 幂等删除（缺失即 no-op）。
     void discard_part(const std::string& transfer_id) const noexcept;

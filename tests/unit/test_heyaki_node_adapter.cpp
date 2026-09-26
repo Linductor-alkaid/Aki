@@ -91,6 +91,15 @@ struct RecordingSink final : aki::heyaki::HeyakiAdapterSink {
     std::vector<std::pair<ConversationId, MessageId>> send_failed;
     std::vector<std::tuple<DeviceId, ConnectionPath, ConnectionPath>>
         path_changed;
+    std::vector<aki::transfer::TransferId> paused;  // M4-05 第 11 方法
+    // 传输面记录（M4-05 八相位路由断言载体）。
+    std::vector<aki::transfer::Transfer> started;
+    std::vector<std::tuple<aki::transfer::TransferId, std::uint64_t,
+        std::uint64_t>>
+        progress;
+    std::vector<std::pair<aki::transfer::TransferId,
+        aki::transfer::TransferState>>
+        completed;
 
     bool on_device_discovered(aki::device::DiscoveredDevice device) override {
         discovered.push_back(std::move(device));
@@ -118,13 +127,22 @@ struct RecordingSink final : aki::heyaki::HeyakiAdapterSink {
         send_failed.emplace_back(std::move(conversation), std::move(message));
         return true;
     }
-    bool on_transfer_started(aki::transfer::Transfer) override { return true; }
-    bool on_transfer_progress(aki::transfer::TransferId, std::uint64_t,
-        std::uint64_t) override {
+    bool on_transfer_started(aki::transfer::Transfer transfer) override {
+        started.push_back(std::move(transfer));
         return true;
     }
-    bool on_transfer_completed(aki::transfer::TransferId,
-        aki::transfer::TransferState) override {
+    bool on_transfer_progress(aki::transfer::TransferId transfer,
+        std::uint64_t transferred, std::uint64_t total) override {
+        progress.emplace_back(std::move(transfer), transferred, total);
+        return true;
+    }
+    bool on_transfer_completed(aki::transfer::TransferId transfer,
+        aki::transfer::TransferState final_state) override {
+        completed.emplace_back(std::move(transfer), final_state);
+        return true;
+    }
+    bool on_transfer_paused(aki::transfer::TransferId transfer) override {
+        paused.push_back(std::move(transfer));
         return true;
     }
     bool on_connection_path_changed(DeviceId device, ConnectionPath from,
@@ -362,6 +380,139 @@ TEST_CASE("HeyakiNodeAdapter dispatches image envelopes and rejects bounded "
     REQUIRE_FALSE(adapter.send_image_message(
         DeviceId{"hy1_00000000000000000000000000000000000000000000000000000000000000"},
         MessageId{"m-1"}, media, transfer_id));
+
+    const auto report = owner.shutdown();
+    REQUIRE(report.fully_stopped());
+}
+
+TEST_CASE("HeyakiNodeAdapter maps file event phases to sink methods "
+    "(DEC-006 mapping 7 / DEC-012)",
+    "[unit][heyaki_node_adapter]") {
+    ExecutorOwner owner;
+    REQUIRE(owner.initialize());
+    NodeDomain domain(temp_root("fileevent"));
+    HeyakiNodeAdapter adapter{owner.executor(), valid_options(domain)};
+    RecordingSink sink;
+    adapter.set_sink(&sink);
+    const DeviceId peer{"peer-b"};
+
+    // 视图工厂（direction/logical_name 按 pinned 源真实取值）：发送端
+    // probing/offered 恒为 push 且 logical_name 为发送侧原名（file_service.cpp
+    // :210/:252/:604 传 sender.logical_name）；接收端 transferring/committed
+    // 恒为 push（:1147/:1368/:1441，pull_initiated=false）且 logical_name 为
+    // 含根前缀的 manifest 形式（= join(root, name)，:556）；接收端 cancelled
+    // 恒为 pull（:380）。
+    const int push =
+        static_cast<int>(::heyaki::FileTransferDirection::push);
+    const int pull =
+        static_cast<int>(::heyaki::FileTransferDirection::pull);
+    auto view = [](const char* id, int phase, std::uint64_t done,
+        std::uint64_t total, std::string logical_name, int direction) {
+        NodeSession::FileTransferEventView event;
+        event.transfer = aki::transfer::TransferId{id};
+        event.direction = direction;
+        event.phase = phase;
+        event.root = "inbox";
+        event.logical_name = std::move(logical_name);
+        event.bytes_done = done;
+        event.bytes_total = total;
+        return event;
+    };
+    const int probing = static_cast<int>(::heyaki::FileTransferPhase::probing);
+    const int offered = static_cast<int>(::heyaki::FileTransferPhase::offered);
+    const int transferring =
+        static_cast<int>(::heyaki::FileTransferPhase::transferring);
+    const int verifying =
+        static_cast<int>(::heyaki::FileTransferPhase::verifying);
+    const int paused_phase =
+        static_cast<int>(::heyaki::FileTransferPhase::paused);
+    const int committed =
+        static_cast<int>(::heyaki::FileTransferPhase::committed);
+    const int failed = static_cast<int>(::heyaki::FileTransferPhase::failed);
+    const int cancelled =
+        static_cast<int>(::heyaki::FileTransferPhase::cancelled);
+
+    // probing/offered（发送端专属事件）：started 发送行（sender=local；
+    // 判向不经 direction——事件按协议仅发生于本端 push 侧）。
+    adapter.deliver_file_event(
+        peer, view("t-out", probing, 0, 0, "docs/model.bin", push));
+    adapter.deliver_file_event(
+        peer, view("t-out", offered, 0, 4096, "docs/model.bin", push));
+    REQUIRE(sink.started.size() == 2);
+    {
+        const auto& row = sink.started.front();
+        REQUIRE(row.id == aki::transfer::TransferId{"t-out"});
+        REQUIRE(row.state == aki::transfer::TransferState::Negotiating);
+        REQUIRE(row.sender == domain.profile.identity().id);
+        REQUIRE(row.receiver == peer);
+        REQUIRE(row.file.name == "docs/model.bin");
+    }
+
+    // 接收侧首个事件即 transferring（pinned 源：接收端无 probing/offered）
+    // ——尽管 direction==push（真实形态），未见 started 的 id 由本事件建行：
+    // 接收行 Negotiating、sender=peer/receiver=local、file.name=剥根段
+    //（"inbox/docs/model.bin" → "docs/model.bin"，与 heyaki 落盘相对名一致）
+    // + 首个进度（回归陷阱：建行与判向不得依赖 direction）。
+    adapter.deliver_file_event(peer,
+        view("t-rx", transferring, 0, 4096, "inbox/docs/model.bin", push));
+    REQUIRE(sink.started.size() == 3);
+    {
+        const auto& row = sink.started.back();
+        REQUIRE(row.id == aki::transfer::TransferId{"t-rx"});
+        REQUIRE(row.state == aki::transfer::TransferState::Negotiating);
+        REQUIRE(row.sender == peer);
+        REQUIRE(row.receiver == domain.profile.identity().id);
+        REQUIRE(row.file.name == "docs/model.bin");
+        REQUIRE(row.file.size_bytes == 4096);
+        REQUIRE(row.transferred == 0);
+    }
+    // 后续 transferring/verifying：仅进度（不重复建行）。
+    adapter.deliver_file_event(peer,
+        view("t-rx", transferring, 1024, 4096, "inbox/docs/model.bin", push));
+    adapter.deliver_file_event(peer,
+        view("t-rx", verifying, 4096, 4096, "inbox/docs/model.bin", push));
+    REQUIRE(sink.started.size() == 3);
+    REQUIRE(sink.progress.size() == 3);
+    REQUIRE(std::get<1>(sink.progress.front()) == 0);
+    REQUIRE(std::get<1>(sink.progress.back()) == 4096);
+
+    // paused → 第 11 方法。
+    adapter.deliver_file_event(peer,
+        view("t-rx", paused_phase, 1024, 4096, "inbox/docs/model.bin", push));
+    REQUIRE(sink.paused.size() == 1);
+    REQUIRE(sink.paused.front() == aki::transfer::TransferId{"t-rx"});
+
+    // committed/failed/cancelled → on_transfer_completed(终态)；cancelled
+    // 恒为 pull（:380）——判向不经 direction，终态事件不建行。
+    adapter.deliver_file_event(peer,
+        view("t-rx", committed, 4096, 4096, "inbox/docs/model.bin", push));
+    adapter.deliver_file_event(peer,
+        view("t-rx", failed, 0, 4096, "inbox/docs/model.bin", push));
+    adapter.deliver_file_event(peer,
+        view("t-rx", cancelled, 0, 4096, "inbox/docs/model.bin", pull));
+    REQUIRE(sink.completed.size() == 3);
+    REQUIRE(sink.completed[0].second == aki::transfer::TransferState::Completed);
+    REQUIRE(sink.completed[1].second == aki::transfer::TransferState::Failed);
+    REQUIRE(sink.completed[2].second == aki::transfer::TransferState::Cancelled);
+
+    // 终态先于任何 transferring（接收侧早取消）：仅终态投递、不建行（行
+    // 缺失由 owner 拒绝可见——已知边角，不静默伪造）。
+    adapter.deliver_file_event(
+        peer, view("t-early", cancelled, 0, 16, "inbox/x.bin", pull));
+    REQUIRE(sink.started.size() == 3);
+    REQUIRE(sink.completed.size() == 4);
+
+    // 有界拒绝（RULE-09）：接收首事件空 logical_name 建行载荷拒绝 + 未知
+    // 相位拒绝，均不投递 sink、计数可见。
+    adapter.deliver_file_event(
+        peer, view("t-bad", transferring, 0, 4096, std::string{}, push));
+    adapter.deliver_file_event(
+        peer, view("t-bad2", 200, 0, 4096, "inbox/x.bin", push));
+    REQUIRE(sink.started.size() == 3);
+    REQUIRE(sink.progress.size() == 3);
+    REQUIRE(adapter.file_event_rejections() == 2);
+    // 常规事件面不触达记名簿容量（终态移除；溢出恒 0——容量路径另有界）。
+    REQUIRE(adapter.started_registry_overflows() == 0);
 
     const auto report = owner.shutdown();
     REQUIRE(report.fully_stopped());

@@ -183,6 +183,13 @@ public:
         return post(TransferCompletedEvent{std::move(transfer), final_state});
     }
 
+    // 传输暂停面（M4-05，§8.1 第 11 方法）：不产主路径事件（状态经 Store
+    // 快照可见）；桥接侧记录到达供路由断言。
+    bool on_transfer_paused(TransferId transfer) override {
+        paused_transfers.push_back(std::move(transfer));
+        return true;
+    }
+
     bool on_connection_path_changed(DeviceId device, ConnectionPath from,
         ConnectionPath to) override {
         const bool posted =
@@ -199,6 +206,9 @@ private:
     }
 
     AppStateOwner& owner_;
+
+public:
+    std::vector<TransferId> paused_transfers;  // M4-05 第 11 方法到达记录
 };
 
 DiscoveredDevice make_discovered(std::string id, TrustState trust = TrustState::Unknown) {

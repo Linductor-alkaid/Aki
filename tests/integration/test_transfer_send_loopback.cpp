@@ -87,7 +87,8 @@ bool wait_until(const std::function<bool()>& predicate,
 }
 
 struct NodeDomain {
-    explicit NodeDomain(const std::string& root)
+    explicit NodeDomain(const std::string& root,
+        bool with_receive_root = false)
         : profile(LocalProfile::open(root)),
           executor_options([] {
               aki::app::ExecutorOwnerOptions options;
@@ -99,8 +100,16 @@ struct NodeDomain {
         if (!owner.initialize()) {
             throw std::runtime_error("node domain: executor initialize failed");
         }
-        session.emplace(
-            NodeSession::create(owner.executor(), {.profile = &profile}));
+        std::vector<::heyaki::FileRootConfig> receive_roots;
+        if (with_receive_root) {
+            const std::string receive_dir = root + "/receive/inbox";
+            std::error_code ec;
+            std::filesystem::create_directories(receive_dir, ec);
+            receive_roots.push_back(::heyaki::FileRootConfig{
+                .name = "inbox", .directory = receive_dir});
+        }
+        session.emplace(NodeSession::create(owner.executor(),
+            {.profile = &profile, .file_receive_roots = std::move(receive_roots)}));
     }
 
     LocalProfile profile;
@@ -117,8 +126,9 @@ TEST_CASE("Two-node send-side transfer chain over the borrowed runtime",
     ExecutorOwner owner;
     REQUIRE(owner.initialize());
 
+    const std::string b_root = temp_root("b");
     NodeDomain domain_a(temp_root("a"));
-    NodeDomain domain_b(temp_root("b"));
+    NodeDomain domain_b(b_root, /*with_receive_root=*/true);  // M4-05 接收侧
     auto& side_a = *domain_a.session;
     auto& side_b = *domain_b.session;
     const auto identity_a = domain_a.profile.identity();
@@ -202,6 +212,21 @@ TEST_CASE("Two-node send-side transfer chain over the borrowed runtime",
     io_spec.worker = std::move(io_runnable);
     REQUIRE(owner.start_blocking_worker(std::move(io_spec)));
 
+    // B 侧文件事件观察（M4-05：接收链路——八相位经 Adapter 分发；此处直连
+    // NodeSession 观察面记录相位到达）。
+    std::atomic<int> b_committed{0};
+    std::atomic<int> b_progress{0};
+    side_b.set_file_event_observer(
+        [&](const DeviceId&, const NodeSession::FileTransferEventView& event) {
+            if (static_cast<::heyaki::FileTransferPhase>(event.phase)
+                == ::heyaki::FileTransferPhase::committed) {
+                b_committed.fetch_add(1);
+            } else if (static_cast<::heyaki::FileTransferPhase>(event.phase)
+                == ::heyaki::FileTransferPhase::transferring) {
+                b_progress.fetch_add(1);
+            }
+        });
+
     // 源文件（32B，chunk 16 → 双块）与规范 TransferId（DEC-011 ④ 生成入口）。
     const auto source = std::filesystem::path{root} / "payload.bin";
     {
@@ -243,6 +268,12 @@ TEST_CASE("Two-node send-side transfer chain over the borrowed runtime",
     // DEC-011 ④）。
     REQUIRE_FALSE(adapter.start_file_transfer(identity_b.id,
         aki::transfer::TransferId{"t-1"}, file, source));
+
+    // 接收侧（M4-05）：B 于接收根收到完整文件（heyaki committed——BLAKE3
+    // verify + fsync + rename 后的落盘形态；合并到 DEC-004 布局归 Aki 侧
+    // complete 作业，此处断言 wire 侧接收完成）。
+    REQUIRE(wait_until([&] { return b_committed.load() >= 1; }, 20s));
+    REQUIRE(b_progress.load() >= 1);
 
     // 受控关闭（IO 归零 + worker 回收）。
     (void)transfers.request_cancel_all();

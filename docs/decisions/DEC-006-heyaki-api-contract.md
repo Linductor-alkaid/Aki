@@ -63,7 +63,10 @@ M3 要以 pinned `third_party/heyaki` 替换 `FakeHeyakiAdapter`（[DEC-002](DEC
      `Pending→Trusted` ← `pair_peer` + `set_pairing_observer` 一次性结果；
      配对失败映射 `Rejected`；`revoke_trust_grant` 映射 `Revoked`；指纹确认
      数据 = `LanEndpointSnapshot.identity_public_key`（Ed25519 32B）。配对申请
-     scope：`message.send`（前缀通配语义，api.md scope 节）。
+     scope：`message.send`（前缀通配语义，api.md scope 节）；M4-05 起文件
+     推送需独立 scope `file.push:<root>`（heyaki `file_push_scope`）——配对
+     申请增补为 `{message.send, file.push:<root>}`（[DEC-012](DEC-012-receive-merge-bearing.md)
+     ⑥；消息面冻结项不变）。
   4. 文本消息：`send_text_message` → `send_message(peer, MessageEnvelope{
      message_id=aki MessageId 16B 双射（规范字符串形式：`to_string` /
      `parse_message_id`，`hym1_` 前缀编码——M3-05 实测澄清，非裸 hex）,

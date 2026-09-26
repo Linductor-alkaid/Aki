@@ -77,6 +77,12 @@ public:
         return transfers_.enqueue_transfer_completed(std::move(transfer), final_state);
     }
 
+    // 传输暂停面（M4-05，§8.1 第 11 方法/DEC-012④）：UpsertTransfer(Paused)
+    // 经 TM 已知行缓存承载（不新增 AppEvent 主路径类型）。
+    bool on_transfer_paused(aki::transfer::TransferId transfer) override {
+        return transfers_.enqueue_transfer_paused(std::move(transfer));
+    }
+
     bool on_connection_path_changed(aki::device::DeviceId device,
         aki::device::ConnectionPath from, aki::device::ConnectionPath to) override {
         return devices_.enqueue_connection_path_changed(

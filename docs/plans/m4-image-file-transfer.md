@@ -146,9 +146,22 @@
   M4-02 组件收口删除 + TransferId 规范生成入口定案），设计 §7.1①③④/§8.3/
   §11.1③④/§14 与总计划 EXEC-04/05 同批回填；实现与测试见下方 2026-09-26
   （M4-04）验证记录。）
-- [ ] `M4-05` 接收侧与暂停/恢复/取消（`SCOPE-08`）：接收落盘与完成合并；
+- [x] `M4-05` 接收侧与暂停/恢复/取消（`SCOPE-08`）：接收落盘与完成合并；
   pause/resume/cancel 状态机推进与 `.part` 幂等删除；`on_transfer_*` 路由；
-  终态幂等。
+  终态幂等。（2026-09-26 完成：调研结论按工程规范 6.2 落档
+  [DEC-012](../decisions/DEC-012-receive-merge-bearing.md)（Accepted——接收
+  合并折叠进既有 M2-06 终态作业组供源参数化、接收侧无归档相位/终态闸门、
+  stored_sha256 对账由消费者执行、配对 scope 扩展 file.push:<root>）；
+  实现——sink 第 11 方法 on_transfer_paused 全链路（SPI/Fake/RouterSink/TM
+  已知行缓存整行 upsert，不新增 AppEvent 主路径类型）、真实 Adapter 八相位
+  wire 事件路由 + pause/resume/cancel 接线 + 析构闭合、NodeSession
+  file_receive_roots/observer 包装/pair_peer scopes、FileStore complete 供源
+  参数化（.part → 接收根回退 + 原件同作业删除 + 段拼接有界校验）、组合根
+  接收根配置；测试——八相位路由（含出站方向/有界拒绝）、11 方法 FIFO 与
+  Transferring↔Paused 合法链、接收合并多段名 + stored_* 回写 + 重启一致、
+  供源回退明确失败、Failed/Cancelled 幂等删除 + RULE-08、控制命令路径；
+  debug/release 全量 ctest 36/36；回环 B 侧接收观察沿 [skip] 降级纪律。
+  详见下方 2026-09-26（M4-05）验证记录。）
 - [ ] `M4-06` 双端传输回环验证：全链路（图片 + 文件 + 进度 + 暂停/恢复/取消 +
   重启恢复一致）；环境受限沿 M3 降级纪律（网络无关断言拆分、[skip] 显式 +
   补跑条件）。
@@ -604,3 +617,82 @@
     测试 TU/main.cpp 做预防性审计（零残留，同类问题一次收口）；修复后
     MSVC debug/release 全量各 35/35 复验。ASAN/UBSAN/TSAN 随 PR CI 第三轮
     门禁复核。
+
+- 2026-09-26（`M4-05` 完成；Windows 11 / MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0；负责人：Linductor）：
+  - 设计先行（DOD-04，M1-08 纪律；开工前调研结论按工程规范 6.2 落档）：
+    新建 [DEC-012](../decisions/DEC-012-receive-merge-bearing.md)（Accepted）
+    定案——① 接收侧合并不上 `aki.transfer-io`、不新增 worker：扩展 M2-06
+    终态作业组供源（`.part` 缺失回退 heyaki 接收根文件，同作业内流式
+    SHA-256 + 就位 `files/<id>/<净化名>` + 原件删除——CompleteTransfer仍为
+    1 作业），仍整体经 DatabaseWorker 通道；② 接收侧无 Aki 归档相位/终态
+    闸门/接收会话（wire 终态直达 CompleteTransfer 即正确形态；入站首个
+    状态事件建行——`file.name`=wire `logical_name`/`size`=`bytes_total`/
+    sender=peer/receiver=local）；③ `.part` 幂等删除维持现状（接收侧无
+    `.part` 时 no-op）；④ 八相位→Aki 状态映射（probing/offered→started
+    建行、transferring/verifying→progress（首个进度事件推进
+    Negotiating/Paused→Transferring）、paused→第 11 方法、
+    committed/failed/cancelled→终态；出入站以 direction==push 判别 + TM
+    「无发送会话」兜底）；⑤ stored_sha256 对账不在作业内执行（无发送方
+    哈希持久面）——由持有消息载荷的消费者执行（M4-06 断言/M5 UI），失配
+    即失败不静默；⑥ 配对申请 scope 扩展 `{message.send, file.push:<root>}`
+    （heyaki `file_push_scope(root)`——`message.send` 前缀通配不覆盖跨分支；
+    DEC-006 映射 3 增补）。DEC-009 复核：n=2 维持、128≤256、关闭序断言
+    不变（无新 worker）。同批回填：设计 §7.1①③④（接收侧承载/供源参数化/
+    对账策略）、§8.1（第 11 方法落地标注）、§8.3（路由表 11 方法行 + sink
+    计数）、§11.1④（供源参数化修订 + 接收根目录注入）、总计划决策清单。
+  - 实现：SPI `heyaki_adapter.hpp` sink 第 11 方法 `on_transfer_paused(
+    TransferId)`（§8.1 冻结签名落地）；`fake_heyaki_adapter.hpp`
+    `inject_transfer_paused` + 入站 started 会话登记（控制面对称）；真实
+    Adapter `deliver_file_event`（八相位映射 + direction==push 出站判别 +
+    `file_event_rejections()` 有界拒绝计数）+ 构造注册 observer/析构中和 +
+    `pause/resume/cancel_transfer` 接线（`known_peers` 遍历 + 规范 TransferId
+    转换）；`NodeSession` `FileTransferEventView`（aki/std 面）+
+    `set_file_event_observer` 包装 + `file_receive_roots` Options +
+    `pause/resume/cancel_file_transfer` + `pair_peer` scopes 参数（缺省
+    {message.send, file.push:inbox}）；`RouterSink` 第 11 方法路由；TM
+    `TransferPausedWork`（已知行缓存整行 upsert Paused + 发送会话归档续接
+    抑制）+ `known_rows_` 行缓存（started 同态去重/状态推进合并不覆盖
+    metadata/progress 推进 Negotiating|Paused→Transferring/终态清理于
+    deliver_terminal 统一出口）；`FileStore::complete_transfer` 供源参数化
+    （`receive_source_path` 段拼接有界校验——空段/./..//反斜杠/段数>32 拒绝，
+    供源次序 .part → 接收根 → final 恢复 → 明确失败；接收原件删除折进
+    同作业）；`file_jobs` 工厂 `receive_dir` 参数；组合根 main.cpp 接收根
+    （`<data_root>/receive/inbox`，NodeConfig 注入）+ WritePathSink 供源。
+  - 测试：`test_heyaki_node_adapter` 增八相位路由用例（probing/offered→
+    started 建行字段断言（接收/出站方向 sender/receiver 互换）+
+    transferring/verifying→progress 透传 + paused→第 11方法 +
+    committed/failed/cancelled→终态 + 空 logical_name/未知相位有界拒绝
+    计数）；`test_app_managers` 用例 1 升格 11 方法 FIFO（同态 started 去重 +
+    暂停无主路径事件 + Paused 同态幂等 + progress 恢复推进 + 合法链
+    Negotiating→Transferring→Paused→Transferring→Completed；FIFO 序列含
+    双 TransferProgressEvent）；新建 `test_transfer_receive_path` 4 用例
+    80 断言（DB 全量组合：接收合并——多段 logical_name `docs/model.bin`、
+    stored_* 回写列 SQL 断言、接收原件同作业删除、.part 从未存在、关闭后
+    重开 DB 行/文件/哈希逐项一致（验收：重启一致）；供源回退——全部供源
+    缺失时 complete 作业明确失败可见 + 行 Completed 与存储缺失并存为可见
+    失败形态；Failed/Cancelled——discard 幂等 no-op + 迟到进度/终态/暂停
+    三连拒绝（RULE-08 计数）；控制命令——pause/resume/cancel 命令面记录 +
+    未知 id 无命令可见 + 重复取消 SPI 幂等）；`test_transfer_send_loopback`
+    扩展 B 侧接收根配置与 committed/progress 观察（配对 scope 经新缺省）；
+    DOD-02：接收/控制路径无新并发原语（TM 泵/DB worker 既有六项覆盖沿用，
+    路径行为由上述用例覆盖——记录说明）。
+  - 验证（本会话执行）：MSVC debug 全量 `ctest --test-dir build/debug -C
+    Debug` 36/36 通过（35 基线 + 新 receive_path）；release 全量
+    `ctest --test-dir build/release -C Release` 36/36 通过；
+    test_transfer_receive_path/test_app_managers/test_heyaki_node_adapter/
+    test_heyaki_adapter 随机顺序各 8 连跑零失败；ASAN/UBSAN/TSAN 随本 PR CI。
+  - 如实降级（沿 M3-04~09/M4-03/04 纪律）：`test_transfer_send_loopback`
+    的 B 侧接收断言（committed + 接收根文件）在本机防火墙拦截下不可达——
+    配对握手 [skip] 先行退出（输出同 M4-04：`pairing handshake blocked
+    (firewall)`）；补跑条件不变（防火墙放行入站 TCP / LAN 双端真机，与
+    M3/M4-03/04 登记同批）。网络无关半边（八相位路由/暂停恢复/取消/接收
+    合并/重启一致）全部验证。DEC-012 风险④ 的 direction 接收侧取值核实
+    与 heyaki 断点续传簿记观察归 M4-06 回环补跑。
+  - 已知边角登记（DEC-012）：供源全缺时行 Completed 与存储缺失并存
+    （可见失败形态，幂等重跑收敛）；接收根长期 GC 归 §6.1 已登记 M5 议题；
+    崩溃于 heyaki committed 与 complete 作业之间由幂等重跑收敛（孤儿活动
+    行重启再驱动归 M4-06）。
+  - 同步：本里程碑（M4-05 勾选、本记录）、总计划（当前状态条目 + 决策
+    清单 DEC-012）、DEC-012/DEC-006（映射 3 增补）/设计 §7.1/§8.1/§8.3/
+    §11.1④。
