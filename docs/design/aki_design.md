@@ -785,6 +785,52 @@ EUI-NEO 当前的组件化 C++ UI 模型能够直接对应，同时不需要额�
 界面令牌、语义色板、状态视觉语义与组件映射由
 [Aki UI 设计规范](aki_ui_design.md)固定。
 
+### 9.1 UI 装配契约（M5 契约，M5-01 固化；[DEC-005](../decisions/DEC-005-eui-neo-integration.md)）
+
+本小节固化 UI 层与 Application State 的装配契约（M5-02~07 直接实现；
+EUI-NEO 组合模型为 M5-01 探针实测——compose 为**保留模式、事件触发**，
+静态 UI 不重复重组）：
+
+- **视图模型派生**：`ui/models` 从 `AppState` 四域派生只读视图模型
+  （设备列表=DeviceStore×presence/连接路径摘要、会话列表=ConversationStore
+  ×最后消息摘要、消息流=MessageStore 按会话过滤、传输列表=TransferStore）；
+  派生为纯函数（快照 → 视图模型，网络无关可单测）；页面不持有业务状态、
+  不直写 Store（`RULE-02`），操作一律经 Application 出站面（Manager 公开
+  接口）下达。
+- **快照消费与唤醒（`EXEC-03`）**：DoubleBuffer 快照只在主线程 compose
+  上下文排空（`try_load`/`load_newer_than` 水位去重）；executor 侧状态
+  变更后调用 `app::requestUpdate()` 跨线程唤醒（M5-01 探针实测：非主线程
+  requestUpdate → 主线程重组拾取页面持有状态的新值——waker 原型 13s 内
+  11 次开合转换全部拾取）；compose 内不等待、不轮询、不做 IO
+  （`EXEC-02` 对称纪律）。页面持有 UI 态（dialog open/toast visible/输入
+  草稿/滚动位置）存于页面模型，重组时读入。
+- **关闭序（`EXEC-01`）**：`ExecutorOwner` 关闭编入
+  `DslAppConfig::onShutdown`（主窗口 GPU 设备销毁前回调，主线程）——
+  钩子内按第 8.3 节宿主钩子**原序**执行，不省略不重排：①请求取消各
+  Manager 在途可取消任务（`request_task_cancel`，句柄由 Manager 发起）；
+  ②flush 各 Manager 至泵静止并消费在途 future（TransferManager 的 flush
+  含 IO 在飞归零，第 7.1 节③/DEC-011③）；③停 Adapter 投递
+  （`set_sink(nullptr)` + `stop_discovery`）；④`AppStateOwner.close()`
+  （钩子末尾含持久化作业排空，第 11.1 节）；其后才进入 owner 的步骤
+  2~5（含 `aki.transfer-io` worker 回收，第 11.1 节③），钩子内完成后
+  `app::shutdown()` 继续 DSL runtime/network 收尾、进程退出。窗口/GPU
+  销毁与 worker 回收次序的关闭路径测试归 M5-02（DOD-02）。
+- **主题档位覆写清单**（默认档 ≠ aki_ui_design 第 2.1/2.2 节，M5-01 探针
+  对拍）：TypographyTokens——title 22→18、subtitle 20→16、body 16→14、
+  caption 12→13、hint 13→12、micro 11→10（label 14 保持=ui-base 按钮/
+  控件档，ui-sm/ui-xs 以 hint/micro 承载）；RadiusTokens——small 6→4、
+  card 12/overlay 16/control 8 保持；ControlSizeTokens——field 35→36、
+  menuItem 34→28；SpacingTokens——tiny 4/compact 8/content 12/section 16/
+  large 20/panel 24 与本设计一致零覆写；语义色板按 aki_ui_design §2.3
+  深浅两套覆写 ThemeColorTokens + `ui/theme` 扩展语义色常量。
+  `ui/theme` 提供 `akiTheme()`（档位参数 light/dark）一次性装配，页面只
+  消费语义名（M5-02 实体化，回归对照留档）。
+- **渲染层验证策略（`RULE-11`）**：GLFW+OpenGL 渲染不进 CI——UI 逻辑层
+  （视图模型派生/状态映射/指令出站）以网络无关单测承载；compose/渲染层
+  本机手工验证 + 截图/日志证据归档（M5-01 探针形态：日志落盘 + 超时终止，
+  证据可复现）；CI 不宣称的检查不写入断言。无系统主题检测缺口按
+  `DEC-005` 处置（Aki 平台层查询或先交付浅/深两档并登记）。
+
 EUI-NEO 核心采用
 Apache-2.0。正式发行前仍需检查实际引入的第三方库、字体、图标、shader
 和其他 assets

@@ -1,6 +1,6 @@
 # M5：EUI-NEO UI 与 MVP 验收
 
-> 状态：Planned
+> 状态：In Progress
 > 负责人：Linductor
 > 所属计划：[Aki 实施总计划](aki-implementation-plan.md)
 > 前置：M2、M3、M4、`DEC-005`（2026-09-26 已冻结 `Accepted`）。M3/M4 工作
@@ -117,9 +117,20 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
 （条目的完整内容与边界见「范围与非目标」各 `M5-NN` 条；此处为勾选跟踪与
 可验收结果锚点。）
 
-- [ ] `M5-01` 设计先行与运行复核（可验收：aki_ui_design 第 5 节一致性复审
+- [x] `M5-01` 设计先行与运行复核（可验收：aki_ui_design 第 5 节一致性复审
   记录落档；EUI-NEO 最小运行探针实测结论——`RISK-2026-002` 运行复核收口；
   UI 装配契约固化进设计第 9 节；偏差先更新设计/决策再合代码）。
+  （2026-09-26 完成：§5 一致性复审逐项落档（16 组件存在一致；§2.1 排印/
+  §2.2 圆角尺寸默认档偏差确认→覆写清单；§2.4 深度锚点修正
+  fieldVisuals().popupShadow；间距一致零覆写）；运行探针三项复核收口——
+  virtuallist 固定行高模型实测确认（rowHeight 统一值锚点 + 渲染通过，
+  变高气泡按组合策略承接）、dialog/toast 页面持有 + requestUpdate 唤醒
+  重组实测（waker 原型 11 次开合转换全部拾取——EXEC-03 契约原型）、文件
+  对话框只读满足发送选取（接收侧按接收根无需求）；**组合模型发现**：compose
+  为保留模式事件触发（静态 UI 不重组，探针 12s 仅 2 次 compose）——装配
+  契约关键输入；设计 §9.1「UI 装配契约」固化（视图模型派生/快照消费与
+  唤醒/onShutdown 关闭序/主题覆写清单/渲染层验证策略）。详见验证记录。见
+  下方 2026-09-26（M5-01）验证记录。）
 - [ ] `M5-02` EUI-NEO 接入与主窗口骨架（可验收：configure 三方校验通过、
   `aki_ui` 实体化构建图生效、三栏壳 + 四页导航可运行、`ui/theme` 逐项覆写
   留对照、`onShutdown` 关闭序经关闭路径验证）。
@@ -183,6 +194,86 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   aki_ui_design 复审记录、总计划与里程碑状态同步；验证记录含可复现命令；
   环境受限项降级声明完整。
 
+（自 `M5-01` 起按工程规范 6.1/6.3 追加。）
+
 ## 验证记录
 
-（尚无记录；自 `M5-01` 起按工程规范 6.1/6.3 追加。）
+- 2026-09-26（`M5-01` 完成；Windows 11 工作站（桌面会话）/ MSVC 2022
+  BuildTools 14.44.35207 / CMake 4.1.0；负责人：Linductor；纯文档 + scratch
+  探针，无产品代码——探针位于 `build/scratch/m5-probe/`（gitignored），
+  standalone CMake 不入产品构建图，只读消费 pinned `third_party/EUI-NEO`
+  @ `b9032a8a`）：
+  - **① aki_ui_design §5 一致性复审**（逐项结论已回填
+    [aki_ui_design](../design/aki_ui_design.md) §4/§5）：
+    - 绑定映射 16 组件在 pinned v0.6.0 全部存在（components/components.h
+      伞头 + components/ 目录 37 头文件逐一对照）——一致。
+    - §2.1 排印偏差确认：`TypographyTokens` 默认档（theme.h:11-23：micro
+      11/caption 12/hint 13/label 14/body 16/subtitle 20/title 22）≠ 本表
+      （ui-2xs 9/ui-xs 10/ui-sm 12/ui-caption 13/ui-base 14/ui-lg 16/
+      ui-xl 18）→ `ui/theme` 逐项覆写（清单入设计 §9.1）。
+    - §2.2 间距一致（SpacingTokens tiny 4/compact 8/content 12/section 16/
+      large 20/panel 24，theme.h:33-39——探针对拍零覆写）；圆角/尺寸部分
+      偏差（radius.small 6→4、control.field 35→36、menuItem 34→28；
+      theme.h:47-59）→ 覆写。
+    - §2.4 深度锚点复核（2026-09-26 评审纠正）：v0.6.0 **存在**
+      `theme::panelShadow`/`popupShadow` 独立函数（theme.h:266/:270，
+      自上游 d28609fb 2026-04-28 即在）——本记录先前「无独立函数」断言
+      与 pinned 源不符、已撤回；`fieldVisuals().popupShadow*`
+      （theme.h:126-128/:211-215）为其合成字段、锚点属实。aki_ui_design
+      §2.4 落点已恢复为 panelShadow/popupShadow（弹层与 Toast）。
+  - **② 运行探针实测**（standalone CMake + `eui_neo_configure_app`，
+    DEC-005 冻结开关 CACHE FORCE；configure 通过 42.9s、Debug 构建通过；
+    日志证据 `m5-probe.log` 落盘 + flush，探针由外部超时终止——无编程式
+    关窗 API，onShutdown 路径归 M5-02 关闭路径测试，如实声明）：
+    - 窗口启动 + compose 循环：GLFW+OpenGL 窗口打开、首帧 compose、
+      画面尺寸 720x520 落盘。
+    - 主题逐项覆写实测（对拍落盘）：`typography.title 22→18 subtitle
+      20→16 body 16→14 caption 12→13 hint 13→12 micro 11→10 | radius.small
+      6→4 | control.field 35→36 menuItem 34→28`；间距六档与默认一致零
+      覆写——与静态盘点结论吻合。
+    - **RISK-2026-002 三项复核收口**：
+      ① virtuallist 固定行高模型**实测确认**——`rowHeight(float)` 统一
+      行高（virtuallist.h:35）、行定位 `index * rowHeight`（:148），变高
+      内容被固定行高裁切；200 行探针数据渲染通过。M5-05 布局策略：消息
+      气泡列按「卡片自绘 + scrollview」或行内分段组合承接（原语组合纪律），
+      不修改 pinned 依赖。
+      ② dialog/toast 页面持有状态**实测确认**——`dialog.open(bool)`
+      （dialog.h:54）、`toast.visible(bool)+bindVisible(Signal)`
+      （toast.h:43-47）；探针以页面持有原子状态 + 边沿检测驱动开合，
+      requestUpdate 唤醒下 13s 内 11 次开合转换全部被重组拾取（日志
+      transition 序列完整）——与单向数据流配合成立（页面模型持状态，
+      compose 只读派生）。
+      ③ 文件对话框只读能力**满足发送选取链路**——
+      `eui::platform::openFileDialog`（platform.h:13；平台能力文档：支持
+      多选/扩展名过滤、不支持目录/保存 :146）：图片发送 open 选取 →
+      hash-first 发起链路成立；接收侧按接收根落盘无对话框需求。
+    - **组合模型发现（装配契约关键输入）**：compose 为**保留模式、事件
+      触发**——静态 UI 不重复重组（对照实验：无状态变化时 12s 仅 2 次
+      compose）；跨线程 `app::requestUpdate()` 唤醒 → 主线程重组拾取页面
+      持有状态新值（waker 原型：非主线程线程翻转原子状态 + requestUpdate，
+      每次唤醒均触发重组并拾取）。此结论固化进设计 §9.1（快照消费与唤醒
+      条款）。
+  - **③ UI 装配契约固化**：设计 §9.1「UI 装配契约（M5 契约，M5-01）」
+    五条——视图模型派生（四域纯函数派生 + 操作经出站面）、快照消费与唤醒
+    （DoubleBuffer 主线程排空 + requestUpdate 跨线程唤醒 + compose 三不
+    纪律）、onShutdown 关闭序（EXEC-01 序编入钩子 + 关闭路径测试归
+    M5-02）、主题档位覆写清单（逐项数值 + akiTheme() 装配归 M5-02）、
+    渲染层验证策略（RULE-11：渲染不进 CI + 本机证据归档口径）。实现偏差
+    先更新本节再合代码（M1-08）。
+  - 验证命令（可复现）：探针 configure
+    `cmake -S build/scratch/m5-probe -B build/scratch/m5-probe/build -G
+    "Visual Studio 17 2022"`；构建 `cmake --build
+    build/scratch/m5-probe/build --target m5_probe --config Debug`；运行
+    `cd build/scratch/m5-probe/build/Debug && ./m5_probe.exe`（日志
+    `m5-probe.log` 随帧落盘；探针无自退出，验证时以超时终止收集）。
+  - 限制与补跑条件：探针为 Debug 单配置、kill 终止（onShutdown 未在本
+    探针触发——关闭序归 M5-02 关闭路径测试）；virtuallist 裁切行为与
+    dialog/toast 视觉效果为日志+代码锚点证据，像素级视觉复核归 M5-05/07
+    本机手工验证（截图归档口径，退出-4）。无产品代码变更：`git status`
+    复核仅 docs/design/aki_ui_design.md、docs/design/aki_design.md、
+    docs/plans/{m5,aki-implementation-plan}.md 与 scratch（gitignored）。
+  - 同步：本里程碑（M5-01 勾选、状态 In Progress、本记录）、
+    [aki_ui_design](../design/aki_ui_design.md)（§2.4 修正 + §4 注 + §5
+    复审记录）、[aki_design](../design/aki_design.md) §9.1（装配契约）、
+    总计划（当前状态条目 + M5 索引 In Progress）。
+
