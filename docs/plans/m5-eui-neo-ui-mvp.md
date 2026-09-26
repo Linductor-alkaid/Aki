@@ -12,7 +12,7 @@
 > 真实 Adapter、NodeSession、发现/消息/图片/传输/presence/重连管道与恢复
 > 语义均已就绪
 > 建议发布点：v0.5.0（MVP）
-> 更新日期：2026-09-27
+> 更新日期：2026-09-27（M5-03 完成同日）
 
 ## 目标
 
@@ -148,9 +148,23 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   release 全量 ctest 40/40 零回归；DEC-014 落档（tsan 全图插桩 + CI 依赖
   集，覆盖声明五条）；DEC-005「影响与风险」验证项逐项回填。见下方
   2026-09-27（M5-02）验证记录。）
-- [ ] `M5-03` 状态消费面与视图模型（可验收：快照排空 + 跨线程唤醒路径经
-  单测，四域视图模型派生有断言，UI 操作全经 Application 出站面——边界由
-  退出-3 grep 与单测共同锁定）。
+- [x] `M5-03` 状态消费面与视图模型（可验收：快照排空 + 跨线程唤醒路径经
+  单测——机制契约面：注入回调于 executor 任务内的 owner drain 中触发，
+  现行管线 drain 仅在主线程；四域视图模型派生有断言，UI 操作全经
+  Application 出站面——边界由退出-3 grep 与单测共同锁定）。
+  （2026-09-27 完成：`ui/models` 拆分为 EUI-NEO 无关独立目标 `aki_ui_models`
+  （四域视图模型纯函数派生 + `consume_ui_state` 水位消费面 + `UiActions`
+  注入出站面，测试 exe 直链——DEC-005「测试 exe 不链 eui」落地面）；发布点
+  唤醒回调 `AppStateOwnerOptions::on_publish`（owner 上下文、publish 后同步
+  调用、异常全捕获计数）经 `HostRuntime::ensure_assembled` 装配参数注入，
+  GUI 宿主传 `app::requestUpdate()`（本机日志留首触发证据）；main_window
+  占位页最小接线（四域计数消费展示 + Devices 页发现启停出站示范）。新单测
+  test_ui_models（派生/水位去重/路径 mailbox 独立推进/发布→唤醒调用序/钩子
+  异常收口/executor 任务内驱动 drain 的回调契约——机制契约面：注入回调于
+  executor 线程触发，现行管线 drain 仅在主线程，78 断言）+
+  test_ui_actions（页面→出站接口→Manager 泵→Fake Adapter SPI 通道，
+  51 断言）；debug/release 全量 ctest 42/42 零回归；退出-3 grep 扩面全 0。
+  见下方 2026-09-27（M5-03）验证记录。）
 - [ ] `M5-04` Devices 页（可验收：`SCOPE-04`/`SCOPE-02`/`SCOPE-03`/
   `SCOPE-10` 展示面逐项可演示——列表、信任操作面、presence/连接路径徽标）。
 - [ ] `M5-05` Conversations 页与聊天窗口（可验收：`SCOPE-05`/`SCOPE-06`/
@@ -412,4 +426,96 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
     [DEC-014](../decisions/DEC-014-eui-tsan-coverage.md)（新建）、
     [DEC-005](../decisions/DEC-005-eui-neo-integration.md)（验证方式回填）、
     总计划（当前状态条目 + 决策表 DEC-014）。
+
+- 2026-09-27（`M5-03` 完成；Windows 11 工作站（桌面会话）/ MSVC 2022
+  BuildTools 14.44.35207 / CMake 4.1.0；负责人：Linductor）：
+  - **① 视图模型派生（设计 §9.1）**：`ui/models/view_models.{hpp,cpp}`
+    纯函数四域派生——设备列表（DeviceStore × presence + 连接路径摘要入参；
+    Store 无逐设备路径字段，摘要取 owner LatestMailbox 最新单值，逐设备
+    路径如需扩展先立 DEC——头文件内登记）、会话列表（ConversationStore ×
+    最后消息摘要：端点归属过滤 + Store 序倒序取最新，媒体预览带
+    "[image] name" 标注）、消息流（MessageStore 按会话端点过滤 + 本地身份
+    端点守卫，可见空态）、传输列表（进度 fraction（total==0 → 0 不除零）/
+    方向/终态标志）。`aki_ui_models` 为 EUI-NEO 无关独立静态目标（纯
+    std/aki 类型；ui/CMakeLists.txt；依赖方向 ui/models → Application，
+    RULE-01），测试 exe 直链（DEC-005「测试 exe 不链 eui」落地面）。
+  - **② 快照消费面（EXEC-03）**：`ui/models/ui_state_consumer.{hpp,cpp}` —
+    `consume_ui_state(owner, watermark, view)` 单次有界消费：快照
+    `load_snapshot_newer_than` 水位去重 + 连接路径
+    `try_load_connection_path_newer_than` 独立水位（SetConnectionPath 不
+    触发 Store 发布，路径推进不依赖快照水位——回填设备视图摘要）；新快照
+    为提交点（先落水位再派生，无半更新视图）；槽位忙/无新数据返回 false
+    留待下帧（覆盖式语义丢帧不丢状态）。水位与派生结果
+    （UiConsumerWatermark/UiStateSnapshot）存页面模型（§9.1「页面持有
+    UI 态」）；宿主在 compose 前调用 `HostRuntime::pump_state()`（主线程
+    = owner 上下文的有界 drain，无等待无 IO）后再 consume——compose 内
+    不等待、不轮询、不做 IO 保持。
+  - **③ 跨线程唤醒接线（设计 §9.1）**：`AppStateOwnerOptions::on_publish`
+    （`std::function<void()>`，EUI-NEO 无关，RULE-10）——发布点为
+    `publish_if_dirty` 的 `snapshot_.publish()` 之后、owner 单写者上下文
+    同步调用；异常全捕获计数 `publish_hook_failures`（不中断 drain，
+    `publish_hook_calls` 成功计数——RULE-09/EXEC-06 可观测）；经
+    `HostRuntime::ensure_assembled(data_root, wake)` 装配参数转发注入；
+    GUI 宿主 main.cpp 传包装回调（首次触发留日志 +
+    `app::requestUpdate()`），console/测试宿主传计数器。设计 §9.1 消费面
+    装配细节先行增补（M1-08：aki_ui_models 目标/consume 水位/on_publish
+    注入/UiActions 四点）。
+  - **④ UI 出站面（DEC-008）**：`ui/models/ui_actions.{hpp,cpp}` —
+    `UiActions` 注入接口（send_text/send_image、传输四接口、发现启停、
+    ensure_conversation 绑定面）+ `make_ui_actions` 组合根绑定（直呼
+    Manager 公开出站方法，返回值即泵入队 admission，拒绝可见）；页面只持
+    UiActions 不持有 Manager/transport 对象（RULE-01/RULE-02）。信任判定
+    操作未预建（DeviceManager 现无对应方法——grep trust/reject/revoke
+    零命中，归 M5-04 补建，设计 §9.1 登记）。
+  - **⑤ main_window 最小接线**：列表栏计数消费展示（"N devices · N
+    conversations · N transfers"，派生自最近消费快照）；Devices 页
+    Start/Stop Discovery 出站示范按钮（admission 结果写页面模型反馈文案
+    ——页面持有 UI 态形态）；内容栏提示 "state consumption wired
+    (M5-03)"。
+  - **⑥ 测试**：test_ui_models（8 用例 78 断言：四域派生空态/终态/易变
+    字段/端点归属；consume 水位去重/重派生/路径独立推进/重试语义；
+    on_publish 发布→唤醒调用序——钩子内观察新序列号==发布后序列号、
+    无变更 drain 不触发；钩子异常收口；executor 任务内驱动 owner.drain
+    调用注入回调——跨线程为机制契约面：owner 上下文可落在 executor 任务
+    上，回调于 executor 线程触发（现行管线 drain 仅在主线程
+    host_runtime pump/quiesce）——DEC-014 覆盖声明第 2 条：CI ctest
+    不跑渲染）+ test_ui_actions
+    （1 用例 51 断言：会话/消息/发现/传输四域经 UiActions → Manager 泵 →
+    Fake Adapter SPI 全通道 + 入快照断言 + 独立 owner 受控关闭）+
+    test_host_runtime 扩展（HostRuntime 装配参数 wake 计数器：quiesce
+    发布后触发断言）。
+  - **⑦ 验证（可复现命令与结果）**：configure `cmake --preset debug`
+    通过；debug 全量 `ctest --preset debug` → 100% passed 42/40+2
+    （151s 量级）；release `cmake --build --preset release --config
+    Release` 0 error 0 warning + `ctest --preset release` → 100% passed
+    42/42；新二进制直跑 `test_ui_models.exe`（73 断言全过）、
+    `test_ui_actions.exe`（51 断言全过）、`test_host_runtime.exe`（67
+    断言全过）。GUI 本机会话（Release aki.exe）：aki-run.log 装配 ok
+    65ms + `wake: on_publish fired -> app::requestUpdate()` 首触发证据 +
+    onShutdown 关闭序完好（8 步 + fully_stopped）；截图
+    `build/scratch/aki-m5-03-window.png`（列表栏消费计数 "1 devices ·
+    0 conversations · 0 transfers" 可见——消费面装配展示可运行）。
+  - 评审修正（2026-09-27）：⑥ 原「executor 任务内调用注入回调」用例仅把
+    自构计数 lambda 提交到 executor，从未触发注入的 on_publish（未涉及
+    AppStateOwner），证据失实——用例改为 executor 任务内真实驱动
+    `owner.drain()`（该任务即本次 drain 的 owner 上下文，主线程不并发
+    drain），断言回调于 executor 线程触发且新序列号已可见（73→78 断言）；
+    「跨线程」如实限定为机制契约面，非现行调用路径。修正后复验：debug
+    全量 `ctest --preset debug` 42/42 + 直跑 `test_ui_models.exe`
+    78 断言全过（连续 20 次运行稳定）；上方 ⑦ 的 release 档与 GUI 会话
+    证据对应修正前树，未复跑（改动仅单个 console 测试文件）。
+  - **⑧ 退出-3 grep（本项扩面）**：自建线程 0；ui/+main.cpp 的
+    app::async/core::network/eui::network 0；EUI include/类型越过 ui/ 0；
+    ui/ 持 transport 类型（HeyakiAdapter/NodeSession 等）0；ui/ 直写
+    Store（submit_update/post_event/drain）0；eui include 仅 main.cpp +
+    ui/ 渲染面（models 无 eui——DEC-005 落地实证）。
+  - 限制与补跑条件：CI 五档门禁随本工作项 PR 首跑（本会话未推送，如实
+    登记）；TSAN 运行期 UI 证据按 DEC-014 口径归本机 Linux（渲染不进 CI，
+    RULE-11）；UiActions 的 start_transfer 在无接收端环境仅断言入队
+    admission 与 SPI 出站记录，wire 侧推进语义归 M4 既有回环/单测（不
+    重复声明）。
+  - 同步：本里程碑（M5-03 勾选、本记录）、
+    [aki_design](../design/aki_design.md) §9.1（消费面装配细节增补）、
+    总计划（当前状态条目）。无新决策记录（on_publish/UiActions 为设计
+    §9.1 既有契约的具体化，未越契约边界）。
 

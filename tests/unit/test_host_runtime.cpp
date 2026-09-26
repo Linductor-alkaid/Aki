@@ -31,6 +31,7 @@
 #include <filesystem>
 #include <functional>
 #include <future>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -87,9 +88,15 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     "[unit][host_runtime][dod02]") {
     const std::filesystem::path data_root = make_temp_data_root();
 
-    // ---- 装配（§8.3 七步；空根 → 0 恢复 + 新建身份）----
+    // ---- 装配（§8.3 七步；空根 → 0 恢复 + 新建身份；M5-03 唤醒回调注入）----
     HostRuntime& host = HostRuntime::instance();
-    const auto& assembly = host.ensure_assembled(data_root.string());
+    // 唤醒计数器经 shared_ptr 值捕获：宿主单例生命周期覆盖测试函数之外，
+    // 引用捕获会在静态析构期悬垂（AppStateOwner 关闭排空仍可能触发钩子）。
+    auto wake_calls = std::make_shared<std::atomic<int>>(0);
+    const auto& assembly =
+        host.ensure_assembled(data_root.string(), [wake_calls] {
+            wake_calls->fetch_add(1);  // GUI 侧此处为 app::requestUpdate()。
+        });
     REQUIRE(host.assembled());
     REQUIRE(assembly.ok);
     REQUIRE(assembly.failure_reason.empty());
@@ -112,6 +119,11 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
 
     // ---- Manager 泵路径（事件→任务→DB）：本地身份 + 发现启停 + 静止 + 快照 ----
     host.quiesce();
+    // M5-03（§9.1 跨线程唤醒接线）：本地身份 UpsertDevice 经 quiesce 推进
+    // 发布后注入唤醒已触发（HostRuntime 装配参数 →
+    // AppStateOwnerOptions::on_publish 的接线面；发布→唤醒调用序的 owner
+    // 级断言在 test_ui_models）。
+    REQUIRE(wake_calls->load() >= 1);
     REQUIRE(host.start_discovery_observation());
     REQUIRE(host.discovery_observation_running());
     host.quiesce();

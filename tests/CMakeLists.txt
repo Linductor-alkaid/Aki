@@ -536,3 +536,27 @@ set_tests_properties(test_host_runtime PROPERTIES LABELS "unit")
 # vs ui/theme/aki_theme_values.hpp 数值权威表；不链 eui——上游默认档对拍由
 # GUI 宿主 aki-run.log 归档承载）。
 aki_add_unit_test(test_ui_theme_values unit/test_ui_theme_values.cpp)
+
+# M5-03：ui/models 视图模型派生 + 快照消费面 + 发布→唤醒回调单测。链
+# aki_ui_models（EUI-NEO 无关，DEC-005「测试 exe 不链 eui」）；AppStateOwner
+# 仅含 comm 组件（不经 Executor shutdown），executor owner 用例自建
+#（test_executor_lifecycle 同款）。
+add_executable(test_ui_models unit/test_ui_models.cpp)
+target_compile_features(test_ui_models PRIVATE cxx_std_20)
+aki_apply_warnings(test_ui_models PRIVATE)
+target_link_libraries(test_ui_models PRIVATE
+    Catch2::Catch2WithMain
+    aki_ui_models)
+add_test(NAME test_ui_models COMMAND test_ui_models)
+set_tests_properties(test_ui_models PROPERTIES LABELS "unit")
+
+# M5-03：UiActions 出站面边界测试（页面→注入出站接口→Manager 泵→Fake
+# Adapter SPI；网络无关，DEC-002）。独立 owner/栈（AGENTS 规则 7/8）。
+add_executable(test_ui_actions unit/test_ui_actions.cpp)
+target_compile_features(test_ui_actions PRIVATE cxx_std_20)
+aki_apply_warnings(test_ui_actions PRIVATE)
+target_link_libraries(test_ui_actions PRIVATE
+    Catch2::Catch2WithMain
+    aki_ui_models)
+add_test(NAME test_ui_actions COMMAND test_ui_actions)
+set_tests_properties(test_ui_actions PROPERTIES LABELS "unit")

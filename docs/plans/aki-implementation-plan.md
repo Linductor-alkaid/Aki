@@ -8,6 +8,27 @@
 
 ## 当前状态
 
+- 2026-09-27：`M5-03` 完成：状态消费面与视图模型——`ui/models` 拆分为
+  EUI-NEO 无关独立目标 `aki_ui_models`（四域视图模型纯函数派生 +
+  `consume_ui_state` 水位消费面 + `UiActions` 注入出站面；测试 exe 直链，
+  DEC-005「测试 exe 不链 eui」落地面）；发布点唤醒回调
+  `AppStateOwnerOptions::on_publish`（owner 上下文、publish 后同步调用、
+  异常全捕获计数不中断 drain）经 `HostRuntime::ensure_assembled` 装配参数
+  注入，GUI 宿主传 `app::requestUpdate()`（本机日志留首触发证据）；
+  main_window 占位页最小接线（四域计数消费展示 + Devices 页发现启停出站
+  示范）。新单测 test_ui_models（派生/水位去重/路径 mailbox 独立推进/
+  发布→唤醒调用序/钩子异常收口/executor 任务内驱动 drain 的回调契约
+  ——机制契约面：注入回调于 executor 线程触发，现行管线 drain 仅在
+  主线程，78 断言）+ test_ui_actions（页面→出站接口→Manager 泵→
+  Fake Adapter SPI 通道，51 断言）；debug/release 全量 ctest 42/42
+  零回归；退出-3 grep 扩面全 0（ui/ 无 transport 类型、无 Store 直写、
+  无禁用面、无自建线程）；设计 §9.1 消费面装配细节先行增补（M1-08）。
+  CI 五档门禁随 PR 首跑（本会话未推送，如实登记）。同日评审修正：回调
+  契约用例原仅提交自构计数 lambda、未触发注入回调（证据失实），改为
+  executor 任务内真实驱动 `owner.drain()`（回调于 executor 线程触发，
+  73→78 断言），复验 debug 全量 ctest 42/42 + 直跑 78 断言全过；
+  release 档证据对应修正前树，未复跑。详见 M5 里程碑文档 M5-03 验证
+  记录。
 - 2026-09-27：`M5-02` 完成：EUI-NEO 接入与主窗口骨架（`DEC-005` 全项落地
   + [DEC-014](../decisions/DEC-014-eui-tsan-coverage.md) 同批落档）——
   单一构建图 `add_subdirectory(third_party/EUI-NEO)`（八项开关 CACHE

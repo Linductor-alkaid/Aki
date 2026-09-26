@@ -209,6 +209,7 @@ struct HostRuntime::Impl {
     std::shared_ptr<DatabaseWorkerControl> db;
     std::shared_ptr<aki::persistence::TransferIoControl> transfer_io;
     WritePathSink sink;  // 须先于 state_owner 构造（handler 捕获其地址）
+    std::function<void()> wake;  // 快照发布唤醒回调（M5-03，ensure_assembled 注入）
 
     std::optional<AppStateOwner> state_owner;
     std::optional<HeyakiNodeAdapter> adapter;
@@ -257,12 +258,14 @@ HostRuntime& HostRuntime::instance() {
     return runtime;
 }
 
-const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root) {
+const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
+    std::function<void()> wake) {
     Impl& impl = *impl_;
     if (impl.assembled || impl.assembly_failed || impl.assembly_report.attempted) {
         return impl.assembly_report;  // 幂等：返回首次结果。
     }
     impl.assembly_report.attempted = true;
+    impl.wake = std::move(wake);  // 转交 AppStateOwner 构造选项（步骤 4）。
 
     // 数据根：GUI 宿主无 argv（框架 int main()），缺省 resolve_data_root()
     //（§9.1 启动↔关闭配对条款）；console 驱动/测试经参数注入。
@@ -351,11 +354,18 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root) {
         std::make_shared<aki::persistence::TransferIoControl>(
             impl.recovery->store, aki::persistence::TransferIoWorkerOptions{});
 
-    // 4) AppStateOwner：加载结果播种初始快照 + 接受后处理器（DEC-009 ①）。
+    // 4) AppStateOwner：加载结果播种初始快照 + 接受后处理器（DEC-009 ①）；
+    //    快照发布唤醒回调经构造选项注入（M5-03，设计 §9.1 跨线程唤醒接线）。
     impl.sink.control = impl.db;
     impl.sink.store = impl.recovery->store;
     impl.sink.receive_dir = impl.receive_dir;
-    impl.state_owner.emplace(AppStateOwnerOptions{},
+    AppStateOwnerOptions owner_options;
+    owner_options.on_publish = [wake = impl.wake] {
+        if (wake) {
+            wake();  // 异常由 owner 全捕获计数（publish_hook_failures）。
+        }
+    };
+    impl.state_owner.emplace(std::move(owner_options),
         app_state_from(impl.recovery->state),
         [&sink = impl.sink](const AppStateUpdate& update) { sink(update); });
 
@@ -692,6 +702,33 @@ const HostShutdownReport& HostRuntime::last_shutdown_report() const noexcept {
 
 executor::Executor& HostRuntime::executor() {
     return impl_->executor_owner.executor();
+}
+
+AppStateOwner& HostRuntime::state_owner() {
+    return *impl_->state_owner;
+}
+
+DeviceManager& HostRuntime::device_manager() {
+    return *impl_->devices;
+}
+
+ConversationManager& HostRuntime::conversation_manager() {
+    return *impl_->conversations;
+}
+
+MessageManager& HostRuntime::message_manager() {
+    return *impl_->messages;
+}
+
+TransferManager& HostRuntime::transfer_manager() {
+    return *impl_->transfers;
+}
+
+void HostRuntime::pump_state() {
+    if (!impl_->assembled) {
+        return;
+    }
+    impl_->state_owner->drain();  // 有界工作单元（owner 上下文，EXEC-03）。
 }
 
 }  // namespace aki::app
