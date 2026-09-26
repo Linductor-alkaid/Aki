@@ -2,7 +2,7 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-09-22
+> 更新日期：2026-09-26
 > 权威约束：[ZCode Design System](zcode-design-system.md)（直接采用，见下）
 > 上位设计：[Aki 设计方案](aki_design.md)第 9/10 节
 > 实现基线：pinned `third_party/EUI-NEO`
@@ -90,7 +90,9 @@ Tailwind 默认调色板取值（hex→归一化在实现时完成）：
   品牌填充等规则照上游 "Components" 一节执行，落点为 EUI-NEO
   `button`/`input`/`contextmenu`/`tabs` 等组件的参数组合。
 - 深度：背景对比 + 边框优先，`shadow-md` 仅浮层、`shadow-lg` 仅 Toast →
-  EUI-NEO `theme::panelShadow/popupShadow` 只用于弹层与 Toast。
+  EUI-NEO 侧落点为 `theme::panelShadow`/`popupShadow`（theme.h:266/:270，
+  只用于弹层与 Toast——`popupShadow` 经 `fieldVisuals().popupShadow*`
+  字段合成，theme.h:126-128/:211-215）。
 - 动效：短促 fade/zoom/slide，主工作区无弹簧动画（上游 "Motion"）。
 - 三栏 workspace 布局（上游 "Workspace layout"：独立 frame、4px 可调间隙、
   frame 不计圆角层级）对应 Aki 设计第 9 节三栏：导航栏(fixed) + 列表栏
@@ -128,7 +130,7 @@ Transfers / Settings。组件选型（`RISK-2026-002` 的盘点基线，M5 用 p
 | Aki 界面元素 | EUI-NEO 组件 | 上游规则约束 |
 | --- | --- | --- |
 | 左侧导航栏 | `navbar` | 选中态用对比而非品牌填充 |
-| 列表栏 | `scrollview` + `virtuallist` | 行高用 `ui-base` 节奏，悬停 `hover`/选中 `selected` |
+| 列表栏 | `scrollview` + `virtuallist` | 行高用 `ui-base` 节奏，悬停 `hover`/选中 `selected`（virtuallist 为固定行高模型——`rowHeight` 统一值，M5-01 实测确认；变高气泡列按第 5 节复审结论组合） |
 | 会话头部 | `text` + 徽标 | 元信息 `text-subtle`，路径/指纹 mono |
 | 消息气泡 | `card` + `text` 组合 | 一级容器 `rounded-xl`(12)，己方/对方区分靠 surface 层级 |
 | 图片消息 | `image` + `dialog` | 预览弹窗属批准的 `rounded-xl` 例外 |
@@ -148,6 +150,38 @@ Transfers / Settings。组件选型（`RISK-2026-002` 的盘点基线，M5 用 p
   "Do / Don't" 清单与"实现指导"检查。
 - M5 启动前复审本文件与 pinned EUI-NEO 实际版本的一致性；偏差记入里程碑
   文档。
+- **M5-01 一致性复审记录（2026-09-26，pinned v0.6.0 @ `b9032a8a`；探针实测
+  见 M5 里程碑 M5-01 验证记录）**：
+  - 第 2 节绑定映射 16 组件在 pinned v0.6.0 全部存在
+    （components/components.h 伞头导出；navbar/scrollview/virtuallist/text/
+    card/image/dialog/progress/button/input/contextmenu/toast/segmented/
+    switch/dropdown + 徽标为 text 组合）——一致。
+  - §2.1 排印：`TypographyTokens` 默认档（micro 11/caption 12/hint 13/
+    label 14/body 16/subtitle 20/title 22）≠ 本表（9/10/12/13/14/16/18）
+    ——**偏差确认，`ui/theme` 逐项覆写**（探针实测覆写值落盘）。
+  - §2.2 间距：`SpacingTokens` tiny 4/compact 8/content 12/section 16/
+    large 20/panel 24 与本表**一致**（探针对拍零覆写）；圆角/尺寸默认档
+    存在偏差（radius.small 6→4、control.field 35→36、menuItem 34→28）——
+    覆写。
+  - §2.4 深度锚点复核（2026-09-26 评审纠正）：本记录先前「v0.6.0 无
+    `panelShadow/popupShadow` 独立函数」断言与 pinned 源不符、撤回——
+    两独立函数存在（theme.h:266/:270，自上游 d28609fb 2026-04-28 即在）；
+    `fieldVisuals().popupShadow*`（theme.h:126-128/:211-215）为其合成
+    字段、锚点属实。§2.4 落点已恢复为 `panelShadow`/`popupShadow`
+    （弹层与 Toast）。
+  - §3/§4 状态视觉与页面映射：语义色字段名与 `ThemeColorTokens`
+    （background/primary/surface/surfaceHover/surfaceActive/text/border +
+    metrics）对齐；扩展语义色（success/warning/destructive/brand 等）不在
+    上游结构内，由 `ui/theme` 以扩展常量承载（上游 Color + 自有语义名）。
+  - 组合模型（M5-01 探针实测，装配契约见设计 §9）：**compose 为保留模式、
+    事件触发**——静态 UI 不重复重组（探针 12s 仅 2 次 compose）；页面持有
+    状态 + `app::requestUpdate()` 跨线程唤醒 → 主线程重组拾取新状态
+    （探针 waker 线程翻转 dialog/toast 状态 + requestUpdate，13s 内 11 次
+    开合转换全部拾取）。dialog `open(bool)`/toast `visible(bool)+
+    bindVisible(Signal)` 页面持有形态确认。
+  - 文件对话框：`eui::platform::openFileDialog` 只读打开（平台能力文档：
+    不支持目录/保存）——满足发送选取链路（图片发送 open 选取 + hash-first
+    发起），接收侧按接收根无对话框需求——满足度确认。
 
 ## 6. 来源与许可
 

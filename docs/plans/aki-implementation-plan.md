@@ -348,6 +348,21 @@
   如实降级——M4 保持 In Progress、关闭待补跑（防火墙放行入站 TCP / LAN
   双端真机，与 M3 同批，负责人 Linductor）；退出-1 保持未勾选，M4-01~07
   工作项全部勾选。详见 M4 里程碑文档 M4-07 验证记录 2026-09-26 条目。
+- 2026-09-26：`M5-01` 完成（设计先行与运行复核；M5 启动，状态 In Progress；
+  纯文档 + scratch 探针，无产品代码）：aki_ui_design §5 一致性复审逐项
+  落档——16 组件 pinned v0.6.0 全部存在一致；§2.1 排印/§2.2 圆角尺寸
+  默认档偏差确认→覆写清单（探针对拍落盘）；§2.2 间距一致零覆写；§2.4
+  深度锚点复核（panelShadow/popupShadow 独立函数存在于 v0.6.0——
+  theme.h:266/:270，先前否定断言评审纠正撤回；fieldVisuals().popupShadow*
+  为其合成字段、锚点属实）。运行探针（build/scratch/m5-probe，
+  standalone CMake + DEC-005 冻结开关，gitignored 不入产品图）：窗口/
+  compose/主题覆写实测通过；RISK-2026-002 三项复核收口——virtuallist
+  固定行高模型实测确认（变高气泡按原语组合承接）、dialog/toast 页面持有
+  + requestUpdate 唤醒重组实测（waker 原型 11 次开合转换全部拾取）、文件
+  对话框只读满足发送选取。**组合模型发现**：compose 为保留模式事件触发
+  （静态 UI 不重组）——关键装配契约输入。设计 §9.1「UI 装配契约」固化
+  五条（视图模型派生/快照消费与唤醒/onShutdown 关闭序/主题覆写清单/
+  渲染层验证策略）。详见 M5 里程碑文档 M5-01 验证记录 2026-09-26 条目。
 - 2026-09-26：[M5 里程碑文档](m5-eui-neo-ui-mvp.md) 创建（Planned，
   `M5-01`~`M5-09`，里程碑索引 M5 文档链接更新）。范围：EUI-NEO 主窗口与
   基础主题、四页导航与 MVP 全链路验收（`SCOPE-04`/`SCOPE-12` + `SCOPE-05`
@@ -446,7 +461,7 @@
 | M2 | 本地持久化 | Done | M1 | v0.2.0 | [m2-local-persistence.md](m2-local-persistence.md) |
 | M3 | Heyaki 真实接入与文本消息 | In Progress | M1、M2、DEC-006 | v0.3.0 | [m3-heyaki-integration.md](m3-heyaki-integration.md) |
 | M4 | 图片消息与文件传输 | In Progress | M3 | v0.4.0 | [m4-image-file-transfer.md](m4-image-file-transfer.md) |
-| M5 | EUI-NEO UI 与 MVP 验收 | Planned | M2、M3、M4、DEC-005 | v0.5.0（MVP） | [m5-eui-neo-ui-mvp.md](m5-eui-neo-ui-mvp.md) |
+| M5 | EUI-NEO UI 与 MVP 验收 | In Progress | M2、M3、M4、DEC-005 | v0.5.0（MVP） | [m5-eui-neo-ui-mvp.md](m5-eui-neo-ui-mvp.md) |
 
 依赖说明：M1 先以契约与假实现交付可运行的领域骨架（先契约后实现、先假实现后真实依赖）；
 M3 引入真实 Heyaki；M5 整合 UI 并按设计第 15 节逐项验收 MVP。每个里程碑必须产生可独立
