@@ -94,8 +94,47 @@ M5（EUI-NEO UI 与 MVP 验收）开工前必须冻结 UI 框架集成方式、�
 冻结调研（2026-09-26，负责人 Linductor）：集成指南/锁文件/submodule 状态
 （b9032a8a v0.6.0 实测）、子目录 CMake 消费面、框架线程/唤醒/关闭钩子源码、
 组件与 theme 头文件逐项核对为静态证据；configure + eui_neo.lib 编译为动态
-证据（调研会话内执行，通过）。M5 首工作项履行「影响与风险」全部验证项并
-回填本记录验证方式；RISK-2026-002 运行复核随 M5。
+证据（调研会话内执行，通过）。
+
+**M5-02 回填（2026-09-27，「影响与风险」验证项逐项履行；详见 M5 里程碑
+M5-02 验证记录）**：
+
+- **运行复核**：M5-01 探针（窗口/compose/主题覆写/waker 唤醒）+
+  M5-02 GUI 宿主本机会话（aki.exe Release：装配 ok 32/54/60ms、主题对拍
+  落盘、三栏壳+四页导航渲染截图
+  `build/scratch/aki-m5-02-window.png`、taskkill WM_CLOSE 优雅关窗 →
+  onShutdown 完整 8 步钩子序 + fully_stopped=1 workers 2/2，日志
+  `build/release/Release/aki-run.log`）；RISK-2026-002 运行复核收口。
+- **CI 扩面**：[DEC-014](DEC-014-eui-tsan-coverage.md)（tsan 全图插桩零
+  豁免 + Linux 三档完整系统依赖集 + 覆盖声明五条）；ci.yml 已落地，
+  CI 门禁全绿证据随 M5-02 PR（本会话未建分支/未推送，如实声明）。
+- **MinGW**：Aki presets 无 MinGW 档（M3-01 起 w64devkit 受限）；EUI-NEO
+  硬性要求 GCC≥12 + static runtime 探测失败即 FATAL（其 CMakeLists.txt:
+  98-103），被阻断属预期——M5-02 按纪律记录，不建立 MinGW preset。
+- **宿主入口重构**：dslAppConfig()+compose() 钩子迁移完成；启动触发点 =
+  首次 compose 惰性装配（HostRuntime，设计 §9.1 首帧装配例外条款）；
+  onShutdown 组成关闭路径测试（test_host_runtime，DOD-02 六项 + §8.3
+  钩子原序断言）+ GUI 本机日志证据；测试 exe 不链 eui 保持 console
+  （aki_host_smoke/test_host_runtime 经 dumpbin /SYMBOLS 核查 eui/glfw
+  符号 0 命中）。
+- **跨线程契约**：requestUpdate 唤醒路径设计锚定（M5-01 waker 11/11 实测；
+  M5-03 状态消费面接入后随 tsan 运行期证据归档——DEC-014 口径）；EXEC-03
+  通道主线程排空（HostRuntime quiesce/load_state_snapshot 单线程形态）；
+  禁用面（app::async/core::network/audio）grep 0 命中（退出-3）。
+- **单图符号冲突**：dumpbin /SYMBOLS 核对——eui_neo.lib 含 heyaki 栈符号
+  （sqlite3_/usrsctp/rtc::）0 命中；heyaki 侧 lib 含 eui 栈符号
+  （glfw/freetype/FT_Init/md4c_/stbi__）0 命中；Release 全量链接
+  LNK4006/重复符号告警 0；aki.exe 依赖闭包=系统 DLL+OpenSSL 双 DLL
+  （dumpbin /DEPENDENTS），全静态单 exe。
+- **资产与许可**：EUI assets POST_BUILD copy 就位确认
+  （build/release/Release/assets/ 随 eui_neo_configure_app(aki) 生成，
+  icon/fonts/shaders 齐备）；3rd/ 与 assets/ 发行前审计仍为 DEC-003
+  保留项（M5-09 复核）。
+- **上游默认漂移**：八项开关 CACHE FORCE 写死于根 CMakeLists.txt
+  （configure 日志：bundled glfw/glad/tray/freetype/zlib/libpng/md4c/
+  miniaudio 全 bundled、render resolved=opengl）。
+
+RISK-2026-002 运行复核随 M5-01/M5-02 收口（见上）。
 
 ## 关联文档和工作项
 

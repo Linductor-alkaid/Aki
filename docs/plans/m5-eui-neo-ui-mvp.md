@@ -7,11 +7,12 @@
 > 项（`M3-01`~`M3-09`、`M4-01`~`M4-07`）均已完成并经收口审计，两里程碑保持
 > In Progress 待防火墙放行入站 TCP / LAN 双端真机环境补跑关闭（与 M3-09/
 > M4-07 记录同批）——沿 M4 文档创建先例，环境补跑不阻塞本里程碑文档与
-> 设计先行工作项（`M5-01`），UI 实现工作项开工时复核 M3/M4 状态；真实
-> Adapter、NodeSession、发现/消息/图片/传输/presence/重连管道与恢复语义
-> 均已就绪
+> 设计先行工作项（`M5-01`），UI 实现工作项开工时复核 M3/M4 状态（`M5-02`
+> 开工前已复核：全部工作项完成、仅防火墙/LAN 双端补跑待关闭，不阻塞）；
+> 真实 Adapter、NodeSession、发现/消息/图片/传输/presence/重连管道与恢复
+> 语义均已就绪
 > 建议发布点：v0.5.0（MVP）
-> 更新日期：2026-09-26
+> 更新日期：2026-09-27
 
 ## 目标
 
@@ -131,9 +132,22 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   契约关键输入；设计 §9.1「UI 装配契约」固化（视图模型派生/快照消费与
   唤醒/onShutdown 关闭序/主题覆写清单/渲染层验证策略）。详见验证记录。见
   下方 2026-09-26（M5-01）验证记录。）
-- [ ] `M5-02` EUI-NEO 接入与主窗口骨架（可验收：configure 三方校验通过、
+- [x] `M5-02` EUI-NEO 接入与主窗口骨架（可验收：configure 三方校验通过、
   `aki_ui` 实体化构建图生效、三栏壳 + 四页导航可运行、`ui/theme` 逐项覆写
   留对照、`onShutdown` 关闭序经关闭路径验证）。
+  （2026-09-27 完成：单一构建图接入（八项开关 CACHE FORCE，configure 通过，
+  bundled 八件套零联网）；`aki_ui` 实体化（eui::neo 仅由 aki_ui 链接，测试
+  exe 不链 eui 经 dumpbin 核查 0 命中）；宿主入口迁移 dslAppConfig()+compose()
+  （/SUBSYSTEM:WINDOWS）——组合根抽离为 EUI-NEO 无关的 HostRuntime
+  （app/lifecycle/host_runtime，设计 §9.1 首帧装配例外条款先行落档），
+  首次 compose 惰性装配 + onShutdown 薄委托受控关闭；三栏壳 + 四页导航
+  本机可运行（截图+日志证据归档）；ui/theme akiTheme() 逐项覆写 + 双份
+  回归对照（test_ui_theme_values 独立抄录期望值 + GUI 运行日志对拍）；
+  onShutdown 关闭序经 test_host_runtime 关闭路径验证（DOD-02 六项 +
+  §8.3 钩子原序断言）+ GUI 会话日志（8 步钩子序 + fully_stopped）；debug/
+  release 全量 ctest 40/40 零回归；DEC-014 落档（tsan 全图插桩 + CI 依赖
+  集，覆盖声明五条）；DEC-005「影响与风险」验证项逐项回填。见下方
+  2026-09-27（M5-02）验证记录。）
 - [ ] `M5-03` 状态消费面与视图模型（可验收：快照排空 + 跨线程唤醒路径经
   单测，四域视图模型派生有断言，UI 操作全经 Application 出站面——边界由
   退出-3 grep 与单测共同锁定）。
@@ -276,4 +290,126 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
     [aki_ui_design](../design/aki_ui_design.md)（§2.4 修正 + §4 注 + §5
     复审记录）、[aki_design](../design/aki_design.md) §9.1（装配契约）、
     总计划（当前状态条目 + M5 索引 In Progress）。
+
+- 2026-09-27（`M5-02` 完成；Windows 11 工作站（桌面会话）/ MSVC 2022
+  BuildTools 14.44.35207 / CMake 4.1.0；负责人：Linductor）：
+  - **① 依赖接入（DEC-005/DEC-003）**：submodule `third_party/EUI-NEO` @
+    `b9032a8a848f8d8cf096bb7711c626f9c051e0ce`（v0.6.0，`git submodule
+    status` 实测）+ 锁文件（M0 起已登记，本项无变更）；configure 三方校验
+    属锁文件纪律的既有校验（Aki lock ↔ checkout，`cmake/Dependencies.cmake`
+    pinned 分支）——debug preset configure 通过，日志含
+    `Dependency 'EUI-NEO' pinned at b9032a8a…` 与
+    `Pinned dependency verification passed`；bundled 八件套
+    （glfw/glad/tray/freetype/zlib/libpng/md4c/miniaudio）全部
+    `Using bundled … source` 零联网（DEC-006「不静默联网」先例口径，
+    EUI_DEPS_MODE=bundled 冻结）。无独立 fetch 脚本需求：submodule 经
+    `git submodule update --init`（CI checkout `submodules: recursive`），
+    其 bundled 第三方随 pinned 源码树分发，无网络拉取环节。
+  - **② 单一构建图**：根 CMakeLists.txt `add_subdirectory(third_party/
+    EUI-NEO)` + 八项开关 CACHE FORCE（`EUI_DEPS_MODE=bundled`、
+    `EUI_BUILD_APPS/EUI_BUILD_USER_APPS/EUI_BUILD_TEST_FIXTURES`、
+    `EUI_ENABLE_INSTALL/EUI_ENABLE_MODULES` 全 OFF、`EUI_WINDOW_BACKEND=
+    glfw`、`EUI_RENDER_BACKEND=opengl`；EUI_ENABLE_TRAY 保持上游默认 ON，
+    DEC-014）+ `eui_neo_configure_app(aki)`（框架 main 注入，
+    /SUBSYSTEM:WINDOWS 实证——aki.exe 无控制台输出、GUI 会话正常开窗）。
+    eui_neo 头文件 SYSTEM 标注（IDE 生成器限制同 executor 先例）+ 框架
+    注入源 glfw_app_main.cpp 源级 /W0（上游告警不进第一方 /WX 门禁）。
+  - **③ aki_ui 实体化**：ui/CMakeLists.txt 静态库（theme/aki_theme.cpp +
+    pages/main_window.cpp），`eui::neo` 仅由 aki_ui 链接（RULE-01/RULE-10；
+    eui include 全仓仅存在于 ui/ 四文件与根 main.cpp，grep 实证）；测试
+    exe 不链 eui（tests/CMakeLists.txt 零 aki_ui 链接；aki_host_smoke.exe
+    `dumpbin /SYMBOLS` 对 eui::/components::/glfw 符号 0 命中，console
+    约定保持，DEC-005）。宿主组合根抽离为 `aki_host` 静态库
+    （app/lifecycle/host_runtime.{hpp,cpp}，EUI-NEO 无关——GUI 钩子、
+    console 驱动 aki_host_smoke、关闭路径测试三方共享）。
+  - **④ 宿主入口迁移 + 启动/关闭配对**：根 main.cpp 重构为
+    dslAppConfig()（纯配置，const 查询语义）+ compose() 钩子；启动触发点 =
+    首次 compose 主线程惰性 `HostRuntime::ensure_assembled()`（设计 §9.1
+    增补「首帧装配例外」与「启动↔关闭配对」两条款先行落档——M1-08 纪律，
+    compose 三不纪律的唯一显式例外）；onShutdown 薄委托
+    `shutdown_with_report()`（§8.3 钩子原序 + EXEC-01 步骤 2~5）。
+  - **⑤ 三栏壳 + 四页导航**：ui/pages/main_window.{hpp,cpp}——导航栏
+    (fixed 64) + 列表栏 (fixed 264) + 内容栏 (fill)，Conversations/Devices/
+    Transfers/Settings 路由占位（页面模型持 UI 态，compose 只读派生）。
+    本机可运行证据：aki.exe（Release）GUI 会话——`aki-run.log`
+    （build/release/Release/，随帧落盘）：装配 ok 32/54/60ms（含恢复路径
+    identity=loaded devices=1）、主题对拍落盘、screen 1080x720；
+    截图 `build/scratch/aki-m5-02-window.png`（三栏壳 + 四页导航 + light
+    主题渲染；右下 Windows 防火墙弹窗为系统级提示——aki_host_smoke ctest
+    运行触发，非应用内容，属 M3/M4 已登记防火墙环境约束）；taskkill
+    WM_CLOSE 优雅关窗 → onShutdown 完整执行。复现：`cmake --build
+    --preset release --config Release && cd build/release/Release &&
+    ./aki.exe`（关闭：正常点窗叉或 `taskkill /IM aki.exe` 优雅 WM_CLOSE）。
+  - **⑥ ui/theme 逐项覆写 + 回归对照**：数值权威表
+    ui/theme/aki_theme_values.hpp（EUI-NEO 无关）+ akiTheme()/akiSemantic
+    Colors() 装配（Typography title 22→18 subtitle 20→16 body 16→14
+    caption 12→13 hint 13→12 micro 11→10（label 14 保持）；Radius small
+    6→4（card/overlay/control 锚定）；ControlSize field 35→36 menuItem
+    34→28；间距六档零覆写锚定；§2.3 语义色板深浅两套 + 扩展语义色）。
+    回归对照双份：tests/unit/test_ui_theme_values.cpp（设计文档独立抄录
+    期望值 + 预混合公式复核，不链 eui）+ GUI 运行日志「上游默认 → 覆写值」
+    对拍行（M5-01 探针同款）。
+  - **⑦ onShutdown 关闭路径测试（DOD-02）**：tests/unit/
+    test_host_runtime.cpp（console exe，链 aki_host 不链 eui）——六项沿
+    宿主生命周期路径：正常完成（submit_auto 返回值 + Manager 泵 + 真实发现
+    启停 + 快照本地身份行）、任务异常（future 上浮 + task_exception_count）、
+    执行中取消（submit_cancellable + request_task_cancel 协作退出 +
+    CancellationStatus）、提交拒绝（set_max_in_flight_tasks(1) 耗尽 →
+    CapacityExhaustedException 即时就绪 + capacity_exhausted_count）、
+    超时（completion_wait 预算耗尽如实记录——超时非干净关闭
+    fully_stopped=false 但 EXEC-01 步骤 5 仍收敛 Stopped；config 级排队软
+    超时已由 test_app_managers 沿泵路径覆盖）、shutdown（§8.3 钩子原序
+    hook_sequence 8 步逐项断言 + 两 blocking worker 2/2 回收 + 写路径
+    admit==completed 零丢失 + 幂等 + 关闭后提交显式拒绝）。窗口/GPU 销毁与
+    worker 回收次序：worker 回收在 onShutdown 钩子内（EXEC-01 步骤 2/3）
+    完成，GPU 设备销毁（renderBackend.reset()）在钩子返回后（框架
+    glfw_app_main.cpp:594-604）——次序由 test_host_runtime（钩子内回收
+    断言）+ GUI 日志（shutdown 返回行后框架收尾）双重承载。
+  - **⑧ 单图符号冲突核对（DEC-006 sqlite 先例）**：dumpbin /SYMBOLS——
+    eui_neo.lib 含 heyaki 栈符号（sqlite3_/usrsctp/rtc::）0 命中；
+    heyaki 侧 lib 含 eui 栈符号（glfw/freetype/FT_Init/md4c_/stbi__）
+    0 命中；Release 全量链接日志 LNK4006/重复符号 0；aki.exe
+    /DEPENDENTS = 系统 DLL + libssl/libcrypto（OpenSSL 随宿主部署），
+    全静态单 exe。
+  - **⑨ assets 就位**：build/release/Release/assets/（icon/fonts/shaders
+    等随 eui_neo_configure_app POST_BUILD copy 生成，GUI 会话消费实证——
+    窗口图标与文本渲染正常）。
+  - **⑩ CI 扩面（DEC-014）**：ci.yml Linux 四档安装 pinned 集成指南完整
+    依赖集（libssl/libcurl4-openssl/libgl1-mesa/libegl1-mesa/libx11/
+    libxext/libxrandr/libxinerama/libxcursor/libxi/libwayland/
+    wayland-protocols/libxkbcommon/libglib2.0-dev；tray/Wayland 不降档）；
+    `aki_apply_warnings` GNU+tsan `-Wno-error=tsan` 豁免（heyaki 先例同款，
+    限定编译语言）；tsan 对 eui 栈全图插桩零豁免（DEC-014 机制探针 +
+    覆盖声明五条）。**CI 门禁全绿证据未在本会话产生**（不建分支/不推送
+    纪律）——随 M5-02 PR 首跑核实，如实登记。
+  - **⑪ MinGW 受限（纪律记录）**：Aki CMakePresets 无 MinGW 档（M3-01 起
+    w64devkit 受限，configure-only 未达成先例）；EUI-NEO 硬性要求
+    GCC≥12 且 static runtime 探测失败即 FATAL（其 CMakeLists.txt:98-103）
+    ——MinGW 被 EUI-NEO 阻断属 DEC-005 预期，本项不建立 MinGW preset、
+    不冒充验证。
+  - **⑫ 全量测试零回归**：debug 与 release 全量 ctest 各 40/40 通过
+    （原 38 项语义零损失迁移——skeleton.app_runs/smoke.device_lifecycle/
+    recovery.corrupt_db_clean_failure 改由 aki_host_smoke 驱动（同 argv
+    契约、同输出标记），+test_host_runtime +test_ui_theme_values 两新项）。
+    命令：`ctest --preset debug`（151.5s，100% passed 40/40）、
+    `ctest --preset release`（156.3s，100% passed 40/40）。
+  - **⑬ 边界 grep（退出-3）**：第一方线程创建（std::thread/jthread/async/
+    CreateThread/pthread_create）0 命中（唯一命中为 test_app_state 注释
+    行）；ui/+main.cpp 的 app::async/core::network/eui::network 0 命中；
+    EUI-NEO include/类型越过 ui/（app/device/conversation/transfer/
+    persistence/heyaki）0 命中。
+  - **⑭ 设计与决策同步**：设计 §9.1 增补「首帧装配例外」「启动↔关闭配对」
+    两条款（M1-08 先行）；[DEC-014](../decisions/DEC-014-eui-tsan-coverage.md)
+    落档（Accepted）；DEC-005「验证方式」逐项回填。
+  - 限制与补跑条件：CI Linux 四档门禁与 tsan 首跑证据随 M5-02 PR（本会话
+    未推送）；Linux 真实 GCC tsan 编译/运行与 UI 运行期 tsan 证据按
+    DEC-014 口径归后续会话（本机无 Linux 工具链）；非空库 GUI 装配耗时
+    随 M5-08 双端验收复测；GUI 数据根为真实用户目录（%APPDATA%\aki，
+    本机 GUI 会话已建立 identity/devices=1——应用正常形态，测试注入经
+    HostRuntime 参数/aki_host_smoke argv 承载）。
+  - 同步：本里程碑（M5-02 勾选、本记录）、
+    [aki_design](../design/aki_design.md) §9.1（两增补条款）、
+    [DEC-014](../decisions/DEC-014-eui-tsan-coverage.md)（新建）、
+    [DEC-005](../decisions/DEC-005-eui-neo-integration.md)（验证方式回填）、
+    总计划（当前状态条目 + 决策表 DEC-014）。
 

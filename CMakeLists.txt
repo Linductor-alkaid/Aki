@@ -36,6 +36,23 @@ set(BUILD_TESTING OFF)
 add_subdirectory(third_party/heyaki)
 unset(BUILD_TESTING)
 
+# M5-02（DEC-005 构建开关冻结）：EUI-NEO 单一构建图接入——
+# add_subdirectory(third_party/EUI-NEO) + eui_neo_configure_app(aki) 注入
+# 框架 main（/SUBSYSTEM:WINDOWS）。开关按 DEC-005 CACHE FORCE 显式写死，
+# 不依赖上游默认值（EUI_DEPS_MODE=bundled 零联网拉取；apps/test-fixtures/
+# install/modules 全 OFF；glfw+opengl 后端）。EUI_ENABLE_TRAY 保持上游默认
+# ON（DEC-014：CI Linux 安装 glib/gio，不做 CI 专属降档）。pin 校验由
+# cmake/Dependencies.cmake 按锁文件执行（b9032a8a，M0 起已登记）。
+set(EUI_DEPS_MODE "bundled" CACHE STRING "" FORCE)
+set(EUI_BUILD_APPS OFF CACHE BOOL "" FORCE)
+set(EUI_BUILD_USER_APPS OFF CACHE BOOL "" FORCE)
+set(EUI_BUILD_TEST_FIXTURES OFF CACHE BOOL "" FORCE)
+set(EUI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(EUI_ENABLE_MODULES OFF CACHE BOOL "" FORCE)
+set(EUI_WINDOW_BACKEND "glfw" CACHE STRING "" FORCE)
+set(EUI_RENDER_BACKEND "opengl" CACHE STRING "" FORCE)
+add_subdirectory(third_party/EUI-NEO)
+
 # executor 公开头文件按 SYSTEM include 处理：其头文件告警（如 MSVC C4324 对齐
 # 填充）不进入第一方 -Werror 门禁，与“第三方依赖不继承告警级别”的约定一致。
 # M3-01 起设置转移到 heyaki 提供的 executor target（Aki 侧副本不再进入构建图，
@@ -48,6 +65,12 @@ if(NOT CMAKE_GENERATOR MATCHES "Visual Studio|Xcode")
     set_target_properties(executor PROPERTIES
         INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
         "${PROJECT_SOURCE_DIR}/third_party/heyaki/third_party/executor/include")
+    # M5-02（DEC-005）：eui_neo 公开头文件同款 SYSTEM 标注——EUI-NEO 头文件
+    # 告警不进入第一方 -Werror 门禁（与 executor/heyaki 的「第三方依赖不
+    # 继承告警级别」纪律一致；IDE 生成器限制同上，跳过时行为不变）。
+    set_target_properties(eui_neo PROPERTIES
+        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
+        "${PROJECT_SOURCE_DIR}/third_party/EUI-NEO/include")
 endif()
 
 # 警告级别只作用于第一方目标；第三方依赖（FetchContent 引入的测试框架等）不继承，
@@ -62,6 +85,15 @@ function(aki_apply_warnings target scope)
         target_compile_options(${target} ${scope} /W4 /permissive- /EHsc /utf-8 /wd4324)
     else()
         target_compile_options(${target} ${scope} -Wall -Wextra -Wpedantic)
+        # DEC-014：GCC 对 ThreadSanitizer 不插桩 atomic fence 发 -Wtsan
+        #（heyaki 先例 HeyakiProjectOptions——Asio 有意使用 fence）。tsan preset
+        # 下第一方原子/栅栏代码会被命中：保留诊断但不升错（限定 GNU + 线程
+        # 插桩构建，避免 CI tsan 档因工具链限制失败）。
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU"
+           AND CMAKE_CXX_FLAGS MATCHES "-fsanitize=thread")
+            target_compile_options(${target} ${scope}
+                "$<$<COMPILE_LANGUAGE:CXX>:-Wno-error=tsan>")
+        endif()
     endif()
     if(AKI_WARNINGS_AS_ERRORS)
         if(MSVC)
@@ -133,20 +165,31 @@ add_subdirectory(persistence)
 add_subdirectory(heyaki)
 add_subdirectory(ui)
 
+# M5-02：GUI 宿主（EUI-NEO 框架 main 注入；/SUBSYSTEM:WINDOWS）。宿主组合根
+# 在 aki_host（EUI-NEO 无关，app/lifecycle/host_runtime），main.cpp 只保留
+# dslAppConfig()+compose() 钩子与 onShutdown 薄委托（设计 §9.1）。eui::neo
+# 经 eui_neo_configure_app 链入 exe（DEC-005 集成形态）；库面仅 aki_ui 消费。
 add_executable(aki main.cpp)
 aki_apply_warnings(aki PRIVATE)
 # M3-03：宿主经 heyaki/adapter/local_identity.hpp 消费真实 heyaki 身份
 # （DEC-006 单图接入的产品目标首批消费点）；OpenSSL 运行期 DLL 随宿主部署。
 target_link_libraries(aki PRIVATE
-    aki_app
-    aki_device
-    aki_conversation
-    aki_transfer
-    aki_persistence
-    aki_heyaki
-    heyaki::client
-    aki_ui)
+    aki_host
+    aki_ui
+    heyaki::client)
 aki_deploy_openssl_dlls(aki)
+eui_neo_configure_app(aki)
+# 框架注入源（glfw_app_main.cpp）不继承第一方 /W4 /WX——上游源码告警
+#（如 runtime_render.h C4100）不进第一方门禁（DEC-005「第三方不继承告警
+# 级别」；MSVC 无 /external:I 落点，以源级降档实现，最后一档生效）。
+get_property(AKI_EUI_APP_MAIN_SOURCE GLOBAL PROPERTY EUI_NEO_APP_MAIN_SOURCE)
+if(MSVC)
+    set_source_files_properties("${AKI_EUI_APP_MAIN_SOURCE}"
+        PROPERTIES COMPILE_OPTIONS "/W0")
+else()
+    set_source_files_properties("${AKI_EUI_APP_MAIN_SOURCE}"
+        PROPERTIES COMPILE_OPTIONS "-w")
+endif()
 
 if(AKI_BUILD_TESTS)
     enable_testing()
