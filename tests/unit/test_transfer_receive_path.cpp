@@ -341,7 +341,7 @@ TEST_CASE("Inbound transfer merges from the receive root and survives restart",
         inbound.id = id;
         inbound.sender = DeviceId{"beta"};
         inbound.receiver = DeviceId{"local-1"};
-        inbound.file = FileMetadata{logical_name, 40, std::string{}};
+        inbound.file = FileMetadata{logical_name, 40, std::string{}, std::string{}};
         inbound.total = 40;
         inbound.state = TransferState::Negotiating;
         REQUIRE(stack.adapter.inject_transfer_started(inbound));
@@ -454,7 +454,7 @@ TEST_CASE("Complete source resolution falls back and fails visibly",
     inbound.id = id;
     inbound.sender = DeviceId{"beta"};
     inbound.receiver = DeviceId{"local-1"};
-    inbound.file = FileMetadata{"only.bin", 8, std::string{}};
+    inbound.file = FileMetadata{"only.bin", 8, std::string{}, std::string{}};
     inbound.total = 8;
     inbound.state = TransferState::Transferring;
     inbound.transferred = 8;
@@ -513,7 +513,7 @@ TEST_CASE("Inbound failure paths discard idempotently and stay terminal",
     inbound.id = id;
     inbound.sender = DeviceId{"beta"};
     inbound.receiver = DeviceId{"local-1"};
-    inbound.file = FileMetadata{"cancel.bin", 16, std::string{}};
+    inbound.file = FileMetadata{"cancel.bin", 16, std::string{}, std::string{}};
     inbound.total = 16;
     inbound.state = TransferState::Negotiating;
     REQUIRE(stack.adapter.inject_transfer_started(inbound));
@@ -573,7 +573,7 @@ TEST_CASE("Transfer control commands route to the adapter with idempotent "
     inbound.id = id;
     inbound.sender = DeviceId{"beta"};
     inbound.receiver = DeviceId{"local-1"};
-    inbound.file = FileMetadata{"ctl.bin", 4, std::string{}};
+    inbound.file = FileMetadata{"ctl.bin", 4, std::string{}, std::string{}};
     inbound.total = 4;
     inbound.state = TransferState::Transferring;
     REQUIRE(stack.adapter.inject_transfer_started(inbound));
