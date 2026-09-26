@@ -443,6 +443,20 @@ target_link_libraries(test_transfer_send_path PRIVATE
 add_test(NAME test_transfer_send_path COMMAND test_transfer_send_path)
 set_tests_properties(test_transfer_send_path PROPERTIES LABELS "unit")
 
+# M4-05：接收侧与控制面单测（DEC-012/§7.1⑤——八相位路由在
+# test_heyaki_node_adapter；此处为接收链路/供源回退/终态幂等/控制命令，
+# DB 全量组合 + 网络无关）。
+add_executable(test_transfer_receive_path
+    unit/test_transfer_receive_path.cpp)
+target_compile_features(test_transfer_receive_path PRIVATE cxx_std_20)
+aki_apply_warnings(test_transfer_receive_path PRIVATE)
+target_link_libraries(test_transfer_receive_path PRIVATE
+    Catch2::Catch2WithMain
+    aki_app
+    aki_persistence)
+add_test(NAME test_transfer_receive_path COMMAND test_transfer_receive_path)
+set_tests_properties(test_transfer_receive_path PROPERTIES LABELS "unit")
+
 # M4-04：发送侧传输链路双节点回环（真实 Adapter push_file 接线 + Aki 归档；
 # 单用例二进制，[skip] 纪律沿 M3-05/M4-03；接收侧归 M4-05）。
 add_executable(test_transfer_send_loopback

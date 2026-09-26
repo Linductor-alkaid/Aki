@@ -198,6 +198,9 @@ DeviceIdentity make_local_device_identity(const LocalIdentity& identity,
 struct WritePathSink {
     std::shared_ptr<DatabaseWorkerControl> control;
     std::shared_ptr<FileStore> store;
+    // 接收根目录（M4-05，DEC-012①：complete 作业供源回退——heyaki 接收根
+    // 落盘文件；空 = 仅发送侧供源）。
+    std::string receive_dir;
     std::vector<std::future<void>> futures;
     std::uint64_t admitted = 0;
     std::uint64_t enqueue_rejected = 0;
@@ -257,7 +260,7 @@ private:
                         // 回写位（作业组自身幂等）。
                         jobs.push_back(
                             aki::persistence::make_transfer_complete_job(
-                                store, concrete.transfer.value));
+                                store, concrete.transfer.value, receive_dir));
                     } else {
                         // Failed/Cancelled：终态列更新 + .part 幂等删除
                         // （两个串行作业，顺序 = 接受顺序）。
@@ -339,10 +342,28 @@ int run_demo(const std::string& run_root) {
     // 3.5) Node/Runtime 装配（DEC-006 借用注入：borrowed Runtime + Node，
     //      EXEC-02 启动段纪律——恢复完成后、事件源接通前；LAN 发现观察管道
     //      随 M3-08 组合切换接入，本版本宿主 Node 仅常驻公告）。
+    // 接收根（M4-05，DEC-012 风险②）：配置在数据根内（同卷可 rename），根
+    // 逻辑名 inbox 与 Adapter push_root 对应；NodeConfig 要求目录存在，先于
+    // NodeSession 创建。
+    const std::string receive_root_name = "inbox";
+    const std::string receive_dir =
+        run_root + "/receive/" + receive_root_name;
+    {
+        std::error_code receive_ec;
+        std::filesystem::create_directories(receive_dir, receive_ec);
+        if (receive_ec) {
+            std::printf("[FATAL] receive root cannot be created: %s\n",
+                receive_ec.message().c_str());
+            return 2;
+        }
+    }
     std::printf("node session: creating (borrowed runtime)\n");
     auto node_session = std::make_unique<aki::heyaki::NodeSession>(
         aki::heyaki::NodeSession::create(executor_owner.executor(),
-            aki::heyaki::NodeSession::Options{.profile = &profile}));
+            aki::heyaki::NodeSession::Options{.profile = &profile,
+                .file_receive_roots = {::heyaki::FileRootConfig{
+                    .name = receive_root_name,
+                    .directory = receive_dir}}}));
     if (!node_session->has_lan_interfaces()) {
         std::printf(
             "node session: no LAN interface (presence idle this run)\n");
@@ -363,7 +384,7 @@ int run_demo(const std::string& run_root) {
     //    owner 上下文 = 主线程，单写者，RULE-02/EXEC-03）。
     // 全成员显式初始化：GCC -Wmissing-field-initializers（CI Linux -Werror）
     // 对省略尾随成员的聚合初始化告警（CI run 35905251211 实测；MSVC 不告警）。
-    WritePathSink sink{db, recovery.store, {}, 0, 0};
+    WritePathSink sink{db, recovery.store, receive_dir, {}, 0, 0};
     AppStateOwner state_owner{AppStateOwnerOptions{},
         app_state_from(recovery.state),
         [&sink](const AppStateUpdate& update) { sink(update); }};

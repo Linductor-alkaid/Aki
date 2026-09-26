@@ -89,6 +89,11 @@ public:
         ::heyaki::LanConfiguration lan_override = fast_lan_configuration();
         // 同一 executor 上多个借用 Runtime 时须互异（blocking worker 名唯一）。
         std::string worker_name = "heyaki-asio";
+        // 接收根配置（M4-05，DEC-012：组合根把接收根目录配置在数据根内，
+        // 如 <data_root>/receive/<root>，使接收侧合并同卷可 rename；根逻辑名
+        // 与对端 push_root 对应——Aki 默认单根 "inbox"）。空 = 不接收
+        //（对端 push 将被拒）。
+        std::vector<::heyaki::FileRootConfig> file_receive_roots = {};
     };
 
     // 前置：executor 已 Running（ExecutorOwner.initialize() 之后）。
@@ -134,7 +139,7 @@ public:
             .pairing_grant_ttl_milliseconds = 0U,
             .event_subscriber_queue_items = 0U,
             .event_max_subscriptions_per_peer = 0U,
-            .file_receive_roots = {},
+            .file_receive_roots = options.file_receive_roots,
             .file_max_peer_receive_bytes = 0U,
             .shell_profiles = {},
             .gateway_profiles = {},
@@ -337,16 +342,19 @@ public:
         return false;
     }
 
-    // DEC-006 映射 3：指纹确认 → pair_peer（scope 冻结 message.send）。
+    // DEC-006 映射 3：指纹确认 → pair_peer（scope：message.send + M4-05 起
+    // 文件推送独立 scope file.push:<root>，DEC-012⑥——缺省申请全集）。
     // 一次性结果经 set_pairing_observer 注册；false = 提交被拒（会话缺失/
     // 非 pairing_restricted/重复 pending，RULE-09 可见）。
     [[nodiscard]] bool pair_peer(const aki::device::DeviceId& peer,
-        const std::string& password) {
+        const std::string& password,
+        std::vector<std::string> scopes = {"message.send",
+            "file.push:inbox"}) {
         auto key = endpoint_key_of(peer);
         if (!key.has_value()) {
             return false;
         }
-        auto submitted = node_.pair_peer(*key, password, {"message.send"});
+        auto submitted = node_.pair_peer(*key, password, std::move(scopes));
         return submitted.has_value();
     }
 
@@ -572,6 +580,99 @@ public:
         auto pushed =
             node_.push_file(*key, root, logical_name, source_path, *wire_id);
         return pushed.has_value();
+    }
+
+    // 已建会话/目录中的对端设备（aki 规范形式；控制面遍历用，M4-05）。
+    [[nodiscard]] std::vector<aki::device::DeviceId> known_peers() const {
+        std::vector<aki::device::DeviceId> peers;
+        for (const auto& entry : node_.endpoints()) {
+            peers.push_back(aki::device::DeviceId{
+                ::heyaki::to_string(entry.key.device_id)});
+        }
+        for (const auto& session : node_.peer_sessions()) {
+            peers.push_back(aki::device::DeviceId{
+                ::heyaki::to_string(session.peer.device_id)});
+        }
+        return peers;
+    }
+
+    // 传输控制面（M4-05，DEC-006 映射 7）：pause/resume/cancel——TransferId
+    // 须规范形式；peer 无会话/传输不存在时 Result 失败 → false 可见
+    //（RULE-09）。取消为幂等语义。
+    [[nodiscard]] bool pause_file_transfer(const aki::device::DeviceId& peer,
+        const aki::transfer::TransferId& transfer_id) {
+        auto key = endpoint_key_of(peer);
+        auto wire_id = to_heyaki_transfer_id(transfer_id);
+        if (!key.has_value() || !wire_id.has_value()) {
+            return false;
+        }
+        return node_.pause_file_transfer(*key, *wire_id).has_value();
+    }
+
+    [[nodiscard]] bool resume_file_transfer(const aki::device::DeviceId& peer,
+        const aki::transfer::TransferId& transfer_id) {
+        auto key = endpoint_key_of(peer);
+        auto wire_id = to_heyaki_transfer_id(transfer_id);
+        if (!key.has_value() || !wire_id.has_value()) {
+            return false;
+        }
+        return node_.resume_file_transfer(*key, *wire_id).has_value();
+    }
+
+    [[nodiscard]] bool cancel_file_transfer(const aki::device::DeviceId& peer,
+        const aki::transfer::TransferId& transfer_id) {
+        auto key = endpoint_key_of(peer);
+        auto wire_id = to_heyaki_transfer_id(transfer_id);
+        if (!key.has_value() || !wire_id.has_value()) {
+            return false;
+        }
+        return node_.cancel_file_transfer(*key, *wire_id).has_value();
+    }
+
+    // ---- M4-05：文件事件观察面（DEC-006 映射 7/DEC-012④；aki/std 公开面）----
+    // phase/direction 为 heyaki 枚举的数值（八态映射语义在 Adapter 层，
+    // DEC-006 映射 7；数值不跨层解释——同 peer_sessions 观察面先例）。
+    // root/logical_name 为 wire 逻辑值（绝对路径由 Aki 依自身接收根配置推导）。
+    struct FileTransferEventView {
+        aki::transfer::TransferId transfer;
+        int direction = 0;  // FileTransferDirection 数值
+        int phase = 0;      // FileTransferPhase 数值
+        std::string root;
+        std::string logical_name;
+        std::uint64_t bytes_done = 0;
+        std::uint64_t bytes_total = 0;
+        std::string error;
+    };
+
+    // 文件事件观察注册（Node 上下文回调，消费方有界处理 + 投递，EXEC-02）。
+    void set_file_event_observer(
+        std::function<void(const aki::device::DeviceId& peer,
+            const FileTransferEventView& event)>
+            observer) {
+        node_.set_file_event_observer(
+            [observer = std::move(observer)](
+                const ::heyaki::DeviceEndpointKey& peer,
+                const ::heyaki::FileTransferEvent& event) {
+                if (!observer) {
+                    return;
+                }
+                FileTransferEventView view;
+                view.transfer =
+                    aki::transfer::TransferId{::heyaki::to_string(
+                        event.transfer_id)};
+                view.direction = static_cast<int>(event.direction);
+                view.phase = static_cast<int>(event.phase);
+                view.root = event.root;
+                view.logical_name = event.logical_name;
+                view.bytes_done = event.bytes_done;
+                view.bytes_total = event.bytes_total;
+                if (event.error.has_value()) {
+                    view.error = event.error->safe_detail();
+                }
+                observer(
+                    aki::device::DeviceId{::heyaki::to_string(peer.device_id)},
+                    view);
+            });
     }
 
     // 关闭（幂等）：Node::shutdown → Runtime::shutdown。borrowed 模式下

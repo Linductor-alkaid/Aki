@@ -157,6 +157,9 @@ public:
         if (sink_ == nullptr || transfer.id.empty()) {
             return false;
         }
+        // 入站传输同受控制面（M4-05：真实 Adapter 语义——对端推送的传输
+        // 亦经 pause/resume/cancel 控制，会话登记与出站对称）。
+        (void)transfer_sessions_.insert(transfer.id.value);
         return sink_->on_transfer_started(std::move(transfer));
     }
 
@@ -175,6 +178,14 @@ public:
             return false;
         }
         return sink_->on_transfer_completed(std::move(transfer), final_state);
+    }
+
+    // 传输暂停注入（M4-05，sink 第 11 方法）：对端驱动/本地暂停确认同入口。
+    bool inject_transfer_paused(aki::transfer::TransferId transfer) {
+        if (sink_ == nullptr || transfer.empty()) {
+            return false;
+        }
+        return sink_->on_transfer_paused(std::move(transfer));
     }
 
     bool inject_connection_path_changed(aki::device::DeviceId device,

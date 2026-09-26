@@ -49,6 +49,11 @@ public:
     // 迟到事件不得让已终结的传输回到活动状态（RULE-08，由应用层状态机拒绝）。
     virtual bool on_transfer_completed(aki::transfer::TransferId transfer,
         aki::transfer::TransferState final_state) = 0;
+    // 传输暂停投递面（M4-05，设计 §8.1/§7.1⑤；DEC-006 映射 7）：对端驱动
+    //（含断线自动暂停，可发生于接收侧）与本地暂停确认同此入口。映射
+    // UpsertTransfer(Paused)（不新增 AppEvent 主路径类型，状态经 Store 快照
+    // 可见）；发送会话侧同时抑制归档续接。
+    virtual bool on_transfer_paused(aki::transfer::TransferId transfer) = 0;
     virtual bool on_connection_path_changed(aki::device::DeviceId device,
         aki::device::ConnectionPath from, aki::device::ConnectionPath to) = 0;
 

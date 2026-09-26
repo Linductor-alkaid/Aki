@@ -30,6 +30,41 @@ bool is_terminal_state(TransferState state) noexcept {
         || state == TransferState::Cancelled;
 }
 
+// 接收根供源路径推导（M4-05，DEC-012①）：receive_dir + logical_name 段拼接。
+// 段有界校验（纵深防御——heyaki 侧 safe_logical_file_name 已拦）：拒绝空段/
+// 绝对路径 / `..` / 反斜杠；段数与总长有界（对齐 heyaki 逻辑名限制）。
+// 校验失败返回空串（作业按「供源缺失」明确失败，RULE-09 不静默）。
+[[nodiscard]] std::string receive_source_path(const std::string& receive_dir,
+    const std::string& logical_name) {
+    if (receive_dir.empty() || logical_name.empty()
+        || logical_name.size() > 512) {
+        return {};
+    }
+    std::filesystem::path resolved{receive_dir};
+    std::size_t segments = 0;
+    std::size_t start = 0;
+    while (start <= logical_name.size()) {
+        const auto end = logical_name.find('/', start);
+        const std::string segment =
+            logical_name.substr(start, end == std::string::npos
+                    ? std::string::npos
+                    : end - start);
+        if (segment.empty() || segment == "." || segment == ".."
+            || segment.find('\\') != std::string::npos) {
+            return {};
+        }
+        resolved /= segment;
+        if (++segments > 32) {
+            return {};
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+    return resolved.string();
+}
+
 }  // namespace
 
 FileStore::FileStore(std::string data_root)
@@ -126,7 +161,7 @@ bool FileStore::part_exists(const std::string& transfer_id) const {
 }
 
 void FileStore::complete_transfer(TransferRepository& transfers,
-    const std::string& transfer_id) const {
+    const std::string& transfer_id, const std::string& receive_dir) const {
     const auto row = transfers.find(aki::transfer::TransferId{transfer_id});
     if (!row.has_value()) {
         throw std::runtime_error(
@@ -145,11 +180,23 @@ void FileStore::complete_transfer(TransferRepository& transfers,
         return;
     }
 
+    // 供源解析（M4-05 参数化，DEC-012①）：.part → 接收根推导路径 →
+    // final 恢复分支 → 明确失败。
+    std::string receive_abs;
+    if (!receive_dir.empty()) {
+        receive_abs = receive_source_path(receive_dir, row->file.name);
+    }
     const bool part_exists_now = std::filesystem::exists(part_abs);
-    if (!part_exists_now && !std::filesystem::exists(final_abs)) {
-        // .part 缺失且无法从最终文件恢复：明确失败（RULE-09，不伪造成功）。
-        throw std::runtime_error("FileStore: .part missing for transfer '"
-            + transfer_id + "' (cannot complete): " + part_abs);
+    const bool receive_exists_now =
+        !receive_abs.empty() && !part_exists_now
+        && std::filesystem::exists(receive_abs);
+    if (!part_exists_now && !receive_exists_now
+        && !std::filesystem::exists(final_abs)) {
+        // 全部供源缺失且无法从最终文件恢复：明确失败（RULE-09，不伪造成功）。
+        throw std::runtime_error("FileStore: no source for transfer '"
+            + transfer_id + "' (cannot complete): part=" + part_abs
+            + (receive_abs.empty() ? std::string{}
+                                   : " receive=" + receive_abs));
     }
 
     std::error_code ec;
@@ -161,14 +208,16 @@ void FileStore::complete_transfer(TransferRepository& transfers,
 
     std::string sha_hex;
     std::uint64_t size_bytes = 0;
-    if (part_exists_now) {
+    if (part_exists_now || receive_exists_now) {
         // 流式 SHA-256 + 复制到临时名，随后原子改名（同卷）。
+        const std::string source_abs =
+            part_exists_now ? part_abs : receive_abs;
         const std::string tmp_final = final_abs + ".tmp";
-        std::ifstream in(part_abs, std::ios::binary);
+        std::ifstream in(source_abs, std::ios::binary);
         std::ofstream out(tmp_final, std::ios::binary | std::ios::trunc);
         if (!in.is_open() || !out.is_open()) {
             throw std::runtime_error("FileStore: cannot open streams for '"
-                + part_abs + "' -> '" + tmp_final + "'");
+                + source_abs + "' -> '" + tmp_final + "'");
         }
         Sha256 hash;
         std::vector<char> buffer(kStreamChunkSize);
@@ -199,7 +248,9 @@ void FileStore::complete_transfer(TransferRepository& transfers,
             throw std::runtime_error("FileStore: rename failed for '"
                 + tmp_final + "' -> '" + final_abs + "': " + ec.message());
         }
-        std::filesystem::remove(part_abs, ec);  // 改名成功后清理 .part
+        // 供源清理折进同一作业（DEC-012①：保持 CompleteTransfer=1 作业）：
+        // .part 清理 / 接收根原件删除（跨卷拷贝语义的删除半边）。
+        std::filesystem::remove(source_abs, ec);
     } else {
         // 崩溃恢复：改名已发生、回写未完成 → 从最终文件补算哈希回写。
         std::ifstream in(final_abs, std::ios::binary);

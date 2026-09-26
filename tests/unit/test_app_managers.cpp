@@ -1,7 +1,7 @@
 // M1-05：Device / Conversation / Message / Transfer Manager 骨架测试（DEC-008）。
 //
 // 覆盖（验收标准 ①②，设计第 8.3 节契约）：
-//   - 10 类 Sink 方法（M3-05 DEC-006 映射 4 新增失败面 send_failed，不产
+//   - 11 类 Sink 方法（M3-05 失败面 send_failed 与 M4-05 暂停面 transfer_paused，均不产
 //     主路径事件）经 RouterSink 路由 → Manager 排空 → AppState 快照与必达
 //     事件主路径 FIFO；connected/disconnected 扇出（DM presence + CM 会话推导，
 //     主路径事件只投递一次）；ensure_conversation 显式建会话；
@@ -442,7 +442,7 @@ void drain_until_idle(AppStateOwner& owner) {
 // ---- 用例 1：10 类 Sink 方法路由（失败面不产主路径事件）、Store 归属、
 // ---- 扇出与 FIFO（DOD-02 正常完成）----
 
-TEST_CASE("RouterSink routes the ten sink methods to per-domain stores in FIFO order",
+TEST_CASE("RouterSink routes the eleven sink methods to per-domain stores in FIFO order",
     "[unit][managers][dod02]") {
     AppStack stack;
     auto& owner = stack.state_owner;
@@ -584,16 +584,50 @@ TEST_CASE("RouterSink routes the ten sink methods to per-domain stores in FIFO o
         REQUIRE(seen);
     }
 
-    // ⑦ transfer started/progress/completed（合法边 Transferring -> Completed）。
-    REQUIRE(fake.inject_transfer_started(make_transfer("t-1", TransferState::Transferring)));
+    // ⑦ transfer 全相位（M4-05：暂停面 + Transferring↔Paused 合法链 +
+    //    Completed 终态）。首事件 Negotiating（接收行建行形态，DEC-012②）
+    //    → 首个进度推进 Transferring → 暂停（第 11 方法，无主路径事件）→
+    //    恢复（进度事件推进回 Transferring）→ Completed。
+    REQUIRE(fake.inject_transfer_started(make_transfer("t-1", TransferState::Negotiating)));
     settle();
+    REQUIRE(fake.inject_transfer_started(make_transfer("t-1", TransferState::Negotiating)));
+    settle();  // 同态重复：幂等去重（无新事件/更新）
     REQUIRE(fake.inject_transfer_progress(TransferId{"t-1"}, 512, 1024));
     settle();
     {
         executor::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.size() == 1);
+        REQUIRE(snapshot.value.transfers.transfers.front().state
+            == TransferState::Transferring);
         REQUIRE(snapshot.value.transfers.transfers.front().transferred == 512);
+    }
+    // 暂停（sink 第 11 方法）：UpsertTransfer(Paused)，无主路径事件（§8.1）。
+    REQUIRE(fake.inject_transfer_paused(TransferId{"t-1"}));
+    settle();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.transfers.transfers.front().state
+            == TransferState::Paused);
+    }
+    REQUIRE(fake.inject_transfer_paused(TransferId{"t-1"}));
+    settle();  // 同态重复：幂等
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.transfers.transfers.front().state
+            == TransferState::Paused);
+    }
+    // 恢复：进度事件把行自 Paused 推进回 Transferring（§7.1⑤）。
+    REQUIRE(fake.inject_transfer_progress(TransferId{"t-1"}, 768, 1024));
+    settle();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.transfers.transfers.front().state
+            == TransferState::Transferring);
+        REQUIRE(snapshot.value.transfers.transfers.front().transferred == 768);
     }
     REQUIRE(fake.inject_transfer_completed(TransferId{"t-1"}, TransferState::Completed));
     settle();
@@ -621,6 +655,7 @@ TEST_CASE("RouterSink routes the ten sink methods to per-domain stores in FIFO o
         [](const AppEvent& e) { return std::holds_alternative<MessageReceivedEvent>(e.payload); },
         [](const AppEvent& e) { return std::holds_alternative<MessageDeliveredEvent>(e.payload); },
         [](const AppEvent& e) { return std::holds_alternative<TransferStartedEvent>(e.payload); },
+        [](const AppEvent& e) { return std::holds_alternative<TransferProgressEvent>(e.payload); },
         [](const AppEvent& e) { return std::holds_alternative<TransferProgressEvent>(e.payload); },
         [](const AppEvent& e) { return std::holds_alternative<TransferCompletedEvent>(e.payload); },
         [](const AppEvent& e) { return std::holds_alternative<ConnectionPathChangedEvent>(e.payload); },

@@ -47,6 +47,8 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -116,6 +118,14 @@ public:
             [this](const aki::device::DeviceId& peer,
                 const aki::conversation::MessageId& id,
                 const std::string& event) { deliver_ack(peer, id, event); });
+        // 文件事件观察（M4-05，DEC-006 映射 7/DEC-012④）：Node 上下文回调 →
+        // 八相位映射分发（EXEC-02 有界校验 + 投递）。析构中和（handler 捕获
+        // this，与消息 handler 同纪律）。
+        options_.session->set_file_event_observer(
+            [this](const aki::device::DeviceId& peer,
+                const NodeSession::FileTransferEventView& event) {
+                deliver_file_event(peer, event);
+            });
     }
 
     HeyakiNodeAdapter(const HeyakiNodeAdapter&) = delete;
@@ -132,6 +142,7 @@ public:
         }
         if (options_.session != nullptr) {
             options_.session->set_message_handlers({}, {});
+            options_.session->set_file_event_observer(nullptr);
         }
     }
 
@@ -279,22 +290,33 @@ public:
             to, options_.push_root, file.name, source_path, transfer_id);
     }
 
+    // ---- 传输出站（M4-05 接线，DEC-006 映射 7）：NodeSession 控制面透传 ----
+
     [[nodiscard]] bool pause_transfer(
         const aki::transfer::TransferId& transfer_id) override {
-        (void)transfer_id;
-        return false;  // M4-05
+        return control_file_transfer(
+            transfer_id, [this](const aki::device::DeviceId& peer,
+                                const aki::transfer::TransferId& id) {
+                return options_.session->pause_file_transfer(peer, id);
+            });
     }
 
     [[nodiscard]] bool resume_transfer(
         const aki::transfer::TransferId& transfer_id) override {
-        (void)transfer_id;
-        return false;  // M4-05
+        return control_file_transfer(
+            transfer_id, [this](const aki::device::DeviceId& peer,
+                                const aki::transfer::TransferId& id) {
+                return options_.session->resume_file_transfer(peer, id);
+            });
     }
 
     [[nodiscard]] bool cancel_transfer(
         const aki::transfer::TransferId& transfer_id) override {
-        (void)transfer_id;
-        return false;  // M4-05
+        return control_file_transfer(
+            transfer_id, [this](const aki::device::DeviceId& peer,
+                                const aki::transfer::TransferId& id) {
+                return options_.session->cancel_file_transfer(peer, id);
+            });
     }
 
     // ---- 观测（EXEC-06）----
@@ -313,7 +335,165 @@ public:
         return inbound_rejections_.load();
     }
 
+    // ---- 文件事件入站分发（M4-05，DEC-006 映射 7/DEC-012④ 修订；EXEC-02：
+    // 有界校验 + 投递——八相位映射为纯翻译，业务推进在 Manager 上下文）----
+    //
+    // 相位映射（§7.1⑤ 修订，按 pinned 源定论）：`probing`/`offered` 为
+    // **发送端专属事件**（file_service.cpp 仅发送侧发出 :210/:252/:604）→
+    // on_transfer_started（发送行——行由 StartTransferWork 先建、TM 以泵内
+    // 已知行缓存合并推进，本处构造的 sender/receiver 不参与；行缺失时补建
+    // sender=local）。**接收端首个事件是 `transferring`**（:1147/:1368，
+    // 接收侧无 probing/offered）：未见 started 的 id 由首个 transferring/
+    // verifying 承担接收行建行（on_transfer_started，Negotiating 行：
+    // sender=peer、receiver=local、file.name=**剥根段** logical_name、
+    // size=bytes_total）+ on_transfer_progress；后续 transferring/verifying →
+    // on_transfer_progress。判向**不经 direction**（pinned 源：接收侧 push
+    // 事件 direction 恒为 push :1147/:1368/:1441、cancelled 恒为 pull :380
+    // ——DEC-012 风险④成立）：新行仅由入站 transferring/verifying 产生（恒
+    // 接收行），probing/offered 恒发送行。
+
+    void deliver_file_event(const aki::device::DeviceId& peer,
+        const NodeSession::FileTransferEventView& event) {
+        if (sink_ == nullptr) {
+            return;
+        }
+        if (event.transfer.empty()) {
+            file_event_rejections_.fetch_add(1);
+            return;  // 有界校验（EXEC-02）
+        }
+        switch (static_cast<::heyaki::FileTransferPhase>(event.phase)) {
+            case ::heyaki::FileTransferPhase::probing:
+            case ::heyaki::FileTransferPhase::offered: {
+                if (event.logical_name.empty()
+                    || event.logical_name.size()
+                        > ::heyaki::max_logical_name_bytes) {
+                    file_event_rejections_.fetch_add(1);
+                    return;  // 有界校验（建行载荷）
+                }
+                aki::transfer::Transfer row;
+                row.id = event.transfer;
+                row.file = aki::transfer::FileMetadata{event.logical_name,
+                    event.bytes_total, std::string{}, std::string{}};
+                row.transferred = event.bytes_done;
+                row.total = event.bytes_total;
+                row.state = aki::transfer::TransferState::Negotiating;
+                row.sender = local_id_;
+                row.receiver = peer;
+                if (sink_->on_transfer_started(std::move(row))) {
+                    note_started(event.transfer.value);
+                }
+                return;
+            }
+            case ::heyaki::FileTransferPhase::transferring:
+            case ::heyaki::FileTransferPhase::verifying: {
+                // 接收侧首个事件即 transferring（pinned 源）：未见 started 的
+                // id 由本事件建行（剥根段 logical_name——wire manifest
+                // logical_name = join(root, name) :556，heyaki 落盘为剥根段
+                // 相对名 :1075 而事件携带含根前缀 :1147/:1368/:1441，行名须
+                // 与供源推导（file_store receive_source_path）一致）。
+                if (!started_seen(event.transfer.value)) {
+                    if (event.logical_name.empty()
+                        || event.logical_name.size()
+                            > ::heyaki::max_logical_name_bytes) {
+                        file_event_rejections_.fetch_add(1);
+                        return;  // 有界校验（建行载荷）
+                    }
+                    aki::transfer::Transfer row;
+                    row.id = event.transfer;
+                    row.file =
+                        aki::transfer::FileMetadata{strip_wire_root(
+                                                         event.root,
+                                                         event.logical_name),
+                            event.bytes_total, std::string{}, std::string{}};
+                    row.transferred = event.bytes_done;
+                    row.total = event.bytes_total;
+                    row.state = aki::transfer::TransferState::Negotiating;
+                    row.sender = peer;
+                    row.receiver = local_id_;  // 接收行建行（DEC-012②）
+                    if (sink_->on_transfer_started(std::move(row))) {
+                        note_started(event.transfer.value);
+                    }
+                }
+                (void)sink_->on_transfer_progress(
+                    event.transfer, event.bytes_done, event.bytes_total);
+                return;
+            }
+            case ::heyaki::FileTransferPhase::paused:
+                (void)sink_->on_transfer_paused(event.transfer);
+                return;
+            case ::heyaki::FileTransferPhase::committed:
+                release_started(event.transfer.value);
+                (void)sink_->on_transfer_completed(
+                    event.transfer, aki::transfer::TransferState::Completed);
+                return;
+            case ::heyaki::FileTransferPhase::failed:
+                release_started(event.transfer.value);
+                (void)sink_->on_transfer_completed(
+                    event.transfer, aki::transfer::TransferState::Failed);
+                return;
+            case ::heyaki::FileTransferPhase::cancelled:
+                // 接收侧 cancelled 恒为 pull（:380）——判向不经 direction，
+                // 终态事件不建行（行缺失由 owner 拒绝可见，已知边角）。
+                release_started(event.transfer.value);
+                (void)sink_->on_transfer_completed(
+                    event.transfer, aki::transfer::TransferState::Cancelled);
+                return;
+        }
+        file_event_rejections_.fetch_add(1);  // 未知相位：可见拒绝
+    }
+
+    // 文件事件有界拒绝计数（M4-05，RULE-09）。
+    [[nodiscard]] std::uint64_t file_event_rejections() const noexcept {
+        return file_event_rejections_.load();
+    }
+
+    // started 记名簿容量溢出（接收建行跳过、计数可见——RULE-09）。
+    [[nodiscard]] std::uint64_t started_registry_overflows() const noexcept {
+        return started_registry_overflows_.load();
+    }
+
 private:
+    // started 记名簿（M4-05 修订）：已向 sink 投递 started 的 TransferId——
+    // 接收侧首个 transferring/verifying 据此一次性建行。容量有界（终态移除；
+    // 满即跳过建行、计数可见——进度对未知行被 owner 拒绝可见，RULE-09）。
+    // deliver_file_event 在 Node 上下文触发，互斥保护跨上下文安全。
+    static constexpr std::size_t kMaxStartedIds = 1024;
+
+    [[nodiscard]] bool started_seen(const std::string& id) {
+        std::lock_guard<std::mutex> guard(started_mutex_);
+        return started_ids_.count(id) != 0;
+    }
+
+    void note_started(const std::string& id) {
+        std::lock_guard<std::mutex> guard(started_mutex_);
+        if (started_ids_.size() < kMaxStartedIds) {
+            started_ids_.insert(id);
+        } else {
+            started_registry_overflows_.fetch_add(1);
+        }
+    }
+
+    void release_started(const std::string& id) {
+        std::lock_guard<std::mutex> guard(started_mutex_);
+        (void)started_ids_.erase(id);
+    }
+
+    // wire 根段剥离（§7.1⑤ 修订）：wire manifest logical_name =
+    // join(root, name)（file_service.cpp :556），heyaki 落盘/接收根相对名为
+    // 剥根段形态（:1075），而事件携带含根前缀（:1147/:1368/:1441）——行名
+    // 与供源推导（file_store receive_source_path）须用剥根段相对名。前缀
+    // 不符（发送端 rootless 事件）原样返回。
+    [[nodiscard]] static std::string strip_wire_root(
+        const std::string& root, const std::string& logical_name) {
+        if (root.empty() || logical_name.size() <= root.size() + 1U) {
+            return logical_name;
+        }
+        if (logical_name.compare(0, root.size() + 1U, root + "/") != 0) {
+            return logical_name;
+        }
+        return logical_name.substr(root.size() + 1U);
+    }
+
     Options options_;
     aki::device::DeviceId local_id_;
     HeyakiAdapterSink* sink_ = nullptr;
@@ -322,6 +502,29 @@ private:
     // 跨上下文计数：入站回调在 Node 上下文、读取在宿主/测试上下文（EXEC-06
     // 可观测；域计数不复刻 Executor 监控）。
     std::atomic<std::uint64_t> inbound_rejections_{0};
+    std::atomic<std::uint64_t> file_event_rejections_{0};
+    std::atomic<std::uint64_t> started_registry_overflows_{0};
+    std::mutex started_mutex_;
+    std::set<std::string> started_ids_;
+
+    // 传输控制面公共路径（M4-05）：TransferId 规范转换 + 对已建文件会话的
+    // 对端遍历尝试（控制 SPI 无 peer 参数；单一活跃对端为主用形态，多对端
+    // 同 id 冲突由 TransferId 全局唯一性排除）；任一失败 admission false
+    // 可见（RULE-09）。
+    [[nodiscard]] bool control_file_transfer(
+        const aki::transfer::TransferId& transfer_id,
+        const std::function<bool(const aki::device::DeviceId&,
+            const aki::transfer::TransferId&)>& invoke) {
+        if (transfer_id.empty()) {
+            return false;  // 有界校验（EXEC-02 出站面）
+        }
+        for (const auto& peer : options_.session->known_peers()) {
+            if (invoke(peer, transfer_id)) {
+                return true;
+            }
+        }
+        return false;
+    }
 };
 
 // SPI 同接口编译期断言（验收 ③：Fake 与真实 Adapter 同一接口契约；

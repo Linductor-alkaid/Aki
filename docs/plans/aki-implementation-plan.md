@@ -294,6 +294,31 @@
   debug/release 全量 ctest 35/35 零回归，新/改二进制随机序各 8 连跑稳定；
   hash-first 延迟实测登记（64MiB ~1.5s 无优化探针量级）。详见 M4 里程碑
   文档 M4-04 验证记录 2026-09-26 条目。
+- 2026-09-26：`M4-05` 完成（接收侧与暂停/恢复/取消，`SCOPE-08`）：调研结论
+  落档 [DEC-012](../decisions/DEC-012-receive-merge-bearing.md)（Accepted——
+  接收侧合并折叠进既有 M2-06 终态作业组（供源参数化 `.part` → 接收根回退 +
+  原件同作业删除，仍经 DatabaseWorker；不上 transfer-io/不新增 worker），
+  接收侧无归档相位/终态闸门，stored_sha256 对账由消费者执行，配对 scope 扩展
+  {message.send, file.push:<root>}——DEC-006 映射 3 增补；DEC-009 复核
+  n=2 维持）；设计 §7.1①③④/§8.1/§8.3（路由表 11 方法）/§11.1④ 回填。
+  实现：sink 第 11 方法 on_transfer_paused（SPI/Fake inject/RouterSink→TM，
+  不新增 AppEvent 主路径类型）；NodeSession file_receive_roots +
+  set_file_event_observer 包装（aki/std 面）+ pause/resume/cancel_file_transfer
+  + pair_peer scopes 参数；真实 Adapter deliver_file_event 八相位映射
+  （probing/offered→started 建行、transferring/verifying→progress、paused→
+  第 11 方法、committed/failed/cancelled→终态；出入站 direction 判别 +
+  file_event_rejections 可观测）+ pause/resume/cancel 接线（known_peers 遍历）
+  + 析构中和 observer；TM 已知行缓存（同态去重/状态推进/paused 整行
+  upsert/终态清理）；FileStore complete_transfer 供源参数化（段拼接有界
+  校验）；组合根接收根（<data_root>/receive/inbox）+ WritePathSink 供源。
+  测试：八相位路由单测（含出站方向/有界拒绝）、RouterSink 11 方法 FIFO
+  （暂停无事件断言 + Transferring↔Paused 合法链）、新建
+  test_transfer_receive_path 4 用例（接收合并多段名 + stored_* 回写 + 原件
+  同作业删除 + 重启一致、供源回退明确失败可见、Failed/Cancelled 幂等删除 +
+  RULE-08 迟到不复活、控制命令路径）；发送回环扩展 B 侧接收根与 committed
+  观察（防火墙 [skip] 降级沿既定纪律）；debug/release 全量 ctest 36/36，
+  新/改二进制随机序各 8 连跑稳定。详见 M4 里程碑文档 M4-05 验证记录
+  2026-09-26 条目。
 
 ## 交付边界
 
@@ -415,7 +440,12 @@ TransferState 正交生命周期 + TransferId 消费侧 join + 发送侧准入�
 长任务）+ 专用 `aki.transfer-io` blocking worker 逐块续接（每会话单飞）+ 进度
 最新槽聚合（每排空至多一个 UpdateTransferProgress）+ 终态闸门（Completed 等
 归档完成）+ hash-first 消息排序 + M4-02 组件收口删除 + TransferId 规范生成
-入口定案））。
+入口定案）、[DEC-012](../decisions/DEC-012-receive-merge-bearing.md)（2026-09-26，
+接收侧合并承载与 wire 事件路由——接收合并折叠进既有 M2-06 终态作业组供源
+参数化（.part → 接收根回退，原件删除同作业，仍经 DatabaseWorker 通道）、
+接收侧无归档相位/终态闸门/接收会话、八相位→Aki 状态映射与 sink 第 11 方法
+on_transfer_paused 落地、stored_sha256 对账策略（作业内不对账，消费者执行）、
+配对 scope 扩展 {message.send, file.push:<root>}；DEC-009 复核 n=2 维持））。
 
 ## 跨里程碑通用完成定义
 

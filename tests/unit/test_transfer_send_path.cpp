@@ -177,6 +177,9 @@ struct TransferOnlySink final : aki::heyaki::HeyakiAdapterSink {
         return transfers->enqueue_transfer_completed(
             std::move(transfer), final_state);
     }
+    bool on_transfer_paused(aki::transfer::TransferId transfer) override {
+        return transfers->enqueue_transfer_paused(std::move(transfer));
+    }
     bool on_connection_path_changed(DeviceId, aki::device::ConnectionPath,
         aki::device::ConnectionPath) override {
         return true;

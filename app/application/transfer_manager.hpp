@@ -95,6 +95,11 @@ struct CancelTransferWork {
     aki::transfer::TransferId transfer_id;
 };
 
+// 传输暂停（M4-05，§8.1 第 11 方法/DEC-012④）：对端驱动/本地暂停确认。
+struct TransferPausedWork {
+    aki::transfer::TransferId transfer;
+};
+
 // IO 完成事件（worker 线程 → 本泵收件箱的有界投递面）。
 struct IoEventWork {
     aki::transfer::TransferIoEvent event;
@@ -121,6 +126,7 @@ using TransferManagerWork = std::variant<TransferStartedWork,
     PauseTransferWork,
     ResumeTransferWork,
     CancelTransferWork,
+    TransferPausedWork,
     IoEventWork,
     ProgressFlushWork,
     CancelAllSessionsWork,
@@ -195,6 +201,13 @@ public:
         aki::transfer::TransferState final_state) {
         return pump_.enqueue(
             TransferCompletedWork{std::move(transfer), final_state});
+    }
+
+    // 传输暂停（M4-05）：UpsertTransfer(Paused) 经已知行缓存承载；发送会话
+    // 同时抑制归档续接（对端驱动暂停，§7.1①）。
+    [[nodiscard]] bool enqueue_transfer_paused(
+        aki::transfer::TransferId transfer) {
+        return pump_.enqueue(TransferPausedWork{std::move(transfer)});
     }
 
     // ---- 本域出站操作（传输四接口，设计第 7/8.1 节）----
@@ -322,6 +335,33 @@ private:
         if (work.transfer.id.empty()) {
             return false;
         }
+        // 已知行（发送行/已建入站行）：同态重复幂等去重（wire probing/offered
+        // 重复事件不重放主路径事件）；状态推进（如 Queued → Negotiating）以
+        // 已知行数据合并承载（不覆盖既有 metadata，DEC-012④）。
+        auto known = known_rows_.find(work.transfer.id.value);
+        if (known != known_rows_.end()) {
+            if (known->second.state == work.transfer.state) {
+                return true;  // 同态重复：幂等去重（无新事件/更新）
+            }
+            if (aki::transfer::can_transition(known->second.state,
+                    work.transfer.state)) {
+                aki::transfer::Transfer advanced = known->second;
+                advanced.state = work.transfer.state;
+                advanced.transferred = work.transfer.transferred;
+                advanced.total = work.transfer.total;
+                const bool posted =
+                    post_event(TransferStartedEvent{advanced});
+                const bool applied =
+                    state_owner_.submit_update(UpsertTransfer{advanced});
+                if (applied) {
+                    known->second = advanced;
+                }
+                return posted && applied;
+            }
+            // 非法边（如终态后迟到 started）：交由 owner 状态机拒绝可见。
+        } else {
+            known_rows_.emplace(work.transfer.id.value, work.transfer);
+        }
         const bool posted = post_event(TransferStartedEvent{work.transfer});
         const bool applied = state_owner_.submit_update(UpsertTransfer{work.transfer});
         return posted && applied;
@@ -333,7 +373,34 @@ private:
         }
         auto it = sessions_.find(work.transfer.value);
         if (it == sessions_.end()) {
-            // 非会话路径（inject/wire 直达）：保持既有逐条语义。
+            // 非会话路径（入站 wire/inject 直达，M4-05）：首个进度事件把行
+            // 自 Negotiating/Paused 推进到 Transferring（§7.1⑤——整行 upsert
+            // 承载状态+进度，已知行数据合并）；已在 Transferring 时为部分列
+            // 更新。未知行不建行（UpdateTransferProgress 不建行，DEC-012②）。
+            auto known = known_rows_.find(work.transfer.value);
+            if (known != known_rows_.end()
+                && (known->second.state
+                        == aki::transfer::TransferState::Negotiating
+                    || known->second.state
+                        == aki::transfer::TransferState::Paused)) {
+                aki::transfer::Transfer advanced = known->second;
+                advanced.state = aki::transfer::TransferState::Transferring;
+                advanced.transferred = work.transferred;
+                advanced.total = work.total;
+                const bool posted = post_event(
+                    TransferProgressEvent{work.transfer, work.transferred,
+                        work.total});
+                const bool applied =
+                    state_owner_.submit_update(UpsertTransfer{advanced});
+                if (applied) {
+                    known->second = advanced;
+                }
+                return posted && applied;
+            }
+            if (known != known_rows_.end()) {
+                known->second.transferred = work.transferred;
+                known->second.total = work.total;
+            }
             const bool posted = post_event(
                 TransferProgressEvent{work.transfer, work.transferred, work.total});
             const bool applied = state_owner_.submit_update(
@@ -400,9 +467,10 @@ private:
             transfer.state = aki::transfer::TransferState::Failed;
             return state_owner_.submit_update(UpsertTransfer{std::move(transfer)});
         }
-        if (!state_owner_.submit_update(UpsertTransfer{std::move(transfer)})) {
+        if (!state_owner_.submit_update(UpsertTransfer{transfer})) {
             return false;  // 本地记录被拒：不建会话（admission 失败可见）。
         }
+        known_rows_[work.transfer_id.value] = transfer;  // 发送行建档（M4-05）
         SendSession session;
         session.has_io = options_.io != nullptr;
         if (options_.io != nullptr) {
@@ -464,6 +532,46 @@ private:
         session_count_.store(static_cast<int>(sessions_.size()));
         cancelled_sessions_.fetch_add(1);
         return true;
+    }
+
+    bool handle(TransferPausedWork& work) {
+        if (work.transfer.empty()) {
+            return false;
+        }
+        // 发送会话：抑制归档续接（对端驱动暂停，§7.1①；本地暂停命令在
+        // handle(PauseTransferWork) 已置位，此处幂等）。
+        auto session = sessions_.find(work.transfer.value);
+        if (session != sessions_.end()) {
+            session->second.paused = true;
+        }
+        // 整行 upsert（Paused）：已知行缓存承载（§7.1②——状态推进经
+        // UpsertTransfer；不新增 AppEvent 主路径类型）。
+        auto known = known_rows_.find(work.transfer.value);
+        if (known == known_rows_.end()) {
+            // 未知行的暂停（迟到/无行）：状态机将拒绝可见——构造最小行交由
+            // owner 拒绝（RULE-09），不静默。
+            aki::transfer::Transfer row;
+            row.id = work.transfer;
+            row.state = aki::transfer::TransferState::Paused;
+            return state_owner_.submit_update(UpsertTransfer{row});
+        }
+        if (known->second.state == aki::transfer::TransferState::Paused) {
+            return true;  // 同态重复：幂等
+        }
+        if (!aki::transfer::can_transition(known->second.state,
+                aki::transfer::TransferState::Paused)) {
+            // 非法边（终态后迟到暂停）：交由 owner 状态机拒绝可见。
+            aki::transfer::Transfer rejected = known->second;
+            rejected.state = aki::transfer::TransferState::Paused;
+            return state_owner_.submit_update(UpsertTransfer{rejected});
+        }
+        aki::transfer::Transfer paused = known->second;
+        paused.state = aki::transfer::TransferState::Paused;
+        const bool applied = state_owner_.submit_update(UpsertTransfer{paused});
+        if (applied) {
+            known->second = paused;
+        }
+        return applied;
     }
 
     bool handle(IoEventWork& work) {
@@ -613,6 +721,7 @@ private:
 
     // 终态投递（事件 + CompleteTransfer；held 放行与直达共用出口）。
     bool deliver_terminal(const TransferCompletedWork& work) {
+        known_rows_.erase(work.transfer.value);  // 终态：行缓存清理（M4-05）
         const bool posted =
             post_event(TransferCompletedEvent{work.transfer, work.final_state});
         const bool applied = state_owner_.submit_update(
@@ -664,6 +773,10 @@ private:
     AppStateOwner& state_owner_;
     aki::heyaki::HeyakiAdapter& adapter_;
     std::map<std::string, SendSession> sessions_;  // 仅排空上下文访问。
+    // 已知传输行缓存（仅排空上下文；M4-05）：入站 started 建档与发送行建档
+    // 的行数据来源——paused 的整行 upsert 与 progress 的状态推进
+    //（Negotiating/Paused → Transferring）经它构造；终态清理。
+    std::map<std::string, aki::transfer::Transfer> known_rows_;
     std::atomic<int> session_count_{0};            // 跨上下文诊断镜像。
     std::atomic<std::uint64_t> cancelled_sessions_{0};
     std::atomic<std::uint64_t> late_io_events_{0};

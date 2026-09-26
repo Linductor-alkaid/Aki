@@ -334,9 +334,15 @@ TM 泵，EXEC-02 既有路径），Aki 侧归档由 IO 作业完成事件驱动�
 于会话表（`EXEC-07` 语义），有界收件箱 + 排空泵沿 DEC-008 模式。发送侧链路：
 `start_file_transfer` → heyaki `push_file`（wire 侧 heyaki 自读源文件）→
 文件观察事件 → typed 更新；Aki 侧归档拷贝 `source → files/tmp/<id>.part`
-经专用 transfer IO worker 分块承载（见 ③）。接收侧：对端
+经专用 transfer IO worker 分块承载（见 ③）。接收侧（M4-05 落地，
+[DEC-012](../decisions/DEC-012-receive-merge-bearing.md)）：对端
 push 的分块由 heyaki 接收根落盘，`Committed` 事件后 Aki 从接收根合并到
-`DEC-004` 存储布局（M4-05 接线）。暂停/恢复：`pause_file_transfer`/
+`DEC-004` 存储布局（合并承载见 ③/§11.1④——经 DatabaseWorker 终态作业组
+供源参数化，不上 transfer IO worker）；接收侧无 Aki 归档相位、无终态闸门、
+无接收会话（wire 终态直达 `CompleteTransfer`），行由入站首个状态事件建行
+（`file.name`=wire `logical_name`、`size`=`bytes_total`、sender=peer、
+receiver=local），入站/出站判别以「无发送会话 / receiver==local」为准。
+暂停/恢复：`pause_file_transfer`/
 `resume_file_transfer` 驱动状态机 `Transferring ↔ Paused`（wire 侧 +
 归档续接抑制/放行）；heyaki 侧分块进度保持（断点续传），
 Aki 侧 `.part` 与已落库进度保持。取消：`cancel_file_transfer` →
@@ -384,6 +390,12 @@ DatabaseWorker 通道，批上限维持 64×2≤256 不变、drain 预算（2s�
 延续在泵上下文触发；`push_file` 不等 hash（wire 完整性是 heyaki BLAKE3
 职责）——大文件的消息可见延迟 = hash 单遍时长；归档 hash 失败时延续以空
 hash 触发、调用方不发消息，wire 侧自行终结。
+**接收侧承载（M4-05 定案，[DEC-012](../decisions/DEC-012-receive-merge-bearing.md)）**：
+接收侧合并不上 transfer IO worker、不新增 worker——扩展现有 M2-06 终态
+作业组的供源（见 ④/§11.1④），仍整体经 DatabaseWorker 通道；接收侧无 Aki
+归档相位、无终态闸门（无 SendSession 的 wire 终态直达即为正确形态）；
+`.part` 幂等删除作业维持现状（接收侧无 `.part` 时幂等 no-op）。TM 的
+flush/IO 归零语义对接收路径不变（无接收 IO 会话）。
 
 **④ BLAKE3 wire 校验与 SHA-256 存储哈希的关系（澄清结论）**：heyaki 传输
 协议在 wire 层以 BLAKE3（manifest 32B + 每分块 32B，file.hpp）做传输完整
@@ -396,6 +408,12 @@ SHA-256 在发送前对源文件计算（M4-04 落地：hash-first 分块作业�
 随文件 metadata 携带（`FileMetadata.stored_sha256`，DEC-010 冻结字段号 5；
 **wire + 内存字段**——message 表无对应列，消息行重启重建时为空，传输行
 `stored_*` 回写列是持久权威），接收方校验时对账。
+**供源参数化与对账策略（M4-05，DEC-012①⑤）**：complete 作业组供源扩展为
+`.part` → heyaki 接收根文件（`<接收根>/<logical_name 段>`，段拼接前有界
+校验）→ final 恢复分支 → 明确失败；接收源就位与原件删除折进同一作业
+（CompleteTransfer(Completed) 仍为 1 作业）。收发 SHA-256 对账不在作业内
+执行（发送方哈希无持久面）——由持有消息载荷的消费者执行（M4-06 回环断言
+/M5 UI），失配即断言失败/可见呈现，不静默。
 
 **⑤ DEC-006 映射 7 实现级细化**：`start_file_transfer` →
 `push_file(peer, root, logical_name, source_path, transfer_id)`
@@ -411,17 +429,30 @@ SPI 参数，Aki 侧固定使用会话默认文件根）；`logical_name` ←
 `FileMetadata.name`；
 `pause_transfer` → `pause_file_transfer`；`resume_transfer` →
 `resume_file_transfer`；`cancel_transfer` → `cancel_file_transfer`；
-`set_file_event_observer` → 状态映射：`transferring`（含 bytes_done 变化）→
-`UpdateTransferProgress`；`paused` → `UpsertTransfer`（`Paused`；对端
+`set_file_event_observer` → 状态映射（**2026-09-26 评审修正**，按 pinned 源
+定论：`probing`/`offered` 为**发送端专属事件**——file_service.cpp 仅发送侧
+发出 :210/:252/:604；**接收端首个事件是 `transferring`** :1147/:1368；接收侧
+push 事件 `direction` 恒为 `push`（:1147/:1368/:1441，`pull_initiated=false`）、
+`cancelled` 恒为 `pull`（:380）——**判向不经 `direction`**）：
+`probing`/`offered` → `on_transfer_started`（发送行状态推进——行由
+`StartTransferWork` 先建、TM 以泵内已知行缓存合并，Adapter 构造的
+sender/receiver 不参与；行缺失时补建 `sender=local` 行）；
+`transferring`/`verifying` → 未见 started 的 id 由**首个事件建行**
+（`on_transfer_started`，接收行 Negotiating：`sender=peer`、`receiver=local`、
+`file.name`=**剥根段** wire `logical_name`——wire manifest `logical_name` =
+join(root, name)（file_service.cpp :556），heyaki 落盘为剥根段相对名（:1075）
+而事件携带含根前缀（:1147/:1368/:1441），行名与供源推导
+（`receive_source_path`）须与落盘相对名一致；Adapter 以有界记名簿去重、
+容量满计数可见）+ `on_transfer_progress`，后续 `transferring`（含 bytes_done
+变化）→ `UpdateTransferProgress`；`paused` → `UpsertTransfer`（`Paused`；对端
 驱动——含断线自动暂停，可发生于接收侧——经 sink 第 11 方法
 `on_transfer_paused(TransferId)` 投递，§8.1；本地暂停确认后同此映射，
 不新增 AppEvent 主路径类型，状态可见于 Store 快照）；
 `committed` → `CompleteTransfer`（`Completed`，M2-06 终态作业组）；
 `failed` → `CompleteTransfer`（`Failed`，事件 error 入观测日志）；
-`cancelled` → `CompleteTransfer`（`Cancelled`，`.part` 删除作业组）；
-`probing`/`offered`/`verifying` 中间态 → 映射 `Negotiating`/`Transferring`
-推进（不单独持久化）。`pull_file`（接收方向拉取）M4 暂不接入（接收侧以
-push 接收为主），接口预留。
+`cancelled` → `CompleteTransfer`（`Cancelled`，`.part` 删除作业组；终态事件
+不建行——行缺失由 owner 拒绝可见，已知边角）。`pull_file`（接收方向拉取）
+M4 暂不接入（接收侧以 push 接收为主），接口预留。
 
 ## 8. 应用结构
 
@@ -502,7 +533,7 @@ message)`——出站文本的投递回报终态失败面（DEC-006 映射 4 的
 `send_failed` / `peer_rejected` / `ack_timeout` / `session_closed`）；协议
 `acked` 仍走 `on_message_delivered`，映射为 `SetDeliveryState(Failed)`（终态，
 `RULE-08`），不产生主路径事件。M4 起追加第 11 个方法
-`on_transfer_paused(TransferId)`（2026-09-24 评审定案，设计先行，M4-05 落地）
+`on_transfer_paused(TransferId)`（2026-09-24 评审定案，M4-05 已落地）
 ——对端驱动的传输暂停投递面：heyaki `paused` 相位含**断线自动暂停**、
 可发生于接收侧（`file.hpp`，`FileTransferPhase::paused`），无此方法则
 `paused → UpsertTransfer(Paused)` 对端驱动时无投递路径；映射
@@ -620,7 +651,8 @@ Store 所有权：
   不复制 owner 权威状态），消息或连接事件先于 `ensure_conversation` 到达时，会话
   推导为幂等空操作。
 
-9 类 Sink 事件由 `app/application` 内单一 `RouterSink`（实现 `HeyakiAdapterSink`）
+11 类 Sink 事件（9 类主路径 + 出站失败面 `on_message_send_failed` + 传输暂停面
+`on_transfer_paused`，均不产新增主路径事件类型）由 `app/application` 内单一 `RouterSink`（实现 `HeyakiAdapterSink`）
 路由：回调线程只做有界校验并投递到各 Manager 的私有有界 `MpscChannel` 收件箱
 （`EXEC-02`），业务处理一律在 Manager 的执行上下文；Sink 返回值为各路 admission
 的合取，部分拒绝必须可见，下游 owner 的状态机拒绝经 `updates_rejected` 可观测。
@@ -633,9 +665,10 @@ Store 所有权：
 | `on_message_received` | MM：`UpsertMessage`（收到的消息本地记录为 `Delivered`，第 6 节） | MessageReceived |
 | `on_message_delivered` | MM：`SetDeliveryState(Delivered)` | MessageDelivered |
 | `on_message_send_failed`（M3-05） | MM：`SetDeliveryState(Failed)` | —（Failed 为终态，RULE-08；无主路径事件） |
-| `on_transfer_started` | TM：`UpsertTransfer` | TransferStarted |
-| `on_transfer_progress` | TM：`UpdateTransferProgress` | TransferProgress |
-| `on_transfer_completed` | TM：`CompleteTransfer(final_state)` | TransferCompleted |
+| `on_transfer_started` | TM：`UpsertTransfer`（建行与状态推进——发送行由 `StartTransferWork` 先建、发送端专属的 `probing`/`offered` 事件推进；接收行由**首个 `transferring`/`verifying`** 事件承担（pinned heyaki 接收端无 probing/offered，首个事件即 transferring）——接收行 `file.name`=剥根段 wire `logical_name`、`size`=`bytes_total`、sender=peer/receiver=local；同态重复幂等去重，§7.1⑤） | TransferStarted |
+| `on_transfer_progress` | TM：首个进度事件整行 upsert 推进 `Negotiating/Paused → Transferring`，后续 `UpdateTransferProgress` | TransferProgress |
+| `on_transfer_completed` | TM：`CompleteTransfer(final_state)`（接收侧无会话直达；发送侧经终态闸门，§7.1③） | TransferCompleted |
+| `on_transfer_paused`（M4-05） | TM：`UpsertTransfer`（`Paused`；对端驱动与本地暂停确认同此映射；发送会话归档续接抑制） | —（不新增主路径事件类型，状态经 Store 快照可见，§8.1） |
 | `on_connection_path_changed` | DM：`SetConnectionPath(to)` | ConnectionPathChanged |
 
 执行上下文与任务承载（`EXEC-04` / `EXEC-05` / `EXEC-07`）：
@@ -953,21 +986,31 @@ DEC-011）复用本节关闭纪律**：注册同经 `start_blocking_worker`（�
 11.1 节 ②④ 收敛。
 
 **④ 文件本体生命周期触发点**：`.part` 写入属传输数据链路（发送侧 M4-04 经
-transfer IO worker 真实接线，接收侧 M4-05；M2 以测试
+transfer IO worker 真实接线，接收侧无 `.part`——heyaki 接收根落盘；M2 以测试
 内字节源驱动），写入期固定为 `files/tmp/<transfer_id>.part`。终态处理由 DB 作业
 承载、全部在 `DatabaseWorker`（blocking worker，`EXEC-04`）内执行：
 `CompleteTransfer(Completed)` 被接受后排队"TRANSFER 终态更新 + 流式 SHA-256 +
 原子改名到 `files/<transfer_id>/<净化文件名>` + `hash` / `size_bytes` 回写
-TRANSFER 行"的串行作业组。作业组自身幂等（与删除作业对称）：重复终态宣告是被
+TRANSFER 行"的串行作业组。**供源参数化（M4-05，DEC-012①）**：作业组供源
+按序取 `.part` → heyaki 接收根文件（`<接收根目录>/<logical_name 段>`，段
+拼接前有界校验——拒绝绝对路径/`..`；接收源的就位与原件删除折进同一作业，
+接收侧合并不上 transfer IO worker）→ final 恢复分支 → 明确失败。作业组自身
+幂等（与删除作业对称）：重复终态宣告是被
 接受的幂等 no-op（第 10.1 节）并重复入队，作业执行时若发现 TRANSFER 行已为
 `Completed` 且目标文件已存在（先前执行已完成），整组幂等跳过（计成功，不产生
-失败计数）；否则按序执行，此时 `.part` 缺失即流式 SHA-256 明确失败（`RULE-09`，
-不静默、不伪造成功）。`Failed` / `Cancelled` 被接受后排队 `.part` 幂等删除作业；
-启动清扫见 ②。Manager 不做文件 I/O——第 8.3 节职责切分不变：
+失败计数）；否则按序执行，此时全部供源缺失即流式 SHA-256 明确失败（`RULE-09`，
+不静默、不伪造成功）。收发 SHA-256 对账不在作业内执行（发送方哈希无持久面，
+DEC-012⑤）——由持有消息载荷的消费者执行，失配即断言失败/可见呈现。
+`Failed` / `Cancelled` 被接受后排队 `.part` 幂等删除作业（接收侧无 `.part`
+时幂等 no-op，heyaki 失败/取消自清其接收侧残留）；
+启动清扫见 ②（仍仅覆盖 `files/tmp`；接收根残留靠作业幂等重跑收敛，长期 GC
+归 §6.1 已登记的 M5 兜底议题）。Manager 不做文件 I/O——第 8.3 节职责切分不变：
 TransferManager 只写权威状态并经状态更新触发上述作业。数据根目录解析为
 Platform Adapter 职责的最小落点：persistence 层内平台条件编译单元（Windows `%APPDATA%` / Linux XDG）提供
 数据根目录解析，公开面仅 `std::string` 路径（`RULE-10`，平台相关编译单元保持
-可选）；组合根解析一次后经构造参数注入路径字符串，其余 Core/persistence 代码
+可选）；组合根解析一次后经构造参数注入路径字符串（含 heyaki 接收根目录——
+配置在数据根内如 `<data_root>/receive/<root>`，NodeSession Options 注入），
+其余 Core/persistence 代码
 不见平台类型；平台能力增多时再按需升级为独立 Platform Adapter 小节（届时先
 更新本节）。
 

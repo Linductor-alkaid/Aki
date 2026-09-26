@@ -6,11 +6,13 @@
 namespace aki::persistence {
 
 DbJob make_transfer_complete_job(std::shared_ptr<FileStore> store,
-    std::string transfer_id) {
+    std::string transfer_id, std::string receive_dir) {
     auto done = std::make_shared<std::promise<void>>();
     return DbJob{
-        [store = std::move(store), id = std::move(transfer_id)](
-            Repositories& repos) { store->complete_transfer(repos.transfers, id); },
+        [store = std::move(store), id = std::move(transfer_id),
+            receive = std::move(receive_dir)](Repositories& repos) {
+            store->complete_transfer(repos.transfers, id, receive);
+        },
         std::move(done)};
 }
 
