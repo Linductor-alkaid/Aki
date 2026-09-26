@@ -6,6 +6,13 @@
 # （ref+commit 双校验，actions/cache 缓存）；Linux 装 libssl-dev；
 # Windows 注入 OPENSSL_ROOT_DIR（runner 预装 OpenSSL 3）；tsan preset 联动
 # HEYAKI_SANITIZER=thread（CMakePresets，全图插桩）。
+# M5-02（DEC-014）：EUI-NEO 并入单一构建图——Linux 三档加装 pinned 集成
+# 指南完整系统依赖集（libcurl 非 Windows REQUIRED；tray SNI 走 glib/gio、
+# GLFW Wayland 保持上游默认 ON，不做 CI 专属降档）；tsan（及 asan/ubsan）
+# 对 eui_neo 与 bundled 第三方全图插桩零豁免——eui 栈 CI 覆盖 = 编译+链接
+# 插桩，ctest 执行面为 console 测试（不链 eui），渲染/UI 运行期证据走本机
+# 归档（RULE-11），不得宣称「UI/渲染经 TSAN 验证」。Windows 零新增依赖
+#（CURL QUIET 可选、tray 走 WINAPI）。
 name: CI
 
 on:
@@ -29,15 +36,36 @@ jobs:
       # TSAN 抑制表：usrsctp（libdatachannel vendored 依赖）内部数据竞争——
       # 上游 C 代码非 TSAN-clean（CI run 35943203897 实测
       # sctp_output.c:7581 sctp_toss_old_cookies），按供应链纪律不改
-      # third_party，以抑制表记录（M3 里程碑验证有档案）。非 tsan 预设的
-      # 二进制不读该变量，无影响。
+      # third_party，以抑制表记录（M3 里程碑验证有档案）。DEC-014 起 EUI
+      # bundled 第三方（glfw/freetype 等）上游竞态沿用同一登记制。非 tsan
+      # 预设的二进制不读该变量，无影响。
       TSAN_OPTIONS: suppressions=${{ github.workspace }}/cmake/tsan-suppressions.supp
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: OpenSSL 3 dev headers
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+      - name: System dependencies (OpenSSL + EUI-NEO backend set)
+        # DEC-014：完整集来自 pinned 集成指南（third_party/EUI-NEO/docs/
+        # 集成指南.md Ubuntu 集）；runner 仅预装 libssl-dev/pkg-config，
+        # 其余必须显式安装（含 wayland-protocols——GLFW Wayland scanner
+        # 依赖）。tray/Wayland 不降档（保留 CI 编译覆盖）。
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libssl-dev \
+            libcurl4-openssl-dev \
+            libgl1-mesa-dev \
+            libegl1-mesa-dev \
+            libx11-dev \
+            libxext-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libwayland-dev \
+            wayland-protocols \
+            libxkbcommon-dev \
+            libglib2.0-dev
       - name: Heyaki pinned dependencies
         uses: actions/cache@v4
         with:

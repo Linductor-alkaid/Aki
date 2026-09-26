@@ -804,6 +804,26 @@ EUI-NEO 组合模型为 M5-01 探针实测——compose 为**保留模式、事�
   11 次开合转换全部拾取）；compose 内不等待、不轮询、不做 IO
   （`EXEC-02` 对称纪律）。页面持有 UI 态（dialog open/toast visible/输入
   草稿/滚动位置）存于页面模型，重组时读入。
+- **首帧装配例外（M5-02 增补）**：宿主组合根（第 8.3 节七步 + 数据根解析 +
+  Node 启动）落位为 EUI-NEO 无关的 `app/lifecycle/host_runtime`
+  （`HostRuntime::ensure_assembled(data_root)` / `shutdown_with_report()`，
+  函数级 static 单例访问器共享）。触发点为**首次 `app::compose()`**（主线程、
+  主循环首帧）同步 `ensure_assembled()`——这是「compose 三不纪律」的**唯一
+  显式例外**：首帧装配是设计上的有界启动工作单元（空库实测百 ms 量级），窗口
+  以 clearColor 底色等待首帧，装配期间不存在任何 executor 侧发布/唤醒（事件源
+  尚未接通），无唤醒先于装配的竞态；装配完成同帧恢复结果播种初始快照
+  （第 11.1 节 ②）。首帧之后的 compose 严格回到三不纪律。备选否决：框架
+  `dslAppConfig()` 静态装配（窗口/renderBackend 创建失败路径不回调关闭，启动
+  ↔关闭配对裂缝）与异步装配（违反 DEC-005 并发边界冻结）。
+- **启动↔关闭配对（M5-02 增补）**：`DslAppConfig::onShutdown` 薄委托同一
+  `HostRuntime` 单例按下方关闭序执行——「装配成功 ⇒ 关闭必经 onShutdown」由
+  框架控制流保证（主循环一切退出路径汇入 `app::shutdown()`；compose 只在
+  主循环内发生）。GUI 宿主无 argv 注入（框架 `int main()` 无参），数据根缺省
+  `resolve_data_root()`；测试注入经 `HostRuntime::assemble(data_root)` 参数
+  承载。装配失败降级为错误占位 UI + 用户关窗后仍经 onShutdown 闭合（禁
+  `std::exit`，沿 M3 宿主先例）。关闭路径的 DOD-02 六项在 console 测试 exe
+  （不链 EUI-NEO）直接对 `HostRuntime` 验证；onShutdown 真实接线以本机运行
+  日志证据归档（`RULE-11`，渲染层不进 CI）。
 - **关闭序（`EXEC-01`）**：`ExecutorOwner` 关闭编入
   `DslAppConfig::onShutdown`（主窗口 GPU 设备销毁前回调，主线程）——
   钩子内按第 8.3 节宿主钩子**原序**执行，不省略不重排：①请求取消各

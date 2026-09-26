@@ -29,19 +29,32 @@ endfunction()
 add_executable(aki_skeleton_test test_skeleton.cpp)
 target_compile_features(aki_skeleton_test PRIVATE cxx_std_20)
 aki_apply_warnings(aki_skeleton_test PRIVATE)
+# M5-02（DEC-005）：aki_ui 实体化后链接 eui::neo——测试 exe 不链 aki_ui
+# （保持 console、不加载显示栈）；ui/skeleton.hpp 的 include 检查经其余
+# 目标的仓库根 include 路径仍可达。
 target_link_libraries(aki_skeleton_test PRIVATE
     aki_app
     aki_device
     aki_conversation
     aki_transfer
     aki_persistence
-    aki_heyaki
-    aki_ui)
+    aki_heyaki)
 
 add_test(NAME skeleton.includes COMMAND aki_skeleton_test)
 set_tests_properties(skeleton.includes PROPERTIES LABELS "unit")
 
-add_test(NAME skeleton.app_runs COMMAND aki "${CMAKE_CURRENT_BINARY_DIR}/aki-smoke-data")
+# M5-02：console 宿主驱动（aki_host_smoke，链 aki_host 不链 eui）。根 aki
+# exe 自 M5-02 迁移为 EUI-NEO GUI 宿主（/SUBSYSTEM:WINDOWS、框架 main 无
+# argv、窗口循环阻塞），原 console 冒烟/演示断言（M1-06 起、M3-08 真实
+# Adapter 形态）整体移至本驱动：HostRuntime 公开面（装配/发现启停/quiesce/
+# 受控关闭报告/快照）+ 重启恢复断言（persistence 公开 API）。argv 契约沿
+# 旧宿主：argv[1] 数据根基址、argv[2] == "--exact" 原样使用。
+add_executable(aki_host_smoke host_smoke.cpp)
+target_compile_features(aki_host_smoke PRIVATE cxx_std_20)
+aki_apply_warnings(aki_host_smoke PRIVATE)
+target_link_libraries(aki_host_smoke PRIVATE aki_host)
+
+add_test(NAME skeleton.app_runs COMMAND aki_host_smoke "${CMAKE_CURRENT_BINARY_DIR}/aki-smoke-data")
 set_tests_properties(skeleton.app_runs PROPERTIES
     LABELS "smoke"
     PASS_REGULAR_EXPRESSION "aki 0\\.1\\.0")
@@ -51,7 +64,8 @@ set_tests_properties(skeleton.app_runs PROPERTIES
 # 节），输出以 "smoke: PASS"/"smoke: FAIL" 收尾供正则断言。
 # M2-07 起：数据根基址经 argv 注入（宿主每次运行使用基址下独立子目录并自清理，
 # 不触碰真实 %APPDATA%/XDG 目录），宿主内含重启恢复逐域断言（M2 退出-1）。
-add_test(NAME smoke.device_lifecycle COMMAND aki "${CMAKE_CURRENT_BINARY_DIR}/aki-smoke-data")
+# M5-02 起：驱动为 aki_host_smoke（同 argv 契约与输出标记，语义零迁移损失）。
+add_test(NAME smoke.device_lifecycle COMMAND aki_host_smoke "${CMAKE_CURRENT_BINARY_DIR}/aki-smoke-data")
 set_tests_properties(smoke.device_lifecycle PROPERTIES
     LABELS "integration"
     PASS_REGULAR_EXPRESSION "smoke: PASS")
@@ -202,15 +216,17 @@ aki_deploy_openssl_dlls(test_restart_recovery)
 add_test(NAME test_restart_recovery COMMAND test_restart_recovery)
 set_tests_properties(test_restart_recovery PROPERTIES LABELS "integration")
 
-# M2-07 验收 ②（宿主级）：损坏 DB 文件的组合根干净失败——aki 以 --exact 模式
+# M2-07 验收 ②（宿主级）：损坏 DB 文件的组合根干净失败——宿主以 --exact 模式
 # 直用损坏数据根，open 失败时输出 "[FATAL] startup recovery failed: <原因>"
 # 并以非零退出码退出（不静默）。损坏文件在 configure 期固定写入测试二进制目录。
 set(AKI_CORRUPT_DB_ROOT "${CMAKE_CURRENT_BINARY_DIR}/aki-corrupt-db-root")
 file(MAKE_DIRECTORY "${AKI_CORRUPT_DB_ROOT}/db")
 file(WRITE "${AKI_CORRUPT_DB_ROOT}/db/aki.db3"
     "this is not a sqlite database - M2-07 corrupt-db clean-failure fixture\n")
+# M5-02 起：驱动为 aki_host_smoke（GUI aki 宿主无 argv）；HostRuntime 装配失败
+# 降级路径的同一干净失败语义经此锁定。
 add_test(NAME recovery.corrupt_db_clean_failure
-    COMMAND aki "${AKI_CORRUPT_DB_ROOT}" --exact)
+    COMMAND aki_host_smoke "${AKI_CORRUPT_DB_ROOT}" --exact)
 set_tests_properties(recovery.corrupt_db_clean_failure PROPERTIES
     LABELS "integration"
     PASS_REGULAR_EXPRESSION "\\[FATAL\\] startup recovery failed")
@@ -500,3 +516,23 @@ target_link_libraries(test_transfer_send_loopback PRIVATE
 aki_deploy_openssl_dlls(test_transfer_send_loopback)
 add_test(NAME test_transfer_send_loopback COMMAND test_transfer_send_loopback)
 set_tests_properties(test_transfer_send_loopback PROPERTIES LABELS "integration")
+
+# M5-02：HostRuntime 关闭路径测试（设计 §9.1 启动↔关闭配对；DOD-02 六项沿
+# 宿主生命周期路径 + §8.3 钩子原序断言）。自带 main（Catch2 无 main 变体）：
+# 进程唯一 Executor owner 是 HostRuntime 单例（AGENTS 规则 7/8）；console
+# exe 不链 eui（DEC-005）——GUI onShutdown 薄委托的同一编排在此直接验证，
+# 窗口/GPU 销毁次序以本机 aki-run.log 证据归档（RULE-11）。
+add_executable(test_host_runtime unit/test_host_runtime.cpp)
+target_compile_features(test_host_runtime PRIVATE cxx_std_20)
+aki_apply_warnings(test_host_runtime PRIVATE)
+target_link_libraries(test_host_runtime PRIVATE
+    Catch2::Catch2
+    aki_host)
+aki_deploy_openssl_dlls(test_host_runtime)
+add_test(NAME test_host_runtime COMMAND test_host_runtime)
+set_tests_properties(test_host_runtime PROPERTIES LABELS "unit")
+
+# M5-02：主题档位覆写回归对照（aki_ui_design §2.1/§2.2/§2.3 独立抄录期望值
+# vs ui/theme/aki_theme_values.hpp 数值权威表；不链 eui——上游默认档对拍由
+# GUI 宿主 aki-run.log 归档承载）。
+aki_add_unit_test(test_ui_theme_values unit/test_ui_theme_values.cpp)

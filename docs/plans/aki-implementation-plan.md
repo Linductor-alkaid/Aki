@@ -8,6 +8,23 @@
 
 ## 当前状态
 
+- 2026-09-27：`M5-02` 完成：EUI-NEO 接入与主窗口骨架（`DEC-005` 全项落地
+  + [DEC-014](../decisions/DEC-014-eui-tsan-coverage.md) 同批落档）——
+  单一构建图 `add_subdirectory(third_party/EUI-NEO)`（八项开关 CACHE
+  FORCE，configure 三方校验通过、bundled 八件套零联网）；`aki_ui` 实体化
+  （eui::neo 仅由 aki_ui 链接；测试 exe 不链 eui 保持 console——dumpbin
+  0 命中实证）；宿主入口迁移 dslAppConfig()+compose()（/SUBSYSTEM:WINDOWS）：
+  组合根抽离为 EUI-NEO 无关的 `aki_host`（app/lifecycle/host_runtime），
+  首次 compose 惰性装配 + onShutdown 薄委托受控关闭（设计 §9.1 首帧装配
+  例外/启动↔关闭配对两条款先行落档）；三栏壳 + 四页导航本机可运行（GUI
+  会话日志 + 截图归档，RULE-11）；ui/theme akiTheme() 逐项覆写 + 双份回归
+  对照；onShutdown 关闭序经 test_host_runtime 关闭路径验证（DOD-02 六项 +
+  §8.3 钩子原序 8 步断言）+ GUI 会话日志（fully_stopped、workers 2/2）；
+  debug/release 全量 ctest 40/40 零回归；单图符号冲突 dumpbin 核对 0 冲突；
+  CI 扩面（Linux 四档 pinned 依赖集 + tsan 全图插桩零豁免，DEC-014 覆盖
+  声明五条）——CI 门禁全绿证据随 M5-02 PR（本会话未推送，如实登记）；
+  MinGW 受限按纪律记录（EUI-NEO GCC≥12 硬性要求，预期阻断）。详见 M5
+  里程碑文档 M5-02 验证记录。
 - 2026-09-21：项目完成初始化（M0 工程骨架与协作基线）。M0 剩余：CI 基线（首次 push
   后）与提交前 `git status` 复核。
 - 2026-09-21：executor、EUI-NEO、heyaki 三个依赖已完成 submodule + 锁文件登记与
@@ -508,7 +525,15 @@ on_transfer_paused 落地、stored_sha256 对账策略（作业内不对账，�
 传输行重启处置——降级 Paused 待显式再驱动：恢复段主线程同步改写（先于清扫）
 + 播种 TM 已知行缓存（接收行经 wire 进度推进/committed 幂等收敛）+ 无会话
 cancel 直接终态写入（发送行 M4 范围唯一出口）+ 状态机边扩展 Queued/Negotiating
-→ Paused；否决自动恢复与判 Failed））。
+→ Paused；否决自动恢复与判 Failed）、
+[DEC-014](../decisions/DEC-014-eui-tsan-coverage.md)（2026-09-27，EUI-NEO
+栈的 sanitizer 覆盖与 CI Linux 系统依赖——tsan/asan/ubsan 经 CMakePresets
+cache 级全局 flags 对 eui_neo 与 bundled 第三方全图插桩零豁免、CI Linux
+三档安装 pinned 集成指南完整系统依赖集（libcurl/glib 等，tray/Wayland
+保持上游默认 ON 不降档）、覆盖声明口径五条：插桩面全图 + ctest console
+执行面 + UI 运行期 tsan 证据本机 Linux 归档（RULE-11）+ 上游竞态抑制表
+登记制 + TSAN 声明限 Linux（第一方 GCC `-Wno-error=tsan` 豁免照抄 heyaki
+先例）））。
 
 ## 跨里程碑通用完成定义
 
