@@ -8,6 +8,28 @@
 
 ## 当前状态
 
+- 2026-09-27：`M5-08` 完成（MVP 全链路验收归集；无产品代码变更）： 
+  `SCOPE-01`~`SCOPE-12` 逐项归档两态标注（本机已验证/双端待补跑，证据
+  锚点映射 M1~M4 验证记录与 M5-01~07 GUI 归档；评审修正：`SCOPE-02`
+  去重/已知设备不重放的原锚点「lan_discovery 单测」不存在，该两项
+  收缩为未测并附补测条件——见 M5-08 记录 ②）；验收基线复跑
+  debug/release 全量 ctest 各 43/43（干净树）；本机补证发现启停 GUI
+  实拍；**发现并登记一项 GUI 缺陷**（Devices 页 Pending 行 Confirm 点击
+  无响应，2 新会话复现——独立修复工作项/MR，SCOPE-03 信任确认弹窗 GUI
+  验收被阻塞，网络无关半边由 test_device_trust 承载）；M3 登记复核
+  闭环：口令 verifier 闭合（DEC-016）、kAkiPairingPassword 维持
+  （DEC-016 移除条件未触发）、secret backend 与 DeviceIdentity 元数据
+  再登记（触发条件落档）；双端真机项显式降级（原因/负责人 Linductor/
+  补跑条件=防火墙放行入站 TCP + LAN 双端真机），退出-1 保持未勾选、
+  M5 保持 In Progress。详见 M5 里程碑文档 M5-08 验证记录（含 MVP 清单
+  归档全表）。
+- 2026-09-27：PR #44 欠账补记（`feat(ui): adopt heyaki app icon and
+  register icon resources`，M5-02 同批验收归集前合入）：Heyaki 应用图标
+  采用与注册（`assets/icons/aki-icon.png` 窗口/任务栏图标经
+  dslAppConfig.iconPath + `aki-icon.ico` exe 内嵌覆写
+  EUI_NEO_APP_ICON_RESOURCE；资产溯源与再生成见 assets/icons/README.md；
+  aki_ui_design §2.6 落档）——当前状态条目自 M5-02~04 批次遗漏，本条
+  补记（评审登记）。
 - 2026-09-27：`M5-07` 完成：Settings 页与主题（`SCOPE-12`）——主题三选
   （跟随系统/浅/深）`segmented`（§4 映射）页面持有 UI 态，经
   akiTheme()/akiSemanticColors() 装配面即时生效（覆写清单/回归对照不变，
