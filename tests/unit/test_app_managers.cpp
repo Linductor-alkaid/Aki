@@ -451,10 +451,10 @@ void drain_until_idle(AppStateOwner& owner) {
 
 }  // namespace
 
-// ---- 用例 1：10 类 Sink 方法路由（失败面不产主路径事件）、Store 归属、
+// ---- 用例 1：12 类 Sink 方法路由（失败面不产主路径事件）、Store 归属、
 // ---- 扇出与 FIFO（DOD-02 正常完成）----
 
-TEST_CASE("RouterSink routes the eleven sink methods to per-domain stores in FIFO order",
+TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIFO order",
     "[unit][managers][dod02]") {
     AppStack stack;
     auto& owner = stack.state_owner;
