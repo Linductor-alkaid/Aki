@@ -502,6 +502,8 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
         if (dialog_open && model.actions) {
             components::dialog(ui, "aki.devices.confirm")
                 .open(true)
+                .theme(tokens)
+                .screen(width, height)
                 .size(560.0f, 260.0f)
                 .content([&] {
                     components::text(ui, "aki.devices.confirm.title")
@@ -567,7 +569,14 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                             model.pending_confirm_device.clear();
                         })
                         .build();
-                });
+                })
+                // BUG-20260927-001 修复：原链缺尾部 .build()（DialogBuilder 仅在 build() 中创建元素——缺失时弹窗根本不进入 UI 树，点击 Confirm 无任何效果）；同批补 .screen/（背板覆盖窗口，原默认 800x600）与 .theme（跟随浅/深档），并补 onOpenChange（背板点击关闭回写页面持有 open 态；无 Escape 路径——pinned dialog 仅背板 onClick 接 requestClose）。
+                .onOpenChange([&model](bool open) {
+                    if (!open) {
+                        model.pending_confirm_device.clear();
+                    }
+                })
+                .build();
         }
     }).build();
 }

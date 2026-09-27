@@ -8,15 +8,32 @@
 
 ## 当前状态
 
+- 2026-09-27：**BUG-20260927-001 修复闭环**（M5-08 验收发现的 GUI 缺陷，
+  独立修复，无 pinned/网络/持久化变更）：Devices 页 Pending 行 Confirm
+  点击无响应——根因=信任确认弹窗 builder 链缺尾部 `.build()`
+  （DialogBuilder 仅在 build() 中创建元素，缺失时弹窗不进入 UI 树）；
+  修复=补 `.build()` + 同批对齐 M5-05 弹窗形态（`.screen` 背板覆盖窗口、
+  `.theme` 跟随浅深档、`.onOpenChange` 背板点击关闭回写页面 open 态
+  ——评审修正 2026-09-27：无 Escape 关闭路径，原记「背板/Escape」不实，
+  见 M5 BUG-001 复测修正注）；复测=登记复现序列（2 全新会话 ×≥2 点击）
+  不再复现，Confirm→
+  指纹弹窗→Confirm pairing 提交全链实测（真实 Adapter 无会话 →
+  admission 反馈如实可见），Reject/Revoke/导航回归正常；debug/release
+  全量 ctest 各 43/43 零回归；GUI 截图 ×5 + 运行日志归档
+  build/scratch/（RULE-11）。详见 M5 里程碑 BUG-20260927-001 验证记录。
 - 2026-09-27：`M5-08` 完成（MVP 全链路验收归集；无产品代码变更）： 
   `SCOPE-01`~`SCOPE-12` 逐项归档两态标注（本机已验证/双端待补跑，证据
   锚点映射 M1~M4 验证记录与 M5-01~07 GUI 归档；评审修正：`SCOPE-02`
   去重/已知设备不重放的原锚点「lan_discovery 单测」不存在，该两项
   收缩为未测并附补测条件——见 M5-08 记录 ②）；验收基线复跑
   debug/release 全量 ctest 各 43/43（干净树）；本机补证发现启停 GUI
-  实拍；**发现并登记一项 GUI 缺陷**（Devices 页 Pending 行 Confirm 点击
-  无响应，2 新会话复现——独立修复工作项/MR，SCOPE-03 信任确认弹窗 GUI
-  验收被阻塞，网络无关半边由 test_device_trust 承载）；M3 登记复核
+  实拍；**发现并登记一项 GUI 缺陷 BUG-20260927-001**（Devices 页 Pending 行
+  Confirm 点击无响应，2 新会话复现——同日修复闭环：根因=确认弹窗
+  builder 链缺尾部 `.build()`（Aki 页面代码缺陷，非 pinned 缺陷），
+  修复=补 `.build()` + 弹窗对齐（.screen 背板覆盖/.theme 浅深档/
+  .onOpenChange 背板关闭回写），复测=登记复现序列不再复现 + 全量
+  ctest 43/43 零回归，SCOPE-03 GUI 证据已回填——详见 M5 里程碑
+  BUG-20260927-001 验证记录）；M3 登记复核
   闭环：口令 verifier 闭合（DEC-016）、kAkiPairingPassword 维持
   （DEC-016 移除条件未触发）、secret backend 与 DeviceIdentity 元数据
   再登记（触发条件落档）；双端真机项显式降级（原因/负责人 Linductor/

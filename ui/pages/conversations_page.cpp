@@ -463,8 +463,9 @@ void compose_preview_dialog(eui::Ui& ui, const ThemeColorTokens& tokens,
         .theme(tokens)
         .screen(window_width, window_height)  // 背板/居中锚点 = 宿主窗口。
         .size(dialog_w, dialog_h)
-        // 背板点击/Escape 的关闭请求回写页面持有 open 态（单向数据流：
-        // 组件不私藏开关状态——M5-01 waker 契约的对称面）。
+        // 背板点击的关闭请求回写页面持有 open 态（单向数据流：
+        // 组件不私藏开关状态——M5-01 waker 契约的对称面；无 Escape
+        // 路径——pinned dialog 仅背板 onClick 接 requestClose）。
         .onOpenChange([&model](bool open) {
             if (!open) {
                 model.conversations.preview_message =
@@ -754,7 +755,8 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
         .theme(tokens)
         .screen(window_width, window_height)  // 背板/居中锚点 = 宿主窗口。
         .size(420.0f, 340.0f)
-        // 背板点击/Escape 关闭请求回写页面模型（同预览弹窗）。
+        // 背板点击关闭请求回写页面模型（同预览弹窗；无 Escape 路径
+        // ——pinned dialog 仅背板 onClick 接 requestClose）。
         .onOpenChange(
             [&model](bool open) { model.conversations.new_chat_open = open; })
         .content([&] {

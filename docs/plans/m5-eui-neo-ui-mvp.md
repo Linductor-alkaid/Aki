@@ -1070,10 +1070,22 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
       点击无响应（弹窗不出现、无任何状态变化；复现 2 个全新会话各 ≥2
       次点击 100% 复现；同行 Reject/邻行 Revoke/导航/其他页按钮均正常
       ——证据 build/scratch/aki-m5-08-confirm-dialog.png + 本会话操作
-      序列日志）；伴随一次疑似错乱触发（Confirm 位置点击后出现 alpha 行
-      "revoke admitted" 反馈）。处置：**独立修复工作项/MR**（嫌疑方向：
-      retained-mode compose 下条件行内按钮的回调登记/元素复用），修复并
-      复测后回填本清单该项 GUI 证据；双端 pair_peer wire 面随补跑。
+      序列日志）；伴随一次疑似错乱触发（后证实为自动化窗口坐标漂移误点
+      alpha 行 Revoke 所致——该行点击本身工作正常，撤销嫌疑）。
+      **BUG-20260927-001 修复闭环（2026-09-27 同日）**：根因=Aki 页面
+      代码缺陷——确认弹窗 builder 链缺尾部 `.build()`（DialogBuilder 仅
+      在 build() 中创建元素，缺失时弹窗根本不进入 UI 树，点击自然无任何
+      效果；非 pinned 缺陷、无上游依赖）；修复=补 `.build()` + 同批补
+      `.screen(width,height)`（背板覆盖窗口，原默认 800x600 不覆盖全窗）
+      /`.theme(tokens)`（跟随浅深档）/`.onOpenChange`（背板点击关闭
+      回写页面 open 态，M5-05 弹窗同款；无 Escape 路径，见复测修正注）；
+      复测=登记复现序列 2 个全新
+      会话 ×≥2 次点击不再复现（弹窗即现：mono 指纹、无口令框、Confirm
+      pairing 提交 admission 反馈可见、Cancel 关闭、背板点击关闭均实测，
+      截图 build/scratch/aki-bug001-fix-dialog.png/-confirmed.png/
+      -dialog2.png/-cancelled.png + aki-run-bug001-fix.log）；回归=
+      Reject/Revoke/导航正常 + debug/release 全量 ctest 43/43；本条 GUI
+      证据以此回填，双端 pair_peer wire 面仍随补跑。
     - `SCOPE-04` 设备列表（名称/类型/OS/连接方式/在线状态）：**已验证**
       ——M5-04（DEC-015 逐设备路径 test_device_trust + GUI 设备行/
       徽标/指纹列 build/scratch/aki-m5-04-devices.png、
@@ -1170,4 +1182,62 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   - **⑥ 同步**：本里程碑（M5-08 勾选、本记录）、总计划（当前状态条目
     含 PR #44 欠账补记）；aki_design §15 无变更（清单原文为准）。缺陷
     （Confirm 无响应）走独立修复工作项/MR，修复后回填 SCOPE-03 GUI
-    证据并复跑全量 ctest。
+    证据并复跑全量 ctest。（已闭环：BUG-20260927-001 同日修复，见下方
+    专用验证记录。）
+
+- 2026-09-27（**BUG-20260927-001 修复与闭环**；M5-08 验收发现缺陷的独立
+  修复工作项，工程规范 3.3 编号；Windows 11 工作站（桌面会话）/ MSVC
+  2022 BuildTools 14.44.35207 / CMake 4.1.0；负责人：Linductor）：
+  - **症状（登记复现序列）**：Devices 页新建第二设备到 Pending → 点击该
+    行 Confirm——弹窗不出现、无任何状态变化；同行 Reject/邻行 Revoke/
+    导航/其他页按钮均正常；2 个全新会话各 ≥2 次点击 100% 复现；并伴随
+    一次 Confirm 位置点击后出现 alpha 行 "revoke admitted" 的疑似错乱
+    触发。
+  - **根因（Aki 页面代码缺陷，非 pinned 缺陷）**：main_window.cpp 的
+    信任确认弹窗 builder 链以 `.content([...]);` 结尾——**缺尾部
+    `.build()`**。DialogBuilder 仅在 build() 中创建元素树（构造器只存
+    ui/id 字符串），缺失时弹窗根本不进入 UI 树：点击 Confirm 仅改写页
+    面模型 pending_confirm_device，重组后树中无弹窗元素，渲染帧无变
+    化（本机实测帧率归零、连续截图逐字节一致）。M5-05 的两处弹窗有
+    `.build()`，故同机制下工作正常——缺陷定位由临时插桩日志证实
+    （onClick 触发 → 模型置位 → 重组 dialog_open=1 → builder 链执行但
+    无元素产生）。M5-08 登记的「错乱触发」经复核为自动化窗口坐标漂移
+    误点 alpha 行 Revoke（该按钮工作正常），非回调错绑。
+  - **修复（ui/pages/main_window.cpp，一处链尾补全 + 同批对齐）**：
+    补 `.build()`；同批对齐 M5-05 弹窗形态——补 `.screen(width,height)`
+    （背板/居中锚点覆盖宿主窗口，原默认 800x600 不覆盖 1080x720 窗、
+    面板错位）、`.theme(tokens)`（跟随浅/深档，原默认恒深色样式）、
+    `.onOpenChange`（背板点击关闭请求回写页面持有 open 态，
+    与 M5-05 弹窗行为一致；无 Escape 路径，见复测修正注）。不改
+    pinned EUI-NEO；不改网络/持久化语义；无新增并发路径（DOD-02 无新增面）。
+  - **可测面与测试边界（如实登记）**：缺陷为纯 compose 交互层（builder
+    链缺调用），页面模型/派生层无逻辑变更——无可新增的网络无关单测断
+    言面（test_device_trust 的信任操作路由/转移边断言维持承载）；回归
+    守卫按 RULE-11 以 GUI 复现序列日志 + 截图归档承载（见复测）。同批
+    审计其余 builder 链（M5-05 预览/新建会话弹窗、M5-07 segmented、
+    传输卡片 progress）：均以 `.build()` 结尾，无同类缺失。
+  - **复测（登记复现序列）**：2 个全新会话（App 重启）各 ≥2 次点击
+    Confirm——弹窗即现（mono 指纹 hy1_seedbeta…、无口令框，aki_ui_design
+    §3 规格）；「Confirm pairing」提交 admission 反馈可见
+    （pairing submitted for hy1_seedbeta…——真实 Adapter 无会话，配对
+    结果按 DEC-006 映射 3 异步，本地维持 Pending 如实呈现）；「Cancel」
+    关闭不提交；背板点击关闭回写实测。**修正（2026-09-27 评审）**：本条
+    原记「背板/Escape 关闭回写实测」中 Escape 关闭不实——该路径在仓库中
+    不存在：pinned DialogBuilder 仅将 requestClose 接到背板 `.onClick`
+    （third_party/EUI-NEO/components/dialog.h:107；closeCallback :211-218），
+    未注册任何 onKeyEvent（按键按元素分发，core/dsl.h:725）；EUI-NEO 内
+    唯一 Escape 处理为文本输入组件提交文本（components/input.h:315）；
+    Aki 侧 main.cpp/ui/ 均无 Escape 处理。按 RULE-11 如实收缩为仅背板
+    点击关闭实测；如确需 Escape 关闭，先按决策流程立项补路径后再测。
+    回归：Reject/Revoke 按钮、
+    导航四页切换正常；debug/release 全量 ctest 各 43/43 零回归（修复后
+    最终代码态）。证据：build/scratch/aki-bug001-fix-dialog.png
+    （弹窗）、aki-bug001-fix-confirmed.png（提交反馈）、
+    aki-bug001-fix-dialog2.png（会话1 第 2 次点击）、
+    aki-bug001-fix-cancelled.png（取消后）、aki-bug001-s2-dialog1/
+    dialog2.png（会话 2）+ aki-run-bug001-fix.log（关闭序）。复现/
+    复测命令：沿 M5-08 记录 ③（scratch APPDATA 注入 + 种子探针）+
+    build/scratch/gui_demo.ps1 自动化（pin/click/winshot）。
+  - **同步**：M5-08 验证记录 ② SCOPE-03 条目（BUG 闭环回填）、M5-08
+    记录 ⑥（闭环注记）、总计划当前状态（BUG 编号落档 + 修复条目）。
+    无决策记录（根因为 Aki 页面代码缺陷，无上游能力诉求）。
