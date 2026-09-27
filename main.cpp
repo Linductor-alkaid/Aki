@@ -20,6 +20,7 @@
 // 无控制台）；启动装配耗时、主题覆写对拍、onShutdown 关闭序与关闭报告均在
 // 日志内，复现命令见 M5-02 验证记录。
 #include "app/lifecycle/host_runtime.hpp"
+#include "app/lifecycle/system_theme.hpp"
 #include "ui/models/ui_actions.hpp"
 #include "ui/models/ui_state_consumer.hpp"
 #include "ui/pages/main_window.hpp"
@@ -231,6 +232,21 @@ void app::compose(eui::Ui& ui, const eui::Screen& screen) {
             // 方法——页面经模型读取，不持有 Manager/transport 对象。
             model.state_view.local_device =
                 aki::device::DeviceId{assembly.local_device_id};
+            // M5-07 Settings 装配（§9.1 Settings 页与主题三选装配条款）：
+            // 主题初值 = 跟随系统解析一次（平台条件编译单元，有界注册表
+            // 读取；Unknown 回落 Light——页内披露）；数据目录经
+            // HostRuntime::data_root() 装配面（std::string，RULE-10）。
+            model.theme_setting = aki::ui::ThemeSetting::FollowSystem;
+            const auto system = aki::app::query_system_theme();
+            model.theme =
+                aki::ui::resolve_effective_theme(model.theme_setting, system);
+            model.data_directory = host.data_root();
+            log_line(std::string("settings: theme follow system -> ")
+                + (system == aki::ui::SystemTheme::Dark ? "dark" : "light")
+                + " (system="
+                + (system == aki::ui::SystemTheme::Unknown ? "unknown"
+                                                           : "queried")
+                + "), data directory: " + host.data_root());
             ui_actions() = std::make_shared<aki::ui::models::UiActions>(
                 aki::ui::models::make_ui_actions(host.device_manager(),
                     host.conversation_manager(), host.message_manager(),

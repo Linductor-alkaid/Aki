@@ -6,17 +6,15 @@
 // 默认档（DEC-005：默认档 ≠ aki_ui_design §2.1/§2.2 表，逐项覆写）。
 #pragma once
 
+#include "ui/theme/theme_mode.hpp"
+
 #include "components/theme.h"
 #include "core/render/render_types.h"
 
-#include <cstdint>
-
 namespace aki::ui {
 
-enum class ThemeMode : std::uint8_t {
-    Light,
-    Dark,
-};
+// ThemeMode 自 M5-07 迁至 EUI-NEO 无关的 ui/theme/theme_mode.hpp
+// （主题三选解析状态机的可测面；本头文件保留 EUI 装配面）。
 
 // §2.3 扩展语义色（ThemeColorTokens 七槽之外的领域语义色；状态视觉语义
 // §3 的 success/warning/destructive 与品牌/文本次级档在此提供）。

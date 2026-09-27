@@ -11,7 +11,9 @@ target_link_libraries(aki_app INTERFACE executor::executor)
 # EUI-NEO 无关（RULE-10/RULE-01：console 测试 exe 链接本目标保持 console、
 # 不加载显示栈，DEC-005「测试 exe 不链 eui」）；heyaki/persistence 符号经
 # heyaki::client/aki_persistence 闭包提供。
-add_library(aki_host STATIC lifecycle/host_runtime.cpp)
+add_library(aki_host STATIC
+    lifecycle/host_runtime.cpp
+    lifecycle/system_theme.cpp)
 target_compile_features(aki_host PUBLIC cxx_std_20)
 target_include_directories(aki_host PUBLIC ${PROJECT_SOURCE_DIR})
 target_link_libraries(aki_host PUBLIC
@@ -19,4 +21,9 @@ target_link_libraries(aki_host PUBLIC
     aki_persistence
     aki_heyaki
     heyaki::client)
+# M5-07：系统主题查询的注册表读取（Windows；平台条件编译单元
+# lifecycle/system_theme.cpp，公开面仅 std/aki 类型，RULE-10）。
+if(WIN32)
+    target_link_libraries(aki_host PRIVATE advapi32)
+endif()
 aki_apply_warnings(aki_host PRIVATE)

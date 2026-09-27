@@ -211,8 +211,19 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   mime_type 透传；新断言 test_ui_models 135 + test_ui_actions 67；
   debug/release 全量 ctest 43/43 零回归；GUI 截图 ×2 + 运行日志归档
   （RULE-11）。见下方 2026-09-27（M5-06）验证记录。）
-- [ ] `M5-07` Settings 页与主题（可验收：主题三选按 `DEC-005` 缺口处置
+- [x] `M5-07` Settings 页与主题（可验收：主题三选按 `DEC-005` 缺口处置
   落地并如实登记，最小设置项可演示）。
+  （2026-09-27 完成：Settings 页实体化——主题三选（跟随系统/浅/深）
+  segmented（§4 映射）页面持有 UI 态 + 经 akiTheme()/akiSemanticColors()
+  装配面生效（覆写清单/回归对照不变）；DEC-005 缺口走平台层查询路径——
+  `app/lifecycle/system_theme` 平台条件编译单元（Windows
+  AppsUseLightTheme；公开面仅 std 枚举 RULE-10；其余平台 Unknown 回落
+  Light 页内披露）；主题选择会话级（schema v1 无设置表，不私自扩表，
+  持久化登记为后续项）；最小设置项=数据目录（HostRuntime 装配面）+
+  本地设备 id（快照）mono 只读展示；resolve 状态机抽 EUI-NEO 无关
+  ui/theme/theme_mode.hpp（网络无关单测，test_ui_theme_values 62 断言）；
+  debug/release 全量 ctest 43/43 零回归；深浅两档渲染对照截图 ×3 +
+  运行日志归档（RULE-11）。见下方 2026-09-27（M5-07）验证记录。）
 - [ ] `M5-08` MVP 全链路验收（可验收：设计第 15 节清单 + `SCOPE-01`~
   `SCOPE-12` 逐项归档；M3 登记补做条件复核闭环；环境受限沿降级纪律）。
 - [ ] `M5-09` 收口审计与退出证据归集（可验收：审计记录 + 退出-1~5 证据
@@ -230,7 +241,10 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   补跑条件），不冒充已验证；补跑由负责人执行。
 - **无系统主题检测 API**（`DEC-005` 已知缺口）：Settings「跟随系统」需
   Aki 平台层查询或先交付浅/深两档；如走平台层查询需平台条件编译单元
-  （`RULE-10` 公开面仅 std 类型）。
+  （`RULE-10` 公开面仅 std 类型）。（M5-07 处置收口：走平台层查询路径——
+  `app/lifecycle/system_theme`（Windows `AppsUseLightTheme`；公开面仅
+  std 枚举）；非 Windows 平台/查询失败 Unknown 回落 Light 并页内披露，
+  跨平台系统主题扩展（如 XDG portal，需 dbus 依赖）出现需求时再立决策。）
 - **CI 无显示环境**：GLFW+OpenGL 渲染不进 CI——UI 逻辑层网络无关单测 +
   渲染层本机手工验证证据归档；不在 CI 宣称的检查不得写入 CI 断言
   （`RULE-11`）。
@@ -933,3 +947,75 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
     §5（M5-06 落地记录：共享组件抽取 + 操作面门控/披露形态）、总计划
     （当前状态条目）。无新决策记录（GC 延后为 DEC-012③ 登记议题的两向
     处置之一，触发条件登记于本记录并被 aki_design §11.1 引用）。
+
+- 2026-09-27（`M5-07` 完成；Windows 11 工作站（桌面会话）/ MSVC 2022
+  BuildTools 14.44.35207 / CMake 4.1.0；负责人：Linductor）：
+  - **① Settings 页实体化（SCOPE-12）**：`ui/pages/settings_page.{hpp,cpp}`
+    —— 主题三选 `segmented`（§4 Settings 页组件映射；三段
+    Follow system/Light/Dark，field 36 高，selection=页面持有 UI 态
+    `MainWindowModel::theme_setting`）经既有 `akiTheme()/
+    akiSemanticColors()` 装配面即时生效（§9.1 覆写清单与
+    aki_theme_values 回归对照不变——仅档位选择；GUI 深浅两档全壳渲染
+    对照实测）；最小设置项只读展示：数据目录（`HostRuntime::data_root()`
+    装配面，std::string）+ 本地设备 id（快照
+    `UiStateSnapshot::local_device`），mono caption（§2.1 mono 用于
+    路径/技术内容）。
+  - **② DEC-005 缺口处置 = 平台层查询路径**：`app/lifecycle/system_theme.
+    {hpp,cpp}` 平台条件编译单元（persistence/storage/data_root.cpp 先例：
+    平台分支隔离、公开面仅 std/aki 枚举，RULE-10）——Windows 查询
+    `HKCU\...\Themes\Personalize\AppsUseLightTheme`（有界单次注册表
+    读取，RegGetValueA，advapi32 仅 WIN32 链接）；缺失/类型不符/读失败/
+    非 Windows 平台一律 `Unknown` → `resolve_effective_theme` 回落
+    Light（不猜测），页内披露平台支持面（"unsupported platforms fall
+    back to Light"）。DEC-005 冻结时登记的「无系统主题检测 API」缺口按
+    其预设的平台层处置路径收口（里程碑风险节同步）。
+  - **③ 主题三选语义（§9.1 Settings 页装配条款，M1-08 先行同步）**：
+    `ThemeSetting = FollowSystem/Light/Dark` 页面持有；Light/Dark 直取、
+    FollowSystem 即时重查（点击回调上下文的有界读取——非 compose 树内）；
+    **主题选择为会话级**——不跨启动持久化（schema v1 无设置表，扩表属
+    公开契约变更须先立决策，不私自扩表；页内披露 + 本记录登记，后续项）；
+    启动初值 = FollowSystem 解析一次（组合根首帧装配期；GUI 日志证据
+    "settings: theme follow system -> light (system=queried), data
+    directory: ..."）。
+  - **④ ThemeMode 迁出 + 解析状态机可测面**：`ThemeMode` 自
+    aki_theme.hpp 迁至 EUI-NEO 无关的 `ui/theme/theme_mode.hpp`（连同
+    `ThemeSetting`/`SystemTheme` 与 `resolve_effective_theme` constexpr
+    纯函数——FollowSystem+Unknown 回落 Light 等），aki_theme.hpp 保留
+    EUI 装配面（aki_ui_design §2 映射不受影响）；akiTheme()/语义色消费方
+    零改动。
+  - **⑤ 测试**：test_ui_theme_values 增「主题三选解析状态机」用例
+    （Light/Dark 直取、FollowSystem×{Dark,Light,Unknown} 三路径——
+    Unknown 回落 Light 断言；62 断言 7 用例直跑通过）；无新增并发路径
+    （系统查询为点击回调/首帧装配内的有界同步读取，DOD-02 无新增面，
+    宿主生命周期覆盖维持）。
+  - **⑥ 验证（可复现命令与结果）**：configure `cmake --preset debug`
+    通过；debug 全量 `ctest --preset debug` → 100% passed 43/43；
+    release `cmake --build --preset release --config Release` 0 error
+    0 warning + `ctest --preset release` → 100% passed 43/43（最终代码
+    态复跑）；直跑 test_ui_theme_values.exe（62 断言）全过。
+  - **⑦ GUI 本机会话（RULE-11 归档）**：Release aki.exe，GUI 数据根经
+    `APPDATA` 注入同一 scratch 剖面（真实 `%APPDATA%ki` 未触碰）；
+    深浅两档渲染对照截图 ×3（aki-m5-07-settings.png 跟随系统选中
+    light、aki-m5-07-dark.png Dark 选中全壳深色、aki-m5-07-light.png
+    Light 选中全壳浅色——切换即时生效，requestUpdate 唤醒拾取）+
+    aki-run-m5-07-final.log（settings: theme follow system -> light
+    (system=queried) 启动解析证据 + onShutdown 8 步关闭序）归档
+    `build/scratch/`。
+  - **⑧ 退出-3 grep（本项扩面，最终代码态）**：第一方线程创建 0；
+    ui/+main.cpp 的 app::async/core::network/eui::network 0；EUI-NEO
+    include/类型越过 ui/ 0；ui/ 直写 Store 0；ui/ 持 transport 对象 0；
+    **system_theme 公开头无平台类型**（0 命中——平台 API 封死在
+    system_theme.cpp 条件编译分支内，RULE-10）；eui include 仅 main.cpp
+    + ui/ 渲染面。
+  - 限制与补跑条件：(a) 主题选择跨启动持久化未实现（schema v1 无设置
+    表；扩表须先立决策登记——本项如实降级为会话级并页内披露，触发条件
+    = M5-08 后产品确认持久化需求）；(b) 非 Windows 平台的系统主题查询
+    返回 Unknown（XDG portal 需 dbus 依赖，不引入——DEC-005 供应链
+    纪律），回落 Light 页内披露；跨平台扩展出现需求时再立决策；(c) CI
+    五档门禁随本工作项 PR 首跑（本会话未推送，如实登记）；深色档在
+    Linux/GPU 栈的渲染复核按 DEC-014 口径归本机 Linux 会话。
+  - 同步：本里程碑（M5-07 勾选、本记录、风险节处置收口）、
+    [aki_design](../design/aki_design.md) §9.1（Settings 页与主题三选
+    装配条款）、[aki_ui_design](../design/aki_ui_design.md) §5（M5-07
+    落地记录）、总计划（当前状态条目）。无新决策记录（平台查询为
+    DEC-005 缺口的预设处置路径之一，条款级同步；设置持久化留待决策）。
