@@ -7,6 +7,7 @@
 // 即失败）。上游默认档 vs 覆写值的运行期对拍由 GUI 宿主启动日志归档
 // （aki-run.log，M5-01 探针同款；RULE-11）。
 #include "ui/theme/aki_theme_values.hpp"
+#include "ui/theme/theme_mode.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -119,4 +120,36 @@ TEST_CASE("Mode invariants: primary inversion and brand step", "[ui][theme]") {
     REQUIRE(tv::kDarkPalette.primary == tv::kLightPalette.primary_foreground);
     REQUIRE(tv::kLightPalette.brand != tv::kDarkPalette.brand);
     REQUIRE(tv::kLightPalette.background != tv::kDarkPalette.background);
+}
+
+
+// M5-07：主题三选解析状态机（aki_design §9.1 Settings 页装配条款；
+// resolve_effective_theme 为 EUI-NEO 无关纯函数——Light/Dark 直取、
+// FollowSystem 经平台查询结果解析、Unknown 回落 Light 不猜测）。
+TEST_CASE("Theme setting resolution follows selection and system queries",
+    "[ui][theme][m5_07]") {
+    using aki::ui::resolve_effective_theme;
+    using aki::ui::SystemTheme;
+    using aki::ui::ThemeMode;
+    using aki::ui::ThemeSetting;
+
+    // Light/Dark 直取（系统查询结果不影响显式选择）。
+    REQUIRE(resolve_effective_theme(ThemeSetting::Light, SystemTheme::Dark)
+        == ThemeMode::Light);
+    REQUIRE(resolve_effective_theme(ThemeSetting::Dark, SystemTheme::Light)
+        == ThemeMode::Dark);
+
+    // FollowSystem：系统深/浅各自映射。
+    REQUIRE(resolve_effective_theme(
+                ThemeSetting::FollowSystem, SystemTheme::Dark)
+        == ThemeMode::Dark);
+    REQUIRE(resolve_effective_theme(
+                ThemeSetting::FollowSystem, SystemTheme::Light)
+        == ThemeMode::Light);
+
+    // FollowSystem + Unknown（非 Windows 平台/注册表读取失败）：回落
+    // Light（不猜测——页内披露平台支持面）。
+    REQUIRE(resolve_effective_theme(
+                ThemeSetting::FollowSystem, SystemTheme::Unknown)
+        == ThemeMode::Light);
 }

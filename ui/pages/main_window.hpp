@@ -12,6 +12,7 @@
 #include "ui/models/ui_actions.hpp"
 #include "ui/models/ui_state_consumer.hpp"
 #include "ui/pages/conversations_page.hpp"
+#include "ui/pages/settings_page.hpp"
 #include "ui/pages/transfers_page.hpp"
 #include "ui/theme/aki_theme.hpp"
 
@@ -34,7 +35,14 @@ enum class NavPage : std::uint8_t {
 // 页面模型（§9.1「页面持有 UI 态」；主线程 compose 上下文读写）。
 struct MainWindowModel {
     NavPage page = NavPage::Conversations;
+    // 生效档位（akiTheme()/akiSemanticColors() 参数；由 theme_setting 解析，
+    // M5-07）。
     ThemeMode theme = ThemeMode::Light;
+    // 主题三选 UI 态（M5-07 Settings 页 segmented；§9.1 页面持有 UI 态）。
+    ThemeSetting theme_setting = ThemeSetting::Light;
+    // 数据目录（HostRuntime::data_root() 装配面；Settings 页只读展示，
+    // std::string 公开面 RULE-10）。
+    std::string data_directory;
     // HostRuntime 装配失败降级占位（§9.1 启动↔关闭配对：错误占位 UI + 关窗
     // 仍经 onShutdown 闭合）；空 = 装配成功。
     std::string startup_error;

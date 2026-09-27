@@ -906,6 +906,23 @@ EUI-NEO 组合模型为 M5-01 探针实测——compose 为**保留模式、事�
   深浅两套覆写 ThemeColorTokens + `ui/theme` 扩展语义色常量。
   `ui/theme` 提供 `akiTheme()`（档位参数 light/dark）一次性装配，页面只
   消费语义名（M5-02 实体化，回归对照留档）。
+- **Settings 页与主题三选装配（M5-07）**：主题选择为页面持有 UI 态
+  （`ThemeSetting = FollowSystem / Light / Dark`；aki_ui_design §4 Settings
+  页 segmented 映射），生效经既有 `akiTheme()/akiSemanticColors()` 装配面
+  （§9.1 覆写清单不变，仅档位选择；档位数值权威面
+  `ui/theme/aki_theme_values.hpp` 回归对照维持）。三档语义：
+  `Light/Dark` 直取；`FollowSystem` 经平台条件编译单元
+  `app/lifecycle/system_theme` 查询（公开面仅 std 枚举，RULE-10——
+  Windows 查询用户 `AppsUseLightTheme` 偏好；其余平台/查询失败返回
+  `Unknown`），`Unknown` 回落 Light 并在页内披露平台支持面（DEC-005
+  已知缺口「无系统主题检测 API」的平台层处置路径）。选择为会话级——
+  不跨启动持久化（schema v1 无设置表，扩表属公开契约变更须先立决策，
+  RULE-09/§11）；启动初值 = FollowSystem 解析一次（组合根首帧装配期，
+  有界注册表/配置读取）。`ThemeMode/ThemeSetting/SystemTheme` 与解析
+  纯函数落 EUI-NEO 无关头 `ui/theme/theme_mode.hpp`（网络无关单测面）。
+  最小设置项（只读展示）：数据目录（`HostRuntime::data_root()` 装配面，
+  `std::string`，RULE-10）与本地设备 id（快照
+  `UiStateSnapshot::local_device`）。
 - **渲染层验证策略（`RULE-11`）**：GLFW+OpenGL 渲染不进 CI——UI 逻辑层
   （视图模型派生/状态映射/指令出站）以网络无关单测承载；compose/渲染层
   本机手工验证 + 截图/日志证据归档（M5-01 探针形态：日志落盘 + 超时终止，

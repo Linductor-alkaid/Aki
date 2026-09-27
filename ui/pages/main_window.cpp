@@ -49,7 +49,7 @@ const char* list_placeholder(NavPage page) {
     case NavPage::Transfers:
         return "transfer rows in the content pane (M5-06)";
     case NavPage::Settings:
-        return "settings entries placeholder (M5-07)";
+        return "settings entries in the content pane (M5-07)";
     }
     return "";
 }
@@ -459,6 +459,10 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
         } else if (model.page == NavPage::Transfers) {
             // ---- Transfers 页（M5-06，SCOPE-08 集中列表与操作面）----
             composeTransfersPage(ui, tokens, semantic, content_x, 0.0f,
+                content_width, height, model);
+        } else if (model.page == NavPage::Settings) {
+            // ---- Settings 页（M5-07，SCOPE-12 主题三选 + 最小设置项）----
+            composeSettingsPage(ui, tokens, semantic, content_x, 0.0f,
                 content_width, height, model);
         } else {
             components::text(ui, "aki.content.placeholder")

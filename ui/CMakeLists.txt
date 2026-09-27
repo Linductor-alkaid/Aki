@@ -32,6 +32,7 @@ add_library(aki_ui STATIC
     components/transfer_card.cpp
     pages/main_window.cpp
     pages/conversations_page.cpp
+    pages/settings_page.cpp
     pages/transfers_page.cpp)
 target_compile_features(aki_ui PUBLIC cxx_std_20)
 target_include_directories(aki_ui PUBLIC ${PROJECT_SOURCE_DIR})

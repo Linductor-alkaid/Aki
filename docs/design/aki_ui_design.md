@@ -248,6 +248,21 @@ Transfers / Settings。组件选型（`RISK-2026-002` 的盘点基线，M5 用 p
     实测 Paused 行经 Cancel 即转 Cancelled 中性态）；admission 拒绝经
     反馈行可见；孤儿接收行 re-push 触发面 = 页脚登记披露（无对应
     Manager 出站接口，不冒充可用动作——M5-04 分期披露同款形态）。
+
+- **M5-07 落地记录（2026-09-27，Settings 页与主题三选；§4 Settings 页
+  segmented 映射落地）**：
+  - 主题三选（跟随系统/浅/深）= `segmented` 三段 + 页面持有 UI 态
+    （`ThemeSetting`），生效经 `akiTheme()/akiSemanticColors()` 装配面
+    （§2 映射与覆写清单不变——仅档位选择，aki_theme_values 回归对照
+    维持）；深浅两档全壳渲染实测（GUI 截图对照）。
+  - 上游 `SegmentedStyle` 深色档选中文字与 indicator 同为 primary（白上
+    白不可见，GUI 实测）——选中文字覆写 §2.3 primary-foreground 配对
+    （页内 style 覆写，非 ui/theme 档位变更）。
+  - 「跟随系统」= 平台条件编译单元 `app/lifecycle/system_theme`
+    （Windows `AppsUseLightTheme` 用户偏好；其余平台/查询失败 Unknown
+    回落 Light 并页内披露）；主题选择会话级（不跨启动持久化，登记披露）。
+  - 最小设置项（只读展示）：数据目录（HostRuntime 装配面）与本地设备 id
+    （快照）以 mono caption 呈现（§2.1 mono 用于路径/技术内容）。
   - 页脚分行修正（2026-09-27 独立评审发现）：Transfers 页经 main_window
     以 y=0 全高调用，登记披露行原锚点（height-caption-section）与跨页
     反馈行（main_window 页尾同一锚点）完全重合——上条 GUI 归档证据

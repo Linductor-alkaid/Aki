@@ -8,6 +8,18 @@
 
 ## 当前状态
 
+- 2026-09-27：`M5-07` 完成：Settings 页与主题（`SCOPE-12`）——主题三选
+  （跟随系统/浅/深）`segmented`（§4 映射）页面持有 UI 态，经
+  akiTheme()/akiSemanticColors() 装配面即时生效（覆写清单/回归对照不变，
+  深浅两档全壳渲染对照实测）；DEC-005「无系统主题检测 API」缺口走平台层
+  查询路径收口——`app/lifecycle/system_theme` 平台条件编译单元（Windows
+  `AppsUseLightTheme`，公开面仅 std 枚举 RULE-10；非 Windows/查询失败
+  Unknown 回落 Light 页内披露）；主题选择会话级（schema v1 无设置表不
+  私自扩表，持久化登记为后续项）；最小设置项=数据目录（HostRuntime
+  装配面）+本地设备 id（快照）mono 只读展示；ThemeMode/解析状态机抽
+  EUI-NEO 无关 ui/theme/theme_mode.hpp（test_ui_theme_values 62 断言）；
+  debug/release 全量 ctest 43/43 零回归；深浅对照截图 ×3 + 运行日志
+  归档（RULE-11）。详见 M5 里程碑文档 M5-07 验证记录。
 - 2026-09-27：`M5-06` 完成：Transfers 页（`SCOPE-08` Transfers 页面）——
   传输集中列表（文件卡片共享形态：M5-05 ③ 会话内卡片抽出为
   `ui/components/transfer_card`，§4「会话内与 Transfers 页复用同一组件」
