@@ -2,12 +2,28 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-09-27
+> 更新日期：2026-09-28
 > 设计依据：[Aki 设计方案](../design/aki_design.md)
 > 协作约束：[AGENTS.md](../../AGENTS.md)、[项目管理与工程规范](../project/project-standards.md)
 
 ## 当前状态
 
+- 2026-09-28：**BUG-20260927-002 修复落地工作树**（M5-09 审计登记的 CI
+  master push tsan 间歇红档，独立修复；仅测试代码，无产品/pinned/抑制表
+  变更）：触点一 test_peer_sessions_loopback.cpp（⑧ 登记项）——
+  PeerSessionEvents 三回调（executor timer 线程执行）内 Catch2 `REQUIRE`
+  改为原子计数 `submit_failures` + 主线程两处统一断言（connected 到达后 +
+  `pipeline.stop()` 静置后权威断言，提交缺陷不被 [skip] 环境降级掩盖）；
+  **同族第二触点同批修复（范围延伸披露）**：审计扫描发现
+  test_disconnect_recovery_loopback.cpp:203-233 同型缺陷（回调内 REQUIRE，
+  含 `coordinator.start`），同款修复并增 `coordinator_start_failed` 原子
+  记录；其余 6 个集成测试 observer 回行逐一核验无 Catch 宏（同族残留 0）。
+  验证（本会话执行）：debug/release 两测试二进制重编 0 error；debug/release
+  全量 ctest 各 43/43 零回归；修复二进制各连跑 ×10 exit 0（本机 [skip]
+  路径，如实限定）；tsan 本机 configure 失败取证（`HEYAKI_SANITIZER=thread
+  requires GCC or Clang`）——**tsan 直接证据（多次连跑零 data race）随本
+  修复 MR 的 PR 档五档 CI 与 master push tsan 档观察取得，本会话未推送、
+  如实登记，不冒充绿档**。详见 M5 里程碑 BUG-20260927-002 验证记录。
 - 2026-09-27：`M5-09` 完成（收口审计与退出证据归集，纯审计与文档，无产品
   代码变更；`M5-01`~`M5-09` 工作项全部完成）：设计-实现审计矩阵逐项一致
   （aki_design §6.1/§9/§9.1/§10/§10.1/§11.1/§14 对 ui/ 四子目录 +

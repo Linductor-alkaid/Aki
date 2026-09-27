@@ -1518,7 +1518,11 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
       记录（沿同文件 connected_events/path_events 既有原子计数形态），
       主线程 `wait_until` 截止后统一断言；补验 = tsan 档多次连跑 +
       debug/release 全量零回归。登记期间 master push tsan 红档为已知
-      间歇缺陷，不冒充绿档。
+      间歇缺陷，不冒充绿档。（已修复：2026-09-28 修复落地工作树；同批
+      审计扫描发现并同型修复同族第二触点
+      test_disconnect_recovery_loopback.cpp:203-233——范围延伸披露，
+      详见下方 2026-09-28（BUG-20260927-002 修复）专用验证记录。闭环
+      注记沿 M5-08 记录 ⑥ 先例。）
   - 限制与补跑条件：退出-1 双端全链路（含 SCOPE-02 去重/不重放补测、
     传输行同屏截图、M3/M4 同批补跑项）待防火墙放行入站 TCP + LAN 双端
     真机，负责人 Linductor；许可证逐项审计留待正式发行前；
@@ -1530,3 +1534,69 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
     日期，M4-07 记录原文未改写）、总计划（更新日期 + 当前状态条目）。
     无设计/决策变更（审计未发现需要改设计的偏差）；无产品代码变更
     （`git status` 仅 docs/ 三文档）。
+
+- 2026-09-28（**BUG-20260927-002 修复**；工程规范 6.3 最小变更记录；
+  Windows 11 工作站（桌面会话）/ MSVC 2022 BuildTools 14.44.35207 /
+  CMake 4.1.0；基线 = master @ `108a41d`（#50 合入，工作树修复前干净）；
+  负责人：Linductor）：
+  - **范围**：仅测试代码——消除 master push CI Linux/tsan 间歇红档的
+    第一方诱因（本里程碑 M5-09 验证记录 ⑧ 登记的缺陷）。不改产品代码、
+    不改 pinned 依赖、不引入 `race:Catch` 抑制（DEC-014 覆盖声明第 4
+    条：第一方竞争必修、不进抑制表）；无新增并发路径（DOD-02 六项无
+    新增面——既有宿主生命周期覆盖维持）。
+  - **修复内容（两文件，同一根因同型修复）**：
+    - `tests/integration/test_peer_sessions_loopback.cpp`（⑧ 登记触点）：
+      `PeerSessionEvents` 三回调（on_connected/on_disconnected/
+      on_connection_path_changed，executor timer 线程执行）内的 `REQUIRE
+      (submit_update(...))` 全部改为 bool 接收 + 原子计数 `submit_failures`
+      （沿同文件 connected_events/path_events 原子计数形态）；主线程两处
+      统一断言——connected 到达后首个主线程断言位（[skip] 退出点之后，
+      提交缺陷不被环境降级掩盖）+ `pipeline.stop()` + 800ms 静置后的
+      权威断言（timer 取消后全部回调静止）。
+    - `tests/integration/test_disconnect_recovery_loopback.cpp`（**同族
+      第二触点，本批发现并同型修复——范围延伸披露**：审计扫描其余集成
+      测试时发现该文件 :203-233 同样在 `PeerSessionEvents` 回调内使用
+      `REQUIRE`，含 `REQUIRE(coordinator.start(peer, hooks))`，为同一
+      根因（executor timer 线程执行 Catch2 断言）的未爆点）：回调内
+      REQUIRE 改为 `submit_failures` 原子计数 + `coordinator_start_
+      failed` 原子记录；主线程两处统一断言——disconnected 到达后（依赖
+      重连的断言之前，缺陷不表现为超时误诊）+ `pipeline.stop()`/
+      `coordinator.stop_all()` 消费后的权威断言。修复语义等价性：原
+      REQUIRE 失败即用例失败，现失败计数非零即用例失败（主线程），
+      验证强度不降；`if (peer == identity_b.id)` 守卫内断言语义保持。
+    - 其余 6 个集成测试（discovery_pairing/image_message/message/real_
+      adapter/transfer_full/transfer_send loopback）的 `set_pairing_
+      observer`/`set_file_event_observer` 回调逐一核验：均为原子/互斥
+      记录形态，无 Catch 宏——同族残留 0；单测侧（test_peer_sessions_
+      pipeline/test_reconnect_loop 手动驱动回调）核验无回调内断言。
+  - **验证（可复现命令与结果，本会话执行）**：
+    - 编译：`cmake --build --preset debug --config Debug` 增量重建——
+      两测试二进制重编链接 0 error 0 warning（exit 0）；
+      `cmake --build --preset release --config Release` 同。
+    - debug 全量 `ctest --test-dir build/debug --preset debug` →
+      `100% tests passed, 0 tests failed out of 43`（168.0s）；release
+      全量 `ctest --test-dir build/release --preset release` →
+      `100% tests passed, 0 tests failed out of 43`（177.6s）——零回归。
+    - 修复二进制连跑（debug）：`test_peer_sessions_loopback.exe` ×10 与
+      `test_disconnect_recovery_loopback.exe` ×10 全部 exit 0——**如实
+      限定**：本机防火墙拦截至端 TLS，两用例在本机走 [skip] 受控退出
+      （`[skip] pairing handshake blocked (firewall)` 实测输出），修复
+      代码段（回调注册之后的回调执行）**本机不可达**；连跑仅证明编译
+      链接与前段（发现/连接/受限判定）无回归。
+    - **tsan 档本机不可达取证**：`cmake --preset tsan` → configure
+      失败：`HEYAKI_SANITIZER=thread requires GCC or Clang in the M0
+      baseline`（本机唯一工具链 MSVC；tsan 预设 displayName 即
+      "GCC/Clang, Linux"）——验收项「tsan 档该测试二进制多次连跑零
+      data race 报告」本机不可执行，沿 DEC-014 覆盖声明第 5 条
+      （TSAN 声明限 Linux）与 M1 起既有登记口径，由 CI Linux/tsan 档
+      承载。
+  - **限制与补跑条件（如实登记，不冒充绿档）**：(a) 修复的直接证据
+    （tsan 档零 data race 报告 + 用例通过）**尚未取得**——PR 档 CI
+    五档与 master push tsan 档观察随本修复 MR 闭环执行（本会话未推送，
+    如实登记；间歇缺陷以多次绿档佐证收敛，单次绿不宣称证明）；MR 描述
+    须复述本条。(b) 若 CI 观察轮次不足或再现他因红档，按工程规范 §4
+    登记原因/负责人/补跑条件，不勾选完成。(c) 退出-1 双端项（含本测试
+    的真实双端语义）沿 M5-08 ⑤ 降级登记不变，负责人 Linductor。
+  - **同步**：本里程碑（M5-09 记录 ⑧ 闭环注记 + 本记录）、总计划
+    （当前状态条目）。无决策记录（修复为 ⑧ 已登记路径的执行，无新
+    取舍）；无设计变更。
