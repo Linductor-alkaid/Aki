@@ -224,8 +224,20 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   ui/theme/theme_mode.hpp（网络无关单测，test_ui_theme_values 62 断言）；
   debug/release 全量 ctest 43/43 零回归；深浅两档渲染对照截图 ×3 +
   运行日志归档（RULE-11）。见下方 2026-09-27（M5-07）验证记录。）
-- [ ] `M5-08` MVP 全链路验收（可验收：设计第 15 节清单 + `SCOPE-01`~
+- [x] `M5-08` MVP 全链路验收（可验收：设计第 15 节清单 + `SCOPE-01`~
   `SCOPE-12` 逐项归档；M3 登记补做条件复核闭环；环境受限沿降级纪律）。
+  （2026-09-27 完成（验收归集类，无产品代码变更）：SCOPE-01~12 逐项
+  归档两态标注（本机已验证/双端待补跑）——证据锚点映射 M1~M4 里程碑
+  验证记录与 M5-01~07 GUI 实测；验收基线复跑 debug/release 全量 ctest
+  各 43/43（干净树）；本机补证：发现启停 GUI 实拍（start_discovery
+  admitted）+ 文本发送/传输终态/主题设置引用既有归档；**发现一项 GUI
+  缺陷**（Devices 页 Pending 行 Confirm 点击无响应，复现 2 新会话 ×3
+  点击，相邻按钮正常——登记独立修复工作项，SCOPE-03 信任确认弹窗 GUI
+  验收被该项阻塞，网络无关半边由 test_device_trust 承载）；M3 登记
+  复核闭环：口令 verifier 闭合（DEC-016）/secret backend 再登记/
+  DeviceIdentity 元数据再登记/kAkiPairingPassword 维持（DEC-016 移除
+  条件未触发）；双端项显式降级（原因/负责人/补跑条件，退出-1 保持
+  未勾选）。见下方 2026-09-27（M5-08）验证记录。）
 - [ ] `M5-09` 收口审计与退出证据归集（可验收：审计记录 + 退出-1~5 证据
   齐备；工作项全部完成不自动关闭里程碑——关闭以收口审计为准）。
 
@@ -1019,3 +1031,143 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
     装配条款）、[aki_ui_design](../design/aki_ui_design.md) §5（M5-07
     落地记录）、总计划（当前状态条目）。无新决策记录（平台查询为
     DEC-005 缺口的预设处置路径之一，条款级同步；设置持久化留待决策）。
+
+- 2026-09-27（`M5-08` 完成（验收归集，无产品代码变更）；Windows 11 工作
+  站（桌面会话）/ MSVC 2022 BuildTools 14.44.35207 / CMake 4.1.0；负责人：
+  Linductor）：
+  - **① 验收基线复跑**：工作树干净（`git status` 0 项）；debug 全量
+    `ctest --preset debug` → 100% passed 43/43；release `ctest --preset
+    release` → 100% passed 43/43（无代码变更基线确认）。
+  - **② MVP 清单归档（设计第 15 节 + `SCOPE-01`~`SCOPE-12`，两态标注：
+    「已验证」/「本机已验证、双端待补跑」——不冒充已验证，工程规范 §4
+    规则 3/4）**：
+    - `SCOPE-01` 设备身份（Heyaki 密码学身份、无账户层）：**已验证**——
+      M3-03（test_local_identity：身份跨重启稳定、公钥逐字节一致；
+      aki_host_smoke 重启恢复断言）；DEC-016 口令 verifier 真实化
+      （M5-04）；GUI：Settings 本地设备 id mono 展示
+      （build/scratch/aki-m5-07-settings.png）。
+    - `SCOPE-02` 设备发现（LAN/已知设备记录）：**本机已验证（发现 SPI/
+      启停/事件字段）、去重/不重放未测、双端待补跑**——已验证锚点：
+      Adapter 发现 SPI/注入→快照/事件面（test_heyaki_adapter，Fake
+      注入）；真实 LAN 管道启停与 discovered 事件字段（method=LAN、对端
+      公钥、Unknown 态、stop 后零新增——test_discovery_pairing_loopback，
+      本机经 [skip] 受控退出点仅保发现/停止断言）；GUI 发现启停实拍
+      build/scratch/aki-m5-08-discovery.png "start_discovery admitted"。
+      **未测（2026-09-27 评审修正：原锚点「lan_discovery 单测」不存在
+      ——ctest 43 项无该目标，tests/ 无直接测 LanDiscoveryPipeline 的
+      单测，GUI 单次渲染亦不构成去重观察）**：lan_discovery.hpp:94-98
+      的 trusted 跳过（已知设备记录不重放 discovered，§8.1）与 seen_
+      去重（重复端点不重复合成）语义无任何测试断言。补测条件：新增
+      LanDiscovery 管道单测（合成 endpoints 含 trusted/重复项，断言不
+      重放/不重合成），随双端补跑一并执行；Relay/邀请链接/手动输入为
+      M3-09 登记分期（GUI 已披露），双端真实发现（另一台 Aki 设备广播/
+      被广播）随补跑。
+    - `SCOPE-03` 信任建立（Unknown→Pending→Trusted/Rejected/Revoked +
+      指纹确认）：**网络无关半边已验证、GUI 确认弹窗被缺陷阻塞、双端
+      待补跑**——状态机（test_trust_state）+ 信任三操作 SPI/路由/转移边
+      （test_device_trust 76 断言）+ UiActions 通道（test_ui_actions）；
+      **缺陷登记（本轮验收发现）**：Devices 页 Pending 行 Confirm 按钮
+      点击无响应（弹窗不出现、无任何状态变化；复现 2 个全新会话各 ≥2
+      次点击 100% 复现；同行 Reject/邻行 Revoke/导航/其他页按钮均正常
+      ——证据 build/scratch/aki-m5-08-confirm-dialog.png + 本会话操作
+      序列日志）；伴随一次疑似错乱触发（Confirm 位置点击后出现 alpha 行
+      "revoke admitted" 反馈）。处置：**独立修复工作项/MR**（嫌疑方向：
+      retained-mode compose 下条件行内按钮的回调登记/元素复用），修复并
+      复测后回填本清单该项 GUI 证据；双端 pair_peer wire 面随补跑。
+    - `SCOPE-04` 设备列表（名称/类型/OS/连接方式/在线状态）：**已验证**
+      ——M5-04（DEC-015 逐设备路径 test_device_trust + GUI 设备行/
+      徽标/指纹列 build/scratch/aki-m5-04-devices.png、
+      aki-m5-08-discovery.png 三行三信任态同屏）。
+    - `SCOPE-05` 一对一 Conversation（路径无关模型 + List）：**已验证**
+      ——会话模型 M1/M3（test_conversation_state、DEC-009 归属约定单测
+      test_ui_models）；GUI 会话列表（最后消息摘要/方向/投递徽标，
+      build/scratch/aki-m5-05-chat.png、aki-m5-08-discovery.png 左栏）
+      + New chat 建会话入口（aki-m5-05-newchat.png）。
+    - `SCOPE-06` 一对一文本消息（发送/接收/送达状态）：**本机已验证、
+      双端待补跑**——发送路由/UI（test_ui_actions、GUI 实测：canonical
+      hym1_ admission + Failed 徽标 + 列表实时更新，
+      aki-m5-05-sent.png）；接收侧消息行（test_app_managers 收到路由）；
+      双端 Delivered 回报/ack 链路随补跑（M3-07 先例降级）。
+    - `SCOPE-07` 图片消息：**本机已验证、双端待补跑**——codec 往返/拒收
+      （test_image_payload_codec）、SPI/Manager/编排闸门
+      （test_heyaki_adapter、test_transfer_send_path、M4-03/06）；GUI
+      发起面（文件对话框只读选取→hash-first 编排）M5-05 实测（闸门
+      拒绝路径 GUI 会话 DB 实证）；双端 aki.image wire 面 + 对端展示随
+      补跑。
+    - `SCOPE-08` 文件传输（独立 Session/进度/暂停/取消 + Transfers 页）：
+      **本机已验证、双端待补跑**——发送承载/接收合并/控制面/重启处置
+      （test_transfer_send_path/receive_path/recovery/state，DEC-011/
+      012/013，M4-02~06）；GUI Transfers 页四态行同屏 + DEC-013⑥ 无
+      会话行取消直接终态实测（aki-m5-06-transfers.png、
+      aki-m5-06-cancel-clicked.png）；双端 wire 侧暂停/恢复对端效果随
+      补跑。
+    - `SCOPE-09` 本地持久化（重启恢复）：**已验证**——M2-07/08
+      （test_persistence_*、restart 恢复用例、 aki_host_smoke
+      smoke.device_lifecycle）；GUI scratch 剖面跨会话恢复多次实测
+      （M5-05/06/08 各次启动 devices/conversations/messages/transfers
+      计数恢复 + DEC-013 非终态降级 Paused 行 GUI 可见，
+      aki-m5-06-transfers.png）。
+    - `SCOPE-10` Presence 与连接路径（LAN/P2P/Relay）：**状态面已验证、
+      实时变化待补跑**——管道/映射/逐设备路径（test_peer_sessions_
+      pipeline、DEC-015 test_device_trust 路径序列）；GUI 徽标展示
+      （aki-m5-04-devices.png，未连接路径 "--"）；真实 presence Online/
+      路径切换需双端会话（补跑；Relay 路径依赖 relay 接入登记项）。
+    - `SCOPE-11` 断线恢复：**网络无关半边已验证、双端待补跑**——
+      reconnect_loop 重连协调器单测（test_reconnect_loop 7 用例，
+      EXEC-05 可中断切片/预算/取消）+ 会话模型路径无关（RULE-06 单测）；
+      close_lan 合成断开回环与真实断连→恢复横幅转换（§3 warning 横幅
+      已实现、条件分支 GUI 未触发——如实登记）随补跑。
+    - `SCOPE-12` EUI-NEO 主窗口与基础主题：**已验证**——M5-02（三栏壳+
+      四页导航 aki-m5-02-window.png、主题覆写双份回归对照）+ M5-07
+      （主题三选深浅两档全壳对照 aki-m5-07-settings/-dark/-light.png +
+      onShutdown 关闭序日志）。
+    - 设计第 15 节链路清单逐环节映射：身份建立（SCOPE-01）→发现
+      （SCOPE-02）→信任确认（SCOPE-03，GUI 弹窗被缺陷阻塞——见上）→
+      会话（SCOPE-05）→文本/图片/文件（SCOPE-06/07/08）→进度→暂停/
+      恢复/取消（SCOPE-08）→重启恢复（SCOPE-09）→断线恢复（SCOPE-11）
+      ——逐环节证据同上；**全链路串联（双端）未执行**（退出-1 保持
+      未勾选，见 ⑤ 降级声明）。
+  - **③ 本机补证（本项新增归档）**：发现启停 GUI 实拍
+    （aki-m5-08-discovery.png：Devices 页三行三信任态 + Start Discovery
+    点击后 "start_discovery admitted" 反馈——真实 LAN 发现启动）；GUI
+    数据根经 `APPDATA` 注入 scratch 剖面（真实 `%APPDATA%ki` 未触碰，
+    演示行经 gitignored scratch 种子探针写入）；aki-run-m5-08-final.log
+    （设置解析行 + onShutdown 8 步关闭序 fully_stopped=1）。
+  - **④ M3 登记补做条件复核闭环（M3-09 ④ 归档项逐项结论）**：
+    - (a) **占位口令 verifier：闭合**——DEC-016（M5-04）落地
+      kAkiPairingPassword + 真实 argon2id verifier
+      （heyaki/adapter/local_identity.hpp:125-129 create_password_
+      verifier 接线；test_local_identity 口令往返用例；M5-04 评审修正
+      argon2id 创建 57-67ms 5 连跑实测）；M3-03 占位假编码串已退役。
+    - (b) **kAkiPairingPassword 维持（登记不变）**：DEC-016 移除条件
+      「M5-07 设置面引入用户口令」未触发——M5-07 交付的最小设置项为
+      数据目录展示等（M5 范围条款 :70-71），不含口令输入；配对口令仍为
+      公开弱口令（DEC-016 安全语义披露维持），再登记至用户口令流程
+      立项。
+    - (c) **secret backend prefer_os_backend=false：再登记（触发条件）**
+      ——代码现状 heyaki/adapter/local_identity.hpp:75（heyaki 加密文件
+      回退承载，确定性配置）；M3-03 登记的「OS 钥匙串随 M5 设置面」未
+      触发（同 (b)，M5-07 设置面未含 secret backend 项）；再登记触发
+      条件：OS 钥匙串集成的安全/产品需求确认（届时经决策记录定
+      prefer_os_backend 平台策略与用户口令流程）。
+    - (d) **DeviceIdentity display_name/device_class/os_name/capabilities
+      元数据占位：再登记（触发条件）**——代码现状 heyaki/adapter/
+      lan_discovery.hpp:105-107（display_name 取 DeviceId 前 16 字符
+      占位；class/os/capabilities 缺省——DEC-006 缺口条目：pinned
+      LanPresence 不携带元数据）；再登记触发条件：heyaki 协议演进使
+      LanPresence 携带元数据，或 RPC 能力查询可用（届时映射至
+      DeviceIdentity 并同步 GUI 列）。
+    - (e) **发现来源分期（Relay/邀请链接/手动输入）：维持 M3-09 登记**
+      （GUI 分期披露维持，aki-m5-08-discovery.png 页脚可见）。
+  - **⑤ 双端真机项显式降级声明（退出-1 保持未勾选）**：范围=文本
+    Delivered 回报、图片/文件 wire 面与对端效果、断连→恢复横幅转换、
+    传输暂停/恢复/取消 wire 侧、M3/M4 退出-1/3 同批补跑（含 CI tsan
+    运行期证据）；**原因**：本机防火墙拦截入站 TCP、无第二台同网段
+    Aki 设备（M3-09 起同批约束，网络无关半边已全部验证——见 ②）；
+    **负责人**：Linductor；**补跑条件**：防火墙放行入站 TCP + LAN 双端
+    真机（两台设备同网段运行 Release aki.exe），按 M3-09/M4-07 先例
+    执行 M5-08 退出-1 全链路清单并归档证据。
+  - **⑥ 同步**：本里程碑（M5-08 勾选、本记录）、总计划（当前状态条目
+    含 PR #44 欠账补记）；aki_design §15 无变更（清单原文为准）。缺陷
+    （Confirm 无响应）走独立修复工作项/MR，修复后回填 SCOPE-03 GUI
+    证据并复跑全量 ctest。
