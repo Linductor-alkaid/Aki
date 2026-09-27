@@ -12,7 +12,7 @@
 > 真实 Adapter、NodeSession、发现/消息/图片/传输/presence/重连管道与恢复
 > 语义均已就绪
 > 建议发布点：v0.5.0（MVP）
-> 更新日期：2026-09-27（M5-05 完成同日）
+> 更新日期：2026-09-27（M5-09 收口审计同日）
 
 ## 目标
 
@@ -238,8 +238,20 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   DeviceIdentity 元数据再登记/kAkiPairingPassword 维持（DEC-016 移除
   条件未触发）；双端项显式降级（原因/负责人/补跑条件，退出-1 保持
   未勾选）。见下方 2026-09-27（M5-08）验证记录。）
-- [ ] `M5-09` 收口审计与退出证据归集（可验收：审计记录 + 退出-1~5 证据
+- [x] `M5-09` 收口审计与退出证据归集（可验收：审计记录 + 退出-1~5 证据
   齐备；工作项全部完成不自动关闭里程碑——关闭以收口审计为准）。
+  （2026-09-27 完成（纯审计与文档，无产品代码变更）：设计-实现审计矩阵
+  逐项一致（aki_design §6.1/§9/§9.1/§10/§10.1/§11.1/§14 对 ui/ 四子目录 +
+  app/lifecycle + main.cpp；aki_ui_design §2~5；DEC-005/014/015/016 逐一）
+  ——未记录偏差数 0；六项已知偏差锚点逐一核实（登记全部维持）；退出-2~4
+  证据本会话复验（DOD-02 映射 + 边界 grep 全 0 + debug/release 全量 ctest
+  各 43/43 + gh 逐 PR 核实 #39~#49 五档全绿）；退出-5 链接核验
+  `links checked: 145, broken: 0`；审计附带处置：M4 退出-2~5 勾选沿 M3-09
+  先例对齐、两处更新日期订正、许可证检查维持发行前登记；**审计发现并
+  登记 BUG-20260927-002**（master push tsan 间歇红档——CI 专有测试代码
+  竞争触发 vendored Catch2 内部状态，非产品竞争，独立 MR 修复）；退出-1
+  双端全链路按降级纪律保持未勾选，M5 保持 In Progress。见下方
+  2026-09-27（M5-09）验证记录。）
 
 ## 风险与阻塞
 
@@ -280,20 +292,41 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
 - [ ] 退出-1：MVP 全链路双端验收——设计第 15 节清单逐项 +
   `SCOPE-01`~`SCOPE-12` 全边界（发现→信任→会话→文本/图片/文件→进度→
   暂停/恢复/取消→重启恢复→断线恢复）；环境受限时按 M3-09/M4-07 先例
-  「部分验证 + 如实降级声明」处置并登记补跑条件。
-- [ ] 退出-2：DOD-02 六项沿 UI 新增并发路径通过——正常完成、任务异常、
+  「部分验证 + 如实降级声明」处置并登记补跑条件。（`M5-09` 处置：双端
+  全链路属环境受限——本机防火墙拦截至端 TCP、无第二台同网段 Aki 设备
+  （M3-09 起同批约束）；网络无关半边已全部验证（M5-08 ② 两态标注归档）；
+  原因/负责人 Linductor/补跑条件（防火墙放行入站 TCP + LAN 双端真机）
+  已登记于 M5-08 记录 ⑤。沿 M3-09/M4-07 先例**保持未勾选**，M5 关闭待
+  补跑后复核；如需缩小退出口径须先经决策记录重新划界（§14 纪律）。）
+- [x] 退出-2：DOD-02 六项沿 UI 新增并发路径通过——正常完成、任务异常、
   提交拒绝、执行中取消、超时、shutdown（含 `onShutdown` 关闭序与跨线程
-  唤醒路径）；UI 逻辑层网络无关单测通过。
-- [ ] 退出-3：边界锁定——`RULE-01`/`RULE-02`（页面代码不持有 transport
+  唤醒路径）；UI 逻辑层网络无关单测通过。（`M5-09` 复验勾选：映射见
+  M5-09 验证记录 ③——六项沿宿主生命周期路径（test_host_runtime 67 断言
+  直跑复核）+ 跨线程唤醒/钩子异常（test_ui_models 135 断言）+ 出站通道
+  （test_ui_actions 67 断言）；UI 新增路径自 M5-03 起无池上线程/无新增
+  并发面（M5-06/07 记录），六项由宿主路径承载。）
+- [x] 退出-3：边界锁定——`RULE-01`/`RULE-02`（页面代码不持有 transport
   对象、UI 只消费状态变化）、`RULE-10`（公开面无 EUI-NEO/平台类型）、
   `DEC-005` 并发边界 grep（无 `app::async`/`core::network`/`audio` 引用、
-  无自建线程）通过。
-- [ ] 退出-4：debug/release 构建与全量测试通过；ASAN/UBSAN/TSAN 随 CI
+  无自建线程）通过。（`M5-09` 终态代码复验勾选：七项 grep 全 0 + 测试 exe
+  不链 eui 经 cmake --graphviz 链接图核验——原 dumpbin 符号表复核经复跑
+  证实无区分力已更正，命令与输出见 M5-09 验证记录 ④。）
+- [x] 退出-4：debug/release 构建与全量测试通过；ASAN/UBSAN/TSAN 随 CI
   门禁；渲染层本机验证证据归档（截图/运行日志），不适用工具链记录限制
-  与补跑条件。
-- [ ] 退出-5：设计（第 9 节细化/第 14 节）、决策（UI 相关缺口如立新决策）、
+  与补跑条件。（`M5-09` 复验勾选：debug/release 全量 ctest 各 43/43
+  （本会话，release 增量重建后）；`gh pr checks` 逐 PR 核实 #39~#49
+  五档（Linux debug/asan/ubsan/tsan + Windows MSVC）全绿，run 号留档
+  M5-09 记录 ⑤；渲染层截图 ×29 与运行日志归档 `build/scratch/`
+  （M5-02~08 + BUG-001，RULE-11）。**如实披露**：master push 档存在
+  间歇 tsan 红档（当前 HEAD run 36328366422，test_peer_sessions_loopback
+  的 Catch2 断言线程竞争——第一方测试代码诱因，非产品竞争；合并门禁
+  PR 档全绿），已登记 BUG-20260927-002 待独立修复（M5-09 记录 ⑧）。）
+- [x] 退出-5：设计（第 9 节细化/第 14 节）、决策（UI 相关缺口如立新决策）、
   aki_ui_design 复审记录、总计划与里程碑状态同步；验证记录含可复现命令；
-  环境受限项降级声明完整。
+  环境受限项降级声明完整。（`M5-09` 复验勾选：设计 §6.1/§9.1/§10.1/§11.1
+  与 DEC-005/014/015/016 及 aki_ui_design §5 记录逐项核对一致；本记录
+  命令可复现；退出-1 降级声明完整；M5 系列变更文档相对链接
+  `links checked: 145, broken: 0`。）
 
 （自 `M5-01` 起按工程规范 6.1/6.3 追加。）
 
@@ -1241,3 +1274,259 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   - **同步**：M5-08 验证记录 ② SCOPE-03 条目（BUG 闭环回填）、M5-08
     记录 ⑥（闭环注记）、总计划当前状态（BUG 编号落档 + 修复条目）。
     无决策记录（根因为 Aki 页面代码缺陷，无上游能力诉求）。
+
+- 2026-09-27（`M5-09` 完成（收口审计与退出证据归集，纯审计与文档，无产品
+  代码变更）；Windows 11 工作站（桌面会话）/ MSVC 2022 BuildTools
+  14.44.35207 / CMake 4.1.0 / gh CLI（GitHub API）；审计基线 =
+  master @ `afaab0b`（#49 合入，工作树干净，`git status` 0 项）；负责人：
+  Linductor；沿 M1-08/M2-08/M3-09/M4-07 纪律）：
+  - **① 设计-实现审计矩阵（逐项一致，未记录偏差数 0）**：
+    - aki_design §6.1（wire id 生成入口收敛）：`heyaki/adapter/wire_ids.hpp`
+      单一入口（`new_message_id`/`new_transfer_id` = 16 随机字节全零重抽 →
+      `::heyaki::to_string` 规范串）在码；`NodeSession::new_transfer_id`
+      委托同入口（runtime_node.hpp:417-420）；页面经 `UiActions::
+      new_message_id/new_transfer_id` 取 id（ui_actions.hpp，RULE-10 不携带
+      wire 编码知识）——与 §6.1② 文字一致。
+    - aki_design §9（三栏 + 四页导航）：main_window.cpp 三栏壳（导航/列表/
+      内容）+ Conversations/Devices/Transfers/Settings 路由；页面模型持
+      UI 态、compose 只读派生——一致。
+    - aki_design §9.1（UI 装配契约五条 + M5-02~07 增补条款）：视图模型
+      四域纯函数派生（ui/models/view_models）；快照消费水位
+      （ui_state_consumer `load_snapshot_newer_than`）+ 双唤醒钩子
+      `on_publish`/`on_update_submitted`（app_state_owner.hpp:84/:92，
+      host_runtime.cpp:367/:372 同注 `app::requestUpdate`）——一致；
+      首帧装配例外（main.cpp:204-261 frames==1 同步 `ensure_assembled`，
+      唯一显式例外）——一致；启动↔关闭配对（main.cpp onShutdown 薄委托
+      `shutdown_with_report`）——一致；关闭序 §8.3 钩子原序 + EXEC-01
+      步骤 2~5（host_runtime.cpp:606-678：request_cancel_all→flush 四
+      Manager→adapter.stop_delivery→peer_pipeline.stop→reconnect.stop_all→
+      node_session.shutdown→state_owner.close→db.request_drain，
+      hook_sequence 逐项入报告）——一致；主题档位覆写清单（aki_theme_
+      values.hpp 与 §9.1 清单逐值一致：title 18/subtitle 16/body 14/
+      caption 13/hint 12/micro 10/label 14、radius.small 4、field 36/
+      menuItem 28、间距六档零覆写）——一致；Settings 页与主题三选
+      （theme_mode.hpp `resolve_effective_theme` Unknown 回落 Light +
+      system_theme 平台单元）——一致；渲染层验证策略（RULE-11 截图/日志
+      归档 `build/scratch/`）——一致。
+    - aki_design §10/§10.1（状态边界与 comm 映射）：`AppState` 四域
+      Store；UI 只读消费（ui/ 无 submit_update/post_event/drain——grep 0）；
+      `SetDeviceConnectionPath` 部分更新（app_state_updates.hpp:46-49）、
+      退役全局 `SetConnectionPath` 代码引用 0（唯一命中
+      app_state_updates.hpp:45 注释「取代退役的全局…」为 DEC-015 登记的
+      文档性退役注）——一致；无 ad-hoc 队列/自建条件变量等待——一致。
+    - aki_design §11.1（接收根 GC 显式延后条款，:1173-1179）：设计条款
+      与 M5-06 ⑤ 处置及触发条件三则互引一致——一致。
+    - aki_design §14（工程目录）：ui/components|pages|models|theme 实体化
+      与目录树一致；`transfer/manager/` 暂空注记、`transfer/storage/`
+      抽象面落位注记（M4-04）维持——一致。
+    - aki_ui_design §2~5：§2.1/2.2/2.3 令牌常量（aki_theme_values.hpp，
+      test_ui_theme_values 62 断言独立抄录对拍）；§2.4 深度锚点
+      （panelShadow/popupShadow，M5-01 复核结论维持）；§2.6 图标码点
+      （FA7 码点表 M5-05 起按登记消费）；§3 状态视觉语义（投递/传输/
+      信任/路径徽标语义色、断连横幅、无传输行兜底态——conversations_page/
+      transfer_card 实现）；§4 组件映射（会话列表=scrollview 行（预算
+      256，非 virtuallist）、气泡=card+text、图片=image+dialog、文件卡片
+      =card+progress+button 共享 transfer_card、输入区=input+button、
+      主题三选=segmented——组件使用 grep 统计与映射表逐项对应）；§5
+      复审记录（M5-01）与落地记录（M5-05/06/07）已归档——一致。
+    - DEC 逐一核对（4 项）：[DEC-005](../decisions/DEC-005-eui-neo-integration.md)
+      （pinned `b9032a8a` v0.6.0、八项开关 CACHE FORCE、并发边界禁用面
+      grep 0、`eui::neo` 仅 aki_ui 链接、测试 exe 不链 eui（链接图核验，
+      见 ④——原 dumpbin 符号复核经复跑证实无区分力已更正）、requestUpdate
+      唤醒、「影响与风险」验证项 M5-02
+      回填在档）——一致；[DEC-014](../decisions/DEC-014-eui-tsan-coverage.md)
+      （全图插桩零豁免 + CI Linux 完整依赖集 + 覆盖声明五条 + 抑制表
+      登记制；CI 五档含 tsan 全绿见 ⑤）——一致；
+      [DEC-015](../decisions/DEC-015-per-device-connection-path.md)
+      （逐设备路径集合 + 部分更新类型、断连置 Unknown、初连补发、退役
+      全局摘要 0 残留）——一致；
+      [DEC-016](../decisions/DEC-016-pairing-password-verifier.md)
+      （`kAkiPairingPassword` 冻结常量、created 分支真实 argon2id
+      verifier、弹窗无口令框（main_window.cpp 确认弹窗仅 mono 指纹 +
+      Confirm/Cancel）、集成回环字面量替换在档）——一致。
+  - **② 已知偏差锚点核实（6 项，登记全部维持，无需新增偏差）**：
+    1. SCOPE-02 去重/不重放未测——锚点在码：lan_discovery.hpp:94-98
+       （`entry.trusted → continue` 不重放 + `seen_` insert 去重）；tests/
+       无直接 LanDiscovery 管道单测（grep 证实仅 loopback/adapter 间接
+       触达）——M5-08 ② 评审修正登记维持，补测条件（新增管道单测）随
+       双端补跑同批。
+    2. UpsertDevice 整行替换覆写隐患 + PairingCompletedWork 结果丢弃——
+       锚点在码：device_manager.hpp:230-252（`apply_trust_transition` 从
+       最近已发布快照读-改-写整行 upsert）+ :280-288（`handle(
+       PairingCompletedWork&)` 仅返回 `apply_trust_transition` 结果，拒绝
+       仅 `handler_rejections` 计数、无延迟重排）——「风险与阻塞」节
+       后续工作项登记维持（与本覆写隐患同批处置）。
+    3. 主题选择会话级不持久化——锚点在码：main.cpp:239-249 组合根解析
+       一次，全仓无主题持久化写入路径（schema v1 无设置表，扩表须先立
+       决策）——M5-07 降级登记维持。
+    4. 接收根残留 GC 显式延后——设计 §11.1 条款 + M5-06 ⑤ 触发条件
+       三则互引完整——登记维持（DEC-012③ 冻结）。
+    5. 传输行操作反馈与披露行同屏截图——M5-06 ⑩ 登记的复验为跨页
+       sticky 反馈路径（aki-fix-footer-*.png，归档在）；传输行同屏归
+       M5-08 双端补跑（M5-06 原 scratch 剖面未留存、传输行不可复现，
+       如实维持）——登记维持。
+    6. BUG-20260927-001 闭环与 Escape 修正注——修复在码：main_window.cpp
+       确认弹窗链尾 `.build()`（:579）+ `.screen/.theme`（:505-506）+
+       `.onOpenChange`（:574-578）；「无 Escape 路径」收缩注在 M5-08
+       记录与总计划（pinned dialog 仅背板 onClick 接 requestClose）——
+       登记维持。
+  - **③ 退出-2 复验（DOD-02 六项沿 UI 并发路径映射 + 直跑断言计数）**：
+    六项沿宿主生命周期路径承载——tests/unit/test_host_runtime.cpp 单用例
+    67 断言（① 正常完成 :116 submit_auto + Manager 泵 + 真实发现启停；
+    ② 任务异常 :140 future 上浮 + failure 计数；③ 执行中取消 :152
+    submit_cancellable + request_task_cancel 协作退出；④ 提交拒绝 :185
+    max_in_flight 耗尽 → CapacityExhausted 即时就绪；⑤+⑥ 超时与
+    shutdown :207-269——completion_wait 预算耗尽如实记录 + §8.3 钩子
+    原序 8 步 + 两 blocking worker 2/2 回收 + 幂等 + 关闭后提交显式
+    拒绝）。跨线程唤醒/钩子异常：test_ui_models（on_publish 发布→唤醒
+    调序 + executor 任务内驱动 drain + 钩子异常全捕获 + on_update_
+    submitted 受理点，10 用例 135 断言）；出站通道：test_ui_actions
+    （页面→UiActions→Manager 泵→Fake SPI 全通道，2 用例 67 断言）。
+    UI 新增路径自 M5-03 起未新增池上线程/周期任务/自有调度面（M5-06/07
+    记录「无新增并发路径」结论维持），六项由宿主路径承载成立。本会话
+    直跑（当前代码态）：`build/debug/tests/Debug/test_host_runtime.exe`
+    → 67 断言全过；`test_ui_models.exe` → 135 断言 10 用例全过；
+    `test_ui_actions.exe` → 67 断言 2 用例全过；`test_ui_theme_values.exe`
+    → 62 断言 7 用例全过。
+  - **④ 退出-3 复验（边界 grep，命令与输出；终态代码 = afaab0b）**：
+    1. 第一方线程创建：`grep -rn "std::thread\|std::jthread\|std::async\|
+       CreateThread\|pthread_create" app/ conversation/ device/ heyaki/
+       persistence/ transfer/ ui/ main.cpp`（剔除 `std::this_thread`）→
+       **0 命中**（tests 侧 `std::this_thread::get_id` 线程标识比较为
+       轮询/断言纪律内，无线程创建）。
+    2. DEC-005 禁用面：`grep -rn "app::async\|core::network\|eui::network\|
+       eui::audio\|beginTask" ui/ main.cpp` → **0 命中**。
+    3. EUI 越层：`grep -rln "eui/\|eui::" app/ conversation/ device/
+       heyaki/ persistence/ transfer/` → **0 命中**。
+    4. ui/ 持 transport 类型：`grep -rn "HeyakiAdapter\|NodeSession\|
+       HeyakiNodeAdapter\|RuntimeNode" ui/` → 仅 ui/CMakeLists.txt:15
+       注释 1 处（文档性）。
+    5. ui/ 直写 Store：`grep -rn "submit_update\|post_event\|drain_updates\|
+       publish_if_dirty" ui/` → **0 命中**（RULE-02）。
+    6. eui include 落点：仅 main.cpp + ui/pages/*（5 文件）+
+       ui/components/transfer_card.hpp + ui/theme/aki_theme.hpp（aki_ui
+       目标内渲染面；ui/models 无 eui——DEC-005「测试 exe 不链 eui」
+       维持）。
+    7. RULE-10 公开面：`grep -rn "eui::\|components::\|GLFW\|glfw\|
+       windows.h\|RegGetValue" ui/models/*.hpp app/lifecycle/system_theme.hpp
+       app/lifecycle/host_runtime.hpp` → **0 命中**。链接面复核**更正**
+       （2026-09-28 独立评审复跑）：原记 `dumpbin //SYMBOLS
+       test_ui_models.exe`/`test_host_runtime.exe` 对
+       `eui::|components::|glfw` 0 命中不构成证据——同命令复跑
+       （BuildTools dumpbin 14.44.35214）两 exe 输出各仅 19 行节摘要、
+       连 `aki::` 亦 0 命中（默认 MSVC 链接把符号表剥离至 PDB，该检查
+       对链接产物无区分力，原「0 命中」记录作废）。改用有区分力的链接
+       图核验（2026-09-28 复跑）：`cmake
+       --graphviz=build/debug/aki_target_graph.dot build/debug` →
+       `test_ui_models -> {Catch2WithMain, aki_ui_models}`、
+       `test_host_runtime -> {Catch2, aki_host}`、`aki_ui_models ->
+       {aki_app, aki_heyaki, aki_persistence, heyaki_core}`
+       （aki_target_graph.dot:251-252/348-349/99-102）；`aki_ui ->
+       eui_neo (eui::neo)` 仅被 GUI 宿主目标 `aki` 链接
+       （aki_target_graph.dot:132-135）。DEC-005「测试 exe 不链 eui」
+       结论维持，源级一致：ui/CMakeLists.txt:8-24（aki_ui_models 纯
+       std/aki 面）、tests/CMakeLists.txt:528-530/547-549（直链
+       aki_host/aki_ui_models，不经 aki_ui）。
+  - **⑤ 退出-4 复验（构建/测试/CI）**：本机复跑（本会话执行，当前代码
+    态 afaab0b）——debug：`ctest --test-dir build/debug --preset debug`
+    → `100% tests passed, 0 tests failed out of 43`（171.6s；`cmake
+    --build --preset debug` 增量重建后复跑 exit 0，159.8s）；release：
+    `cmake --build --preset release --config Release` 增量重建（0 error）
+    + `ctest --test-dir build/release --preset release` → `100% tests
+  passed, 0 tests failed out of 43`（174.2s）。`gh pr checks` 逐 PR
+  核实（本会话执行）M5 系列 #39~#49 共 11 个 PR 全部五档（Linux
+  debug/asan/ubsan/tsan + Windows MSVC）最终态 pass——#39（M5 文档）
+  run 36220267115、#40（M5-01）run 36223297589、#41（M5-02）run
+  36260288692、#42（M5-03）run 36265960159、#43（M5-04）run
+  36296441677、#44（图标）run 36296528961、#45（M5-05）run
+  36304569570、#46（M5-06）run 36310345155、#47（M5-07）run
+  36314463441、#48（M5-08）run 36319355761、#49（BUG-001）run
+  36327544916。渲染层本机证据归档复核：`build/scratch/` 截图 ×29 +
+  运行日志 ×8（M5-02~08 各批 + BUG-001 + 页脚修正，RULE-11 口径）。
+  **master push 触发档如实登记（见 ⑧）**：当前 HEAD（afaab0b）的 push
+  run 36328366422 Linux/tsan 失败（42/43，test_peer_sessions_loopback
+  ——Catch2 内部状态竞争，间歇性；同内容树在 #49 PR run tsan 通过），
+  合并门禁（PR 档）全绿结论不受影响，缺陷已登记 BUG-20260927-002。
+  - **⑥ 退出-5 复验（文档同步与链接）**：设计（§6.1/§9/§9.1/§10/§10.1/
+    §11.1/§14）、决策（DEC-005 回填/DEC-014/015/016）、aki_ui_design
+    （§5 复审 + M5-05/06/07 落地记录）、总计划（当前状态 M5-01~08 +
+    BUG-001 条目 + 决策表）逐项核对一致（见 ①②）。相对链接核验（本
+    会话执行，脚本对 M5 系列变更文档集：aki_design/aki_ui_design/
+    zcode-design-system/m5 里程碑/总计划/DEC-005/014/015/016/
+    assets/icons/README.md 共 10 文档）：`links checked: 145, broken: 0`；
+    M4 勾选对齐编辑后终态复跑（M4 文档并入，共 11 文档）：
+    `links checked: 173, broken: 0`。
+    本会话文档订正两处：总计划「更新日期」2026-09-26 → 2026-09-27（原
+    值滞后于 2026-09-27 的 M5-05~08/BUG-001 条目）；本文档「更新日期」
+    「M5-05 完成同日」→「M5-09 收口审计同日」（同因）。
+  - **⑦ 审计附带复核与处置**：
+    - **M4 退出-2~5 勾选对齐**：M4-07 记录（2026-09-26）已归集退出-2~5
+      完整证据（DOD-02/状态机映射「映射完整」、本机复跑 38/38、gh 核实
+      #30~#37 五档全绿、链接 `219 checked, 0 broken`——m4-image-file-
+      transfer.md M4-07 记录「退出-2~5」段），但四个勾选框全部保持
+      `[ ]`，与 M3-09 先例（m3-heyaki-integration.md 退出-2/4/5 为
+      `[x]`，仅环境受限退出项保持未勾选）不一致。本审计逐项核实证据
+      后按工程规范 §4 规则 1/5 与先例对齐勾选（依据为 M4-07 归集证据，
+      非本审计新产生验证；本审计全量 ctest 43/43 零回归交叉佐证）；
+      退出-1 双端真链路属环境受限，保持未勾选。对齐说明注记于 M4 文档
+      退出条件节首（M3-09 评审修正注同款形态，不改写历史记录）。
+    - **许可证检查（设计第 9 节，本工作项登记的复核项）**：**维持发行
+      前项、不冒充已完成**。现状盘点：EUI-NEO 本体 Apache-2.0
+      （third_party/EUI-NEO/LICENSE；锁文件 `license`+`license_file`
+      已登记，`used_by` 注明「assets 许可证在发行前审计」）；bundled
+      3rd 十件套（glfw/freetype/libpng/zlib/glad/md4c/miniaudio/tray/
+      yyjson/nanosvg+stb）各自许可证随 pinned 源码树分发；assets 面含
+      Font Awesome 7 Free-Solid-900.otf、中文字体 ×2（JingNanJunJunTi
+      Bold/YouSheBiaoTiHei）、svg 插画、icon、shadertoy shader——
+      逐一许可核验留待正式发行前（含 aki_ui_design §2.6/§6 与
+      assets/icons/README.md 已登记的 heyaki 图标 MIT 溯源）。触发条件
+      = 发行流程启动。
+    - **里程碑状态处置**：`M5-01`~`M5-09` 工作项全部完成（本项勾选）；
+      退出-1 双端全链路属环境受限（防火墙拦截至端 TCP、无 LAN 双端，
+      原因/负责人 Linductor/补跑条件已登记 M5-08 记录 ⑤）——沿 M3-09/
+      M4-07 先例**保持未勾选**，**M5 保持 In Progress**（工程规范 §4
+      规则 5：工作项全部完成不自动关闭里程碑；关闭待退出-1 补跑后
+      复核，如需缩小退出口径须先经决策记录重新划界）。
+  - **⑧ 审计发现登记：BUG-20260927-002（CI master push tsan 间歇红档；
+    本项纯登记，修复走独立 MR）**：
+    - **现象**：master push 触发的 CI 六档中 Linux/tsan 间歇失败——当前
+      HEAD（afaab0b，#49 合入）run 36328366422（2026-09-27）42/43，
+      test_peer_sessions_loopback Failed；回溯同因先例：55206b0（M5-06
+      合入）run 36311065064（2026-09-27）同测试同报告。近 6 次 master
+      push run 中 2 次红（其余 4 次含同测试全绿），同期全部 M5 系列 PR
+      档 tsan 全绿（含同内容树 #49 run 36327544916）——间歇性，
+      时序依赖。
+    - **报告本体（vendored Catch2 内部状态）**：
+      `SUMMARY: ThreadSanitizer: data race src/catch2/internal/
+      catch_run_context.cpp:598 in Catch::RunContext::assertionPassed
+      FastPath`——`m_lastAssertionPassed` 快路径无锁读与互斥下写竞争；
+      竞争两侧栈均无 `aki::` 第一方帧。
+    - **根因（第一方测试代码诱因，tests/ 属第一方面）**：
+      test_peer_sessions_loopback.cpp:246-274 在 `PeerSessionEvents`
+      三个事件回调（on_connected/on_disconnected/on_connection_path_
+      changed——经 `PeerSessionPipeline` 于 **executor timer 线程**执行）
+      内使用 `REQUIRE(...)`；主线程断言评估（如 :310）与之并发时触发
+      Catch2 RunContext 非线程安全内部状态（Catch2 断言仅保证主线程
+      使用）。DEC-014 覆盖声明第 4 条：第一方（含 tests/）竞争必修、
+      不进抑制表——本缺陷不引入 `race:Catch` 抑制。
+    - **影响面**：仅 CI tsan 档该测试二进制（CI 专有触发形态——依赖
+      事件在主线程断言窗口内到达）；不涉产品代码竞争（报告零 `aki::`
+      帧；debug/release/asan/ubsan 全绿；产品并发路径由既有全档门禁
+      与 test_host_runtime 等覆盖）。合并门禁纪律未破：六次合并的
+      PR 档全绿在先。
+    - **修复路径（独立 MR，另行排期）**：回调内 `REQUIRE` 改为原子
+      记录（沿同文件 connected_events/path_events 既有原子计数形态），
+      主线程 `wait_until` 截止后统一断言；补验 = tsan 档多次连跑 +
+      debug/release 全量零回归。登记期间 master push tsan 红档为已知
+      间歇缺陷，不冒充绿档。
+  - 限制与补跑条件：退出-1 双端全链路（含 SCOPE-02 去重/不重放补测、
+    传输行同屏截图、M3/M4 同批补跑项）待防火墙放行入站 TCP + LAN 双端
+    真机，负责人 Linductor；许可证逐项审计留待正式发行前；
+    BUG-20260927-002（master push tsan 间歇红档）待独立 MR 修复——修复
+    前以 PR 档门禁为合并前置（既有纪律），master push tsan 红档按 ⑧
+    登记理解，不冒充绿档。
+  - 同步：本里程碑（M5-09 勾选、退出-1~5 处置、更新日期、本记录）、
+    [M4 里程碑](m4-image-file-transfer.md)（退出-2~5 勾选对齐 + 更新
+    日期，M4-07 记录原文未改写）、总计划（更新日期 + 当前状态条目）。
+    无设计/决策变更（审计未发现需要改设计的偏差）；无产品代码变更
+    （`git status` 仅 docs/ 三文档）。
