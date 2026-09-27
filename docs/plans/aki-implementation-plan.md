@@ -2,12 +2,38 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-09-26
+> 更新日期：2026-09-27
 > 设计依据：[Aki 设计方案](../design/aki_design.md)
 > 协作约束：[AGENTS.md](../../AGENTS.md)、[项目管理与工程规范](../project/project-standards.md)
 
 ## 当前状态
 
+- 2026-09-27：`M5-09` 完成（收口审计与退出证据归集，纯审计与文档，无产品
+  代码变更；`M5-01`~`M5-09` 工作项全部完成）：设计-实现审计矩阵逐项一致
+  （aki_design §6.1/§9/§9.1/§10/§10.1/§11.1/§14 对 ui/ 四子目录 +
+  app/lifecycle + main.cpp；aki_ui_design §2~5；DEC-005/014/015/016 逐一
+  ——未记录偏差数 0）；六项已知偏差锚点逐一核实（SCOPE-02 去重/不重放
+  补测、UpsertDevice 覆写隐患 + PairingCompletedWork 结果丢弃、主题会话
+  级、接收根 GC 延后、传输行同屏截图、BUG-001 闭环——登记全部维持）；
+  退出-2~4 本会话复验（DOD-02 六项沿宿主生命周期 + 唤醒/出站通道映射，
+  test_host_runtime 67/test_ui_models 135/test_ui_actions 67 断言直跑；
+  边界 grep 七项全 0 + 测试 exe 不链 eui（cmake --graphviz 链接图核验，
+  原 dumpbin 符号 0 记录证实空洞已更正——见 M5-09 记录 ④）；debug/release
+  全量 ctest 各 43/43）；`gh pr checks` 逐 PR 核实 M5 系列 #39~#49 五档全绿
+  （run 号留档 M5-09 记录）；退出-5 链接核验 `links checked: 145,
+  broken: 0`。**审计发现并登记 BUG-20260927-002**：master push 触发的
+  CI Linux/tsan 间歇红档（近 6 次 push run 中 2 次红：afaab0b run
+  36328366422、55206b0 run 36311065064）——test_peer_sessions_loopback
+  的事件回调在 executor 线程执行 Catch2 `REQUIRE`（tests/ 第一方测试
+  代码诱因），与主线程断言并发触发 vendored Catch2 RunContext 内部
+  状态竞争（catch_run_context.cpp:598，报告零 `aki::` 帧，非产品
+  竞争；同内容树 PR 档 tsan 全绿，合并门禁纪律未破）——按 DEC-014
+  覆盖声明第 4 条不进抑制表，独立 MR 修复（回调内改原子记录 + 主线程
+  统一断言）。审计附带处置：M4 退出-2~5 勾选沿 M3-09 先例对齐（依据
+  M4-07 已归集证据）、总计划与 M5 文档「更新日期」订正、许可证检查维持
+  发行前登记；退出-1 双端全链路按降级纪律保持未勾选（防火墙/无 LAN
+  双端，补跑条件 M5-08 ⑤），**M5 保持 In Progress 待补跑后复核**。
+  详见 M5 里程碑文档 M5-09 验证记录。
 - 2026-09-27：**BUG-20260927-001 修复闭环**（M5-08 验收发现的 GUI 缺陷，
   独立修复，无 pinned/网络/持久化变更）：Devices 页 Pending 行 Confirm
   点击无响应——根因=信任确认弹窗 builder 链缺尾部 `.build()`
