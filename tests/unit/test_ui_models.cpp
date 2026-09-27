@@ -293,9 +293,18 @@ TEST_CASE("Transfer views expose direction, progress fraction and terminal",
     store.transfers.push_back(make_transfer("t3", "alpha", "local", 10, 100,
         aki::transfer::TransferState::Transferring));
 
+    // t4：Paused 孤儿降级行（DEC-013：重启降级常态产物）——M5-06 操作面
+    // 派生的核心行态（Resume/Cancel 可用，DEC-013⑥ 无会话行取消入口）。
+    store.transfers.push_back(make_transfer("t4", "alpha", "local", 30, 100,
+        aki::transfer::TransferState::Paused));
+    store.transfers.push_back(make_transfer("t5", "local", "alpha", 0, 100,
+        aki::transfer::TransferState::Queued));
+    store.transfers.push_back(make_transfer("t6", "local", "alpha", 10, 100,
+        aki::transfer::TransferState::Failed));
+
     const auto views =
         derive_transfer_views(store, aki::device::DeviceId{"local"});
-    REQUIRE(views.size() == 3);
+    REQUIRE(views.size() == 6);
     // t1：出站，进度 0.5，非终态。
     REQUIRE(views[0].outbound);
     REQUIRE(views[0].peer.value == "alpha");
@@ -303,6 +312,9 @@ TEST_CASE("Transfer views expose direction, progress fraction and terminal",
     REQUIRE(views[0].progress < 0.51);
     REQUIRE_FALSE(views[0].terminal);
     REQUIRE(views[0].file_name == "t1.pt");
+    // mime 透传（种子行未设 → 空串；卡片侧以 application/octet-stream 兜底
+    // 标注—— aki_ui_design §4 渲染契约）。
+    REQUIRE(views[0].mime_type.empty());
     // t2：入站终态；total==0 → fraction 0（不除零），终态由 state 解释。
     REQUIRE_FALSE(views[1].outbound);
     REQUIRE(views[1].progress == 0.0);
@@ -310,6 +322,33 @@ TEST_CASE("Transfer views expose direction, progress fraction and terminal",
     REQUIRE(views[1].state == aki::transfer::TransferState::Completed);
     // t3：进行中的入站行非终态。
     REQUIRE_FALSE(views[2].terminal);
+
+    // M5-06：操作可用性派生（§7 固定边；仅 UI 门控——操作经 UiActions，
+    // admission 拒绝可见）。
+    // Transferring：Pause + Cancel，无 Resume。
+    REQUIRE(views[0].can_pause());
+    REQUIRE_FALSE(views[0].can_resume());
+    REQUIRE(views[0].can_cancel());
+    // Completed 终态：三操作全部不可用。
+    REQUIRE_FALSE(views[1].can_pause());
+    REQUIRE_FALSE(views[1].can_resume());
+    REQUIRE_FALSE(views[1].can_cancel());
+    // Paused（DEC-013 孤儿降级行）：Resume + Cancel（⑥ 无会话行取消的
+    // UI 触达），无 Pause。
+    REQUIRE(views[3].state == aki::transfer::TransferState::Paused);
+    REQUIRE_FALSE(views[3].can_pause());
+    REQUIRE(views[3].can_resume());
+    REQUIRE(views[3].can_cancel());
+    // Queued：仅 Cancel（Queued→Paused 为重启降级边，非用户动作面）。
+    REQUIRE(views[4].state == aki::transfer::TransferState::Queued);
+    REQUIRE_FALSE(views[4].can_pause());
+    REQUIRE_FALSE(views[4].can_resume());
+    REQUIRE(views[4].can_cancel());
+    // Failed 终态：三操作全部不可用（终态幂等，RULE-08）。
+    REQUIRE(views[5].terminal);
+    REQUIRE_FALSE(views[5].can_pause());
+    REQUIRE_FALSE(views[5].can_resume());
+    REQUIRE_FALSE(views[5].can_cancel());
 }
 
 TEST_CASE("consume_ui_state dedups by watermark and re-derives on publish",

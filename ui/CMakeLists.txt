@@ -29,8 +29,10 @@ aki_apply_warnings(aki_ui_models PRIVATE)
 # tests/unit/test_ui_theme_values.cpp 承载。
 add_library(aki_ui STATIC
     theme/aki_theme.cpp
+    components/transfer_card.cpp
     pages/main_window.cpp
-    pages/conversations_page.cpp)
+    pages/conversations_page.cpp
+    pages/transfers_page.cpp)
 target_compile_features(aki_ui PUBLIC cxx_std_20)
 target_include_directories(aki_ui PUBLIC ${PROJECT_SOURCE_DIR})
 target_link_libraries(aki_ui PUBLIC aki_ui_models eui::neo)

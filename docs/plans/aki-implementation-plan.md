@@ -8,6 +8,20 @@
 
 ## 当前状态
 
+- 2026-09-27：`M5-06` 完成：Transfers 页（`SCOPE-08` Transfers 页面）——
+  传输集中列表（文件卡片共享形态：M5-05 ③ 会话内卡片抽出为
+  `ui/components/transfer_card`，§4「会话内与 Transfers 页复用同一组件」
+  契约兑现，形状与语义色不变）+ 操作面 Pause/Resume/Cancel 按
+  TransferView 状态门控派生（§7 固定边）经 UiActions 既有传输三接口；
+  **Paused 行 Cancel = DEC-013⑥ 无会话行直接终态入口 UI 触达**（GUI 实测
+  Paused·72% 行经 Cancel 转 Cancelled 中性态；admission 反馈可见性原证据
+  存在页脚叠印缺陷，修正后 GUI 复验——见 M5-06 验证记录⑩）；
+  孤儿接收行 re-push 触发面=页脚登记披露（无出站接口，不冒充动作）；
+  接收根残留 GC 议题处置=**显式延后**（DEC-012③ 两向决策点；收敛路径
+  既有，触发条件三则登记于 M5-06 验证记录并被 aki_design §11.1 引用）；
+  TransferView 增 mime 透传；新断言 test_ui_models 135 + test_ui_actions
+  67；debug/release 全量 ctest 43/43 零回归；GUI 截图 ×2 + 运行日志
+  归档（RULE-11）。详见 M5 里程碑文档 M5-06 验证记录。
 - 2026-09-27：`M5-05` 完成：Conversations 页与聊天窗口（`SCOPE-05`/
   `SCOPE-06`/`SCOPE-07` UI 面 + `SCOPE-08` 会话内文件卡片）——会话列表
   （M5-03 ConversationView 派生复用 + 最后消息方向/投递徽标扩展，Trusted

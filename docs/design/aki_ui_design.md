@@ -235,6 +235,28 @@ Transfers / Settings。组件选型（`RISK-2026-002` 的盘点基线，M5 用 p
     `success` / Rejected·Revoked `destructive`，Rejected/Revoked 的会话
     行无点击面（§3 会话入口禁用）。
 
+- **M5-06 落地记录（2026-09-27，Transfers 页；组件复用契约兑现）**：
+  - §4「文件卡片 | card + progress + button | 会话内与 Transfers 页复用
+    同一组件」实体化为共享单元 `ui/components/transfer_card`（命名空间
+    `aki::ui::widgets`——避让 EUI `::components`）：卡片本体（方向箭头/
+    文件名/大小·mime/进度条/状态文案）+ `format_bytes`/传输态语义色
+    （§3）随迁，形状与语义色自 M5-05 ③ 原样迁移；会话气泡卡片与
+    Transfers 行共同消费。
+  - Transfers 页操作面：Pause/Resume/Cancel 按 TransferView 状态门控
+    （§7 固定边派生：Transferring→Pause、Paused→Resume、非终态→Cancel；
+    Paused 行 Cancel = DEC-013⑥ 无会话行直接终态入口的 UI 触达，GUI
+    实测 Paused 行经 Cancel 即转 Cancelled 中性态）；admission 拒绝经
+    反馈行可见；孤儿接收行 re-push 触发面 = 页脚登记披露（无对应
+    Manager 出站接口，不冒充可用动作——M5-04 分期披露同款形态）。
+  - 页脚分行修正（2026-09-27 独立评审发现）：Transfers 页经 main_window
+    以 y=0 全高调用，登记披露行原锚点（height-caption-section）与跨页
+    反馈行（main_window 页尾同一锚点）完全重合——上条 GUI 归档证据
+    （aki-m5-06-cancel-clicked.png）中反馈文字与披露文字叠印不可辨读，
+    「admission 拒绝经反馈行可见」恰在拒绝场景不成立。修复：披露行上移
+    一行（caption 行高 + tiny 间距），列表底预留同步扩为两行页脚，反馈行
+    锚点不动；GUI 重验反馈行与披露行两行并存、各自可辨读
+    （aki-fix-footer-4-files-split.png 及页脚裁切归档 `build/scratch/`）。
+
 ## 6. 来源与许可
 
 - ZCode Design System：`https://github.com/zai-org/ZCode`，`DESIGN.md`

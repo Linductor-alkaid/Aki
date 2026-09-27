@@ -197,8 +197,20 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   徽标可见 + 列表摘要实时更新）；新断言 test_ui_models 116 + test_ui_
   actions 65；debug/release 全量 ctest 43/43 零回归；本机 GUI 截图 ×5 +
   运行日志归档（RULE-11）。见下方 2026-09-27（M5-05）验证记录。）
-- [ ] `M5-06` Transfers 页（可验收：传输集中列表与暂停/恢复/取消操作面
+- [x] `M5-06` Transfers 页（可验收：传输集中列表与暂停/恢复/取消操作面
   可演示；接收根残留 GC 议题实现或显式延后并登记触发条件）。
+  （2026-09-27 完成：Transfers 页实体化（`ui/pages/transfers_page`）——
+  传输行=文件卡片共享形态（M5-05 ③ 抽出为 `ui/components/transfer_card`，
+  §4 复用契约兑现；形状与语义色不变）+ 操作面 Pause/Resume/Cancel 按
+  TransferView 状态门控派生（§7 固定边）经 UiActions 既有传输三接口；
+  Paused 行 Cancel = DEC-013⑥ 无会话行直接终态入口 UI 触达（GUI 实测
+  Paused 行经 Cancel 即转 Cancelled 中性态；admission 反馈可见性原证据
+  存在页脚叠印缺陷，修正后 GUI 复验——见验证记录⑩）；孤儿
+  接收行 re-push 触发面=页脚登记披露；接收根残留 GC 议题处置=显式延后
+  （aki_design §11.1 同步，触发条件三则登记于本记录）；TransferView 增
+  mime_type 透传；新断言 test_ui_models 135 + test_ui_actions 67；
+  debug/release 全量 ctest 43/43 零回归；GUI 截图 ×2 + 运行日志归档
+  （RULE-11）。见下方 2026-09-27（M5-06）验证记录。）
 - [ ] `M5-07` Settings 页与主题（可验收：主题三选按 `DEC-005` 缺口处置
   落地并如实登记，最小设置项可演示）。
 - [ ] `M5-08` MVP 全链路验收（可验收：设计第 15 节清单 + `SCOPE-01`~
@@ -814,3 +826,110 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
     wire id 收敛/受理唤醒为 §6.1/§9.1 既有契约的修订与具体化（M1-08
     先改设计后合代码），未越契约边界。
 
+- 2026-09-27（`M5-06` 完成；Windows 11 工作站（桌面会话）/ MSVC 2022
+  BuildTools 14.44.35207 / CMake 4.1.0；负责人：Linductor）：
+  - **① Transfers 页实体化（SCOPE-08）**：`ui/pages/transfers_page.{hpp,cpp}`
+    —— 传输行（固定高 88，scrollview 容纳；行数预算 256，RULE-09）=
+    文件卡片本体（方向箭头/文件名/大小·mime/进度条/状态文案，§4 共享
+    形态）+ 方向·对端 caption（快照设备 join）+ 操作按钮纵排（状态门控）；
+    页头计数 + 页脚登记披露 + 空态文案。无独立页面模型（无弹窗/草稿/
+    滚动代数需求——滚动位置由 pinned scrollview 运行期状态保持；操作
+    反馈经共享 `MainWindowModel::last_action_feedback`，RULE-09）。
+  - **② 共享传输卡片抽取（§4 复用契约兑现）**：`ui/components/
+    transfer_card.{hpp,cpp}`（命名空间 `aki::ui::widgets`——避让 EUI
+    `::components` 限定名，aki::ui 内 `components::` 解析冲突实测规避）；
+    M5-05 ③ 会话内文件卡片本体原样迁移（方向/文件名/大小·mime/进度/
+    状态 + `format_bytes`/`transfer_state_color`（§3 语义色）），会话页
+    气泡卡片改消费共享体（形状与语义色不变——M5-05 前瞻条款落地）；
+    `TransferView` 增 `mime_type` 透传（行侧真实媒体标注，空 → 卡片
+    `application/octet-stream` 兜底）。
+  - **③ 操作面与 DEC-013⑥ UI 触达**：Pause/Resume/Cancel 按
+    `TransferView::can_pause/can_resume/can_cancel` 门控（§7 固定边纯派生：
+    Transferring→Pause、Paused→Resume、非终态→Cancel、终态全不可用——
+    Queued→Paused/Negotiating→Paused 为 DEC-013 重启降级边，非用户动作
+    面）；操作经 `UiActions` 既有传输三接口（M5-03 建面），返回值即泵
+    入队 admission、拒绝经反馈行可见（RULE-09）。**Paused 行 Cancel =
+    DEC-013⑥ 无会话行 `cancel_transfer` 直接终态写入的 UI 触达**（M4
+    唯一出口）：GUI 实测 policy.pt Paused·72% 行经 Cancel 即转
+    `Cancelled · 72%`（中性进度条、按钮集收起、反馈行
+    "cancel admitted (hyt1_seedpolicy72pct001)"——发送/唤醒/消费/派生/
+    渲染全链 + owner 状态机终态校验；该反馈行文案在归档截图底部与页脚
+    登记披露行叠印不可辨读——页脚分行修正与复验见⑩，终态转换与全链
+    断言不受影响）。
+  - **④ 孤儿接收行 re-push 触发面登记（M4-05/06 移交项）**：接收行恢复
+    按 DEC-013② 为 wire 事件驱动（对端重推/committed-窗口重发收敛），
+    Aki 侧无 re-push 请求出站接口——本项以页脚登记披露呈现
+    （"orphan receive rows: re-push trigger is a registered follow-up
+    (M4 handover)"），不冒充可用动作；功能化触发条件=出现 re-push 出站
+    接口决策（wire 面需先立 DEC）。
+  - **⑤ 接收根残留 GC 议题处置（DEC-012③ 登记项；两向决策点）**：
+    **显式延后**。理由：收敛路径已存在且运行——Completed 作业同源删除
+    （DEC-012①）、Failed/Cancelled 触发 discard 幂等删除 + heyaki 失败/
+    取消自清其接收侧残留（DEC-012③）、Paused 行恢复后经作业幂等重跑
+    收敛（DEC-013②）；实现即时 GC 需扩 M2-06 启动清扫面/新增清扫作业
+    （M3/M4 既有语义面），在残留无实证累积前属无验收对象的预防性复杂度。
+    **实现触发条件（登记，任一出现即立项）**：(a) M5-08 双端验收实证接收
+    根残留累积（heyaki 自清不成立/部分传输残片堆积）；(b) 接收根容量预算
+    触顶需求出现；(c) 产品引入用户清理/删除传输残留动作需求。处置结论
+    已同步 aki_design §11.1（清扫条目，M1-08 先行）。
+  - **⑥ 测试**：test_ui_models 扩展（TransferView 操作可用性派生六态
+    断言：Transferring/Completed/Paused/Queued/Failed 的
+    can_pause/can_resume/can_cancel 组合 + mime 透传/兜底契约，135 断言
+    10 用例直跑通过）；test_ui_actions 扩展（resume 入口经绑定面 → Fake
+    Resume 命令记录——传输控制通道 Start/Pause/Resume/Cancel 全序锁定，
+    67 断言 2 用例直跑通过）；无新增并发路径（DOD-02 六项无新增面——
+    既有宿主生命周期覆盖维持，test_host_runtime 67 断言）。
+  - **⑦ 验证（可复现命令与结果）**：configure `cmake --preset debug`
+    通过；debug 全量 `ctest --preset debug` → 100% passed 43/43；
+    release `cmake --build --preset release --config Release` 0 error
+    0 warning（一次中途链接失败复测：aki.exe 被在跑 GUI 占用——关窗后
+    全量重建通过，非代码缺陷）+ `ctest --preset release` → 100% passed
+    43/43；直跑 test_ui_models.exe（135 断言）/test_ui_actions.exe
+    （67 断言）全过。
+  - **⑧ GUI 本机会话（RULE-11 归档）**：Release aki.exe，GUI 数据根经
+    `APPDATA` 注入同一 scratch 剖面（真实 `%APPDATA%ki` 未触碰）；
+    演示行经 scratch 种子探针增补（入站 report-q2.pdf Paused·45%——
+    DEC-013 重启降级形态）。GUI 实测：四态行同屏（Completed `success`
+    100% / Paused `warning` 72%·45% / Failed `destructive` / 经 UI 操作
+    产生的 Cancelled 中性）、终态行按钮集收起、mime 真实标注
+    （image/png、application/pdf）、DEC-013⑥ 取消全链（见 ③）、页脚
+    登记披露、onShutdown 关闭序完好（8 步 + fully_stopped=1 +
+    workers 2/2 + db_drained=1）。截图 ×2
+    （aki-m5-06-transfers.png / aki-m5-06-cancel-clicked.png）+
+    aki-run-m5-06-final.log 归档 `build/scratch/`。
+  - **⑨ 退出-3 grep（本项扩面，最终代码态）**：第一方线程创建 0；
+    ui/+main.cpp 的 app::async/core::network/eui::network 0；EUI-NEO
+    include/类型越过 ui/ 0；ui/ 直写 Store（submit_update/post_event/
+    drain_updates）0；ui/ 持 transport 对象 0；eui include 仅 main.cpp +
+    ui/ 渲染面（ui/components 为 aki_ui 目标内单元，models 无 eui）；
+    test_ui_models.exe dumpbin 对 eui::/components::/glfw 符号 0 命中。
+  - **⑩ 页脚分行修正（2026-09-27 独立评审发现；同日修复并复验）**：
+    归档证据 aki-m5-06-cancel-clicked.png 底部反馈文字 "cancel admitted
+    (hyt1_seedpolicy72pct001)" 与页脚登记披露行叠印不可辨读——Transfers
+    页经 main_window 以 y=0 全高调用，披露行原锚点（height-caption-
+    section）与跨页反馈行完全重合，③ 与工作项摘要所记「admission 反馈
+    可见」恰在拒绝场景不成立（渲染正确性缺陷）。修复：transfers_page
+    披露行上移一行（caption 行高 + tiny 间距），列表底预留同步扩为两行
+    页脚，反馈行保持 main_window 既有锚点不动。复验：debug 全量
+    `ctest --test-dir build/debug --preset debug` → 100% passed 43/43
+    零回归；GUI 本机会话（debug aki.exe，默认 %APPDATA% 数据根——M5-06
+    原 scratch 剖面未留存、传输行不可复现，以跨页 sticky 反馈路径复验
+    同一几何锚点）：Devices 页 Start Discovery admission 反馈置位后切
+    Files 页，反馈行与披露行两行并存、各自可辨读
+    （aki-fix-footer-1-nofeedback.png / aki-fix-footer-3-feedback-devices.png /
+    aki-fix-footer-4-files-split.png + 页脚裁切，归档 `build/scratch/`；
+    onShutdown 关窗退出）。补跑条件：传输行 Pause/Resume/Cancel 操作
+    反馈与披露行同屏截图随 M5-08 双端验收补跑（两行行位由固定锚点派生，
+    与列表行数无关；非空列表场景底部预留已同步扩为两行页脚）。
+  - 限制与补跑条件（沿 M3-09/M4-07 降级纪律）：(a) Pause/Resume 的 wire
+    侧效果（对端暂停确认/断点续传推进）需真实双端——本会话仅断言入队
+    admission 通道与 UI 门控派生，wire 语义归 M4-05 既有单测与 M5-08 双端
+    验收；(b) Cancelled/Failed 行的 .part discard 作业语义归 M4 既有单测，
+    本页渲染不重复断言；(c) CI 五档门禁随本工作项 PR 首跑（本会话未推送，
+    如实登记）；TSAN 运行期 UI 证据按 DEC-014 口径归本机 Linux。
+  - 同步：本里程碑（M5-06 勾选、本记录）、
+    [aki_design](../design/aki_design.md) §11.1（接收根 GC 显式延后 +
+    触发条件登记，M1-08 先行）、[aki_ui_design](../design/aki_ui_design.md)
+    §5（M5-06 落地记录：共享组件抽取 + 操作面门控/披露形态）、总计划
+    （当前状态条目）。无新决策记录（GC 延后为 DEC-012③ 登记议题的两向
+    处置之一，触发条件登记于本记录并被 aki_design §11.1 引用）。

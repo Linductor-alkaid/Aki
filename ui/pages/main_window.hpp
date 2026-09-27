@@ -12,6 +12,7 @@
 #include "ui/models/ui_actions.hpp"
 #include "ui/models/ui_state_consumer.hpp"
 #include "ui/pages/conversations_page.hpp"
+#include "ui/pages/transfers_page.hpp"
 #include "ui/theme/aki_theme.hpp"
 
 #include <eui/dsl.h>

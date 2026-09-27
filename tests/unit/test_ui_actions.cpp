@@ -122,13 +122,24 @@ TEST_CASE("UiActions route page operations through Manager pumps to the SPI",
         aki::transfer::TransferId{"hyt1_t1"}, archive_file,
         std::filesystem::path{"payload/policy.pt"}));
     REQUIRE(stack.actions.pause_transfer(aki::transfer::TransferId{"hyt1_t1"}));
+    // M5-06：恢复入口（Transfers 页操作面）经同一绑定面——Fake 记录 Resume
+    // 命令（wire 侧语义归 M4-05 既有单测，此处锁定页面命令通道）。
+    REQUIRE(stack.actions.resume_transfer(aki::transfer::TransferId{"hyt1_t1"}));
     REQUIRE(stack.actions.cancel_transfer(aki::transfer::TransferId{"hyt1_t1"}));
     stack.quiesce();
-    REQUIRE(stack.adapter.transfer_commands().size() >= 1);
+    REQUIRE(stack.adapter.transfer_commands().size() >= 3);
     REQUIRE(stack.adapter.transfer_commands().front().kind
         == aki::heyaki::FakeHeyakiAdapter::TransferCommand::Kind::Start);
     REQUIRE(stack.adapter.transfer_commands().front().source_path
         == std::filesystem::path{"payload/policy.pt"});
+    bool saw_resume = false;
+    for (const auto& command : stack.adapter.transfer_commands()) {
+        if (command.kind
+            == aki::heyaki::FakeHeyakiAdapter::TransferCommand::Kind::Resume) {
+            saw_resume = true;
+        }
+    }
+    REQUIRE(saw_resume);
 
     // 图片域（M5-05，hash-first 编排路由，DEC-010/DEC-011）：send_image →
     // TM.start_transfer 准入（闸门第 1 步）→ Fake 收到传输命令；无 IO 承载
