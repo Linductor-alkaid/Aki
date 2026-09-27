@@ -199,12 +199,23 @@ TEST_CASE("Disconnect recovery: reconnect loop restores the session (SCOPE-11)",
     aki::app::ReconnectCoordinator coordinator{owner.executor()};
     std::atomic<int> disconnected_events{0};
     std::atomic<int> connected_events{0};
+    // BUG-20260927-002 同族修复（test_peer_sessions_loopback 同款）：事件
+    // 回调经 PeerSessionPipeline 于 executor timer 线程执行，Catch2 断言
+    // 仅保证主线程使用（RunContext 内部状态非线程安全——master push run
+    // 36328366422 / 36311065064 tsan 实测同族竞争）。回调内不执行任何
+    // Catch 宏：提交/启动结果原子记录，主线程统一断言（disconnected 到达
+    // 后与 pipeline.stop()/stop_all() 静止后两处；失败不吞掉、不被 [skip]
+    // 环境降级掩盖。DEC-014 覆盖声明第 4 条：第一方竞争必修、不进抑制表）。
+    std::atomic<int> submit_failures{0};
+    std::atomic<bool> coordinator_start_failed{false};
     aki::heyaki::PeerSessionEvents events;
     events.on_disconnected =
         [&](const aki::device::DeviceId& peer) {
             if (peer == identity_b.id) {
-                REQUIRE(state_owner.submit_update(
-                    SetPresence{peer, PresenceState::Offline}));
+                if (!state_owner.submit_update(
+                        SetPresence{peer, PresenceState::Offline})) {
+                    ++submit_failures;
+                }
                 ++disconnected_events;
                 aki::app::ReconnectCoordinator::Attempt try_conn =
                     [&side_a, identity_b] {
@@ -216,15 +227,19 @@ TEST_CASE("Disconnect recovery: reconnect loop restores the session (SCOPE-11)",
                     };
                 aki::app::ReconnectCoordinator::PerPeerHooks hooks{
                     std::move(try_conn), std::move(is_auth)};
-                REQUIRE(coordinator.start(peer, hooks));
+                if (!coordinator.start(peer, hooks)) {
+                    coordinator_start_failed.store(true);
+                }
             }
         };
     events.on_connected =
         [&](const aki::device::DeviceId& peer,
             aki::device::ConnectionPath path) {
             if (peer == identity_b.id) {
-                REQUIRE(state_owner.submit_update(
-                    SetPresence{peer, PresenceState::Online}));
+                if (!state_owner.submit_update(
+                        SetPresence{peer, PresenceState::Online})) {
+                    ++submit_failures;
+                }
                 (void)state_owner.submit_update(
                     SetDeviceConnectionPath{peer, path});
                 ++connected_events;
@@ -253,6 +268,10 @@ TEST_CASE("Disconnect recovery: reconnect loop restores the session (SCOPE-11)",
         std::fflush(nullptr);
         std::_Exit(0);
     }
+    // 回调提交/协调器启动失败即失败（原回调内 REQUIRE 语义迁移到主线程，
+    // 置于依赖重连的断言之前——缺陷不被环境降级掩盖、不表现为超时误诊）。
+    REQUIRE(submit_failures.load() == 0);
+    REQUIRE_FALSE(coordinator_start_failed.load());
     // 断连回调先 submit_update 后自增计数（test_peer_sessions_loopback 同
     // 族）：事件达标时更新未经 drain 应用，单次快照必读旧值——谓词内
     // drain+load 按截止时间等 Offline 生效。
@@ -324,6 +343,10 @@ TEST_CASE("Disconnect recovery: reconnect loop restores the session (SCOPE-11)",
     // 在途重连循环（本用例 1 个）应被取消并消费（DEC-008 零悬挂）；
     // size_t 的 >= 0 恒真被 GCC -Wtype-limits 拒绝（run 35954858012）。
     REQUIRE(consumed > 0);
+    // 回调提交/协调器启动零失败（权威断言：timer 取消 + stop_all 消费后
+    // 全部回调已静止）。
+    REQUIRE(submit_failures.load() == 0);
+    REQUIRE_FALSE(coordinator_start_failed.load());
     const auto node_report = side_a.shutdown();
     REQUIRE(node_report.node_stopped);
     REQUIRE_FALSE(node_report.runtime_executor_shutdown_performed);

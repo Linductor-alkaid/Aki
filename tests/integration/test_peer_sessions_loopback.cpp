@@ -242,24 +242,40 @@ TEST_CASE("Peer session pipeline drives presence and path state over the loopbac
     // SetPresence Online（DM 语义）。
     std::atomic<int> connected_events{0};
     std::atomic<int> path_events{0};
+    // BUG-20260927-002 修复：事件回调经 PeerSessionPipeline 于 executor
+    // timer 线程执行，Catch2 断言仅保证主线程使用（RunContext 内部状态
+    // 非线程安全——catch_run_context.cpp:598 m_lastAssertionPassed 竞争，
+    // master push run 36328366422 / 36311065064 tsan 实测；报告两侧栈均无
+    // aki:: 第一方帧，产品代码无竞争）。回调内不执行任何 Catch 宏：提交
+    // 结果原子记录，主线程统一断言（connected 到达后与 pipeline.stop()
+    // 静止后两处；失败不吞掉、不被 [skip] 环境降级掩盖。DEC-014 覆盖声明
+    // 第 4 条：第一方竞争必修、不进抑制表）。
+    std::atomic<int> submit_failures{0};
     aki::heyaki::PeerSessionEvents events;
     events.on_connected =
         [&](const aki::device::DeviceId& peer,
             aki::device::ConnectionPath path) {
             if (peer == identity_b.id) {
                 // DM 语义：SetPresence Online + 初连路径（DEC-015）。
-                REQUIRE(state_owner.submit_update(
-                    aki::app::SetPresence{peer, PresenceState::Online}));
-                REQUIRE(state_owner.submit_update(
-                    aki::app::SetDeviceConnectionPath{peer, path}));
+                const bool presence_admitted =
+                    state_owner.submit_update(
+                        aki::app::SetPresence{peer, PresenceState::Online});
+                const bool path_admitted =
+                    state_owner.submit_update(
+                        aki::app::SetDeviceConnectionPath{peer, path});
+                if (!presence_admitted || !path_admitted) {
+                    ++submit_failures;
+                }
                 ++connected_events;
             }
         };
     events.on_disconnected =
         [&](const aki::device::DeviceId& peer) {
             if (peer == identity_b.id) {
-                REQUIRE(state_owner.submit_update(
-                    aki::app::SetPresence{peer, PresenceState::Offline}));
+                if (!state_owner.submit_update(
+                        aki::app::SetPresence{peer, PresenceState::Offline})) {
+                    ++submit_failures;
+                }
             }
         };
     events.on_connection_path_changed =
@@ -267,8 +283,10 @@ TEST_CASE("Peer session pipeline drives presence and path state over the loopbac
             aki::device::ConnectionPath path) {
             if (peer == identity_b.id) {
                 // 逐设备路径 upsert（DEC-015）：随 drain 合并，无事件洪泛。
-                REQUIRE(state_owner.submit_update(
-                    aki::app::SetDeviceConnectionPath{peer, path}));
+                if (!state_owner.submit_update(
+                        aki::app::SetDeviceConnectionPath{peer, path})) {
+                    ++submit_failures;
+                }
                 ++path_events;
             }
         };
@@ -291,11 +309,15 @@ TEST_CASE("Peer session pipeline drives presence and path state over the loopbac
         std::_Exit(0);
     }
 
-    // connected_events 在回调内先 submit_update（异步入队）后自增；本测试
+    // connected_events 在回调内先 submit_update（异步入队）后自增计数；本测试
     // 的 owner 上下文是测试线程——事件达标时更新尚未经 drain 应用（CI run
     // 36278949737 asan 实测原单次快照断言挂）。沿 test_transfer_full_loopback
     // 先例在轮询谓词内 drain+load：按截止时间等 Online 生效。
     executor::comm::Snapshot<aki::app::AppState> snapshot;
+    // 回调提交失败即失败（原回调内 REQUIRE 语义迁移到主线程，置于 [skip]
+    // 退出点之后第一个主线程断言位——提交缺陷不被环境降级掩盖；管道仍
+    // 运行中，迟到回调的残余失败由 stop 后的权威断言兜底）。
+    REQUIRE(submit_failures.load() == 0);
     REQUIRE(wait_until([&] {
         state_owner.drain();
         if (!state_owner.try_load_snapshot(snapshot)) {
@@ -338,6 +360,8 @@ TEST_CASE("Peer session pipeline drives presence and path state over the loopbac
     const auto connected_before = connected_events.load();
     std::this_thread::sleep_for(800ms);
     REQUIRE(connected_events.load() == connected_before);
+    // 回调提交零失败（权威断言：timer 取消 + 静置后全部回调已静止）。
+    REQUIRE(submit_failures.load() == 0);
 
     // RULE-06/RULE-08：重复 connected 事件（同会话）仅更新 presence——会话
     // 记录与信任终态不复活/不新建（owner 侧状态机校验）。
