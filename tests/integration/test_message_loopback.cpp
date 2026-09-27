@@ -149,8 +149,8 @@ TEST_CASE("Two-node text messaging over the borrowed runtime",
         [&](const DeviceId& peer, bool ok, const std::string&) {
             if (ok && peer == identity_a.id) paired_b.store(true);
         });
-    REQUIRE(side_a.pair_peer(identity_b.id, "aki-msg-pw"));
-    REQUIRE(side_b.pair_peer(identity_a.id, "aki-msg-pw"));
+    REQUIRE(side_a.pair_peer(identity_b.id, aki::heyaki::kAkiPairingPassword));
+    REQUIRE(side_b.pair_peer(identity_a.id, aki::heyaki::kAkiPairingPassword));
     if (!wait_until(
             [&] { return (paired_a.load() && paired_b.load()); }, 20s)) {
         // 环境受限降级（沿 M3-04/06 纪律，不冒充已验证）：已提交配对但握手

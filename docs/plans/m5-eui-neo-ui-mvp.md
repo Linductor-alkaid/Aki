@@ -165,8 +165,19 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   test_ui_actions（页面→出站接口→Manager 泵→Fake Adapter SPI 通道，
   51 断言）；debug/release 全量 ctest 42/42 零回归；退出-3 grep 扩面全 0。
   见下方 2026-09-27（M5-03）验证记录。）
-- [ ] `M5-04` Devices 页（可验收：`SCOPE-04`/`SCOPE-02`/`SCOPE-03`/
+- [x] `M5-04` Devices 页（可验收：`SCOPE-04`/`SCOPE-02`/`SCOPE-03`/
   `SCOPE-10` 展示面逐项可演示——列表、信任操作面、presence/连接路径徽标）。
+  （2026-09-27 完成：SPI 信任操作扩展（出站 `confirm_pairing`/`revoke_trust`
+  + 入站第 12 方法 `on_pairing_completed`，DEC-006 映射 3 落地，真实/Fake
+  对齐）；DeviceManager 信任三操作 + 配对结果路由（§4 固定转移边校验，
+  非法转移拒绝可见）；[DEC-015](../decisions/DEC-015-per-device-connection-path.md)
+  逐设备路径落地（退役全局摘要；初连路径补发、断连置 Unknown）；
+  UiActions 信任三操作；Devices 页实体化（列表行/信任操作面/确认弹窗 mono
+  指纹/presence·路径·信任徽标语义色/发现来源分期披露）；[DEC-016]
+  (../decisions/DEC-016-pairing-password-verifier.md) 口令常量 + 真实
+  verifier（取代 M3-03 占位假编码串，存量 profile 处置登记）；
+  test_device_trust 76 断言 + 口令往返用例；debug/release 全量 ctest 43/43
+  零回归；Devices 页本机截图归档。见下方 2026-09-27（M5-04）验证记录。）
 - [ ] `M5-05` Conversations 页与聊天窗口（可验收：`SCOPE-05`/`SCOPE-06`/
   `SCOPE-07` UI 面 + 会话内文件卡片逐项可演示——含文本/图片发送与消息
   历史滚动）。
@@ -199,6 +210,14 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   `ui/theme` 装配须逐项覆写并留回归对照，不得依赖上游默认档。
 - **主线程 compose 与 executor 关闭顺序**：`onShutdown` 编入 `EXEC-01`
   后，窗口/GPU 设备销毁与 worker 回收次序需测试覆盖（关闭路径 DOD-02）。
+- **UpsertDevice 整行替换对易失字段的覆写隐患**（`DEC-015` 关联发现的
+  登记兑现，2026-09-27 收口批）：`apply_trust_transition`
+  （app/application/device_manager.hpp:230-252）从最近已发布快照读-改-写
+  整行 upsert——快照滞后于 owner 在途更新时可能覆写并发 presence 变化
+  （连接中被重新发现可能 Online→Offline）；wire 节奏的
+  PairingCompletedWork 结果被拒时仅计 handler_rejections 即丢弃（无延迟
+  重排）。M5-04 按「用户操作节奏吸收」接受（记录②），后续工作项：结果
+  丢弃时延迟重排或 drain 后重读，与该覆写隐患同批处置。
 - pinned EUI-NEO 升级不属本里程碑；许可证检查（字体/图标/shader/assets）
   在正式发行前完成（设计第 9 节），登记于 `M5-09` 复核项。
 
@@ -518,4 +537,133 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
     [aki_design](../design/aki_design.md) §9.1（消费面装配细节增补）、
     总计划（当前状态条目）。无新决策记录（on_publish/UiActions 为设计
     §9.1 既有契约的具体化，未越契约边界）。
+
+- 2026-09-27（`M5-04` 完成；Windows 11 工作站（桌面会话）/ MSVC 2022
+  BuildTools 14.44.35207 / CMake 4.1.0；负责人：Linductor）：
+  - **① SPI 信任操作扩展（DEC-006 映射 3，设计 §8.1 先行同步）**：出站
+    `confirm_pairing(device)`（→ `NodeSession::pair_peer`，scope 冻结
+    `{message.send, file.push:inbox}`；提交被拒=会话缺失/非
+    pairing_restricted/重复 pending，admission false 可见）与
+    `revoke_trust(device)`（→ `revoke_trust_grants`，无有效 grant 时
+    false）；入站第 12 方法 `on_pairing_completed(device, success, detail)`
+    （Node 上下文回调 → Adapter 有界校验 + sink 投递，EXEC-02；析构中和
+    observer）。真实 Adapter（set_pairing_observer 构造登记）与
+    FakeHeyakiAdapter（confirm 记录 + `inject_pairing_completed` +
+    `queue_pairing_result`/`set_has_valid_grant` 测试配置面）对齐。口令
+    处理不进 SPI 签名（DEC-016）。
+  - **② DeviceManager 信任三操作 + 配对结果路由**：confirm → wire 面先行
+    （pair_peer 提交 admission），信任状态推进经配对结果事件异步落地（不
+    乐观改状态——DEC-006 映射 3 冻结顺序）；reject → 纯本地判定（Pending
+    → Rejected 无 wire 面）；revoke → wire 撤销全部有效 grant + 本地
+    Trusted → Revoked。行改写经快照读行 + 整行 UpsertDevice（M1-06 确认
+    语义；快照滞后窗口由用户操作节奏吸收——操作面数据本就来自快照，登记）。
+    PairingCompletedWork：success → Trusted、失败 → Rejected（不新增
+    AppEvent 主路径类型，同 on_transfer_paused 先例）；未知设备/非法转移
+    拒绝可见。
+  - **③ DEC-015 逐设备路径落地**：DeviceStore 增
+    `DeviceConnectionPathEntry` 向量 + `SetDeviceConnectionPath{device,
+    path}`（未知 id 拒绝、同值幂等 no-op 不重复发布）；退役全局
+    `SetConnectionPath`/`LatestMailbox`（owner 成员/访问器/统计同步移除，
+    grep 残留 0）；初连路径补发（`PeerSessionEvents::on_connected` 增携带
+    映射路径，宿主删除 M3-06 的 Lan 硬编码）；断连置 Unknown（DM 断连
+    处理同批提交）。设计 §10.1/§8.3/§9.1 同批修订（M1-08）。
+  - **④ DEC-016 口令常量 + verifier 真实化**：`kAkiPairingPassword` 冻结
+    常量（26 标量 ≥8 策略下限；2026-09-27 收口订正，原文误记 20）；
+    `converge_local_initialization` created
+    分支以 `create_password_verifier` 生成真实 argon2id verifier（取代
+    M3-03 占位假编码串——冻结调研探针实测对任何口令均拒绝）；存量 profile
+    处置=删除 db/profile.sqlite 重建（本机 %APPDATA%ki 即存量，GUI/
+    smoke 运行不受影响——verifier 仅配对时消费；不静默迁移，登记于
+    DEC-016）。确认弹窗无口令输入框（aki_ui_design §3 规格）。
+  - **⑤ UiActions + 视图模型扩展**：UiActions 增 confirm_pairing/
+    reject_device/revoke_device 绑定（M5-03 make_ui_actions 形态）；
+    DeviceView 增逐设备 connection_path（Store join）、
+    fingerprint_available（公钥缺失显式不可用态——relay 来源防御）、
+    can_confirm/can_reject/can_revoke（§4 转移边派生）。
+  - **⑥ Devices 页实体化**：设备行（presence 圆点 Online success/Offline
+    subtlest、名称/类型/OS/逐设备路径徽标（caption 中性，Unknown 显
+    "--"）、信任语义色徽标（Pending warning/Trusted success/Rejected·
+    Revoked destructive/Unknown subtlest）、mono 指纹列）+ Pending 行
+    Confirm（弹窗 mono 指纹核对 + Confirm/Reject 按钮）/Reject 按钮 +
+    Trusted 行 Revoke 按钮（§4 转移边控制可用性）+ 发现启停按钮与来源
+    分期披露（"LAN only (Relay / invite link / manual input are
+    registered follow-ups, M3-09)"——如实呈现）。截图
+    `build/scratch/aki-m5-04-devices.png`（点击导航切页后实拍：本地身份
+    行 hy1_ 56 字符 mono 指纹、Unknown 徽标、发现启停）。
+  - **⑦ 测试**：新建 test_device_trust（4 用例 76 断言：配对结果路由
+    Pending→Trusted/Rejected + 未知设备 handler 拒绝可见；三操作转移边
+    （reject 无 wire 面/revoke SPI 记录/非法转移 updates_rejected/无
+    grant revoke 无操作可见）；UiActions 信任通道（泵→Fake SPI→状态）；
+    连接→换路→断连→重连全序列路径断言）；test_local_identity 增口令
+    往返用例（DEC-016：kAkiPairingPassword↔create↔verify，他串拒绝、
+    短串生成被策略拒）；既有测试同步（BridgeSink 等 6 处 sink 增第 12
+    方法；path 断言改逐设备；on_connected 签名；StubAdapter 信任方法）。
+  - **⑧ 验证（可复现命令与结果）**：`ctest --preset debug` → 100% passed
+    43/43（+test_device_trust，test_heyaki_adapter 路径断言重写）；
+    release `--config Release` 构建 0 error 0 warning + `ctest --preset
+    release` → 100% passed 43/43；GUI 本机会话（Release aki.exe）：装配/
+    onShutdown 关闭序完好（aki-run.log），Devices 页点击切页截图归档
+    （aki-m5-04-devices.png）；退出-3 grep 七项全 0（自建线程/禁用面/EUI
+    越层/ui 持 transport/ui 直写 Store/退役全局路径残留 0/kAkiPairing
+    Password 引用 heyaki/adapter 2 文件 + tests 9 文件，均为合法引用）。
+    ⑧ 订正（2026-09-27 收口批，第 3 轮评审发现）：退役全局路径注释残留
+    实有 2 处（app_state_updates.hpp 重复词组、update_jobs.hpp 退役
+    SetConnectionPath 旧口径），本批修正后「残留 0」成立；「仅 heyaki/
+    adapter 两文件」为评审修正批（集成测试字面量替换）之前的口径。
+  - 评审修正（2026-09-27）：DEC-016「测试同步」两条在原变更集漏执行，
+    本日补齐并复验——
+    **集成回环口令字面量替换**：8 个集成测试文件 19 处 `pair_peer`
+    口令字面量（aki-loopback/ps/rec/img/msg/ra/full/send-pw）中 17 处
+    成功面同批替换为 `aki::heyaki::kAkiPairingPassword`（grep 替换后旧
+    字面量残留 0）；错误口令
+    负例（test_discovery_pairing_loopback）改用显式非匹配值
+    aki-invalid-pw-c/-d 并注明理由——真实 verifier 只接受冻结常量，历史
+    right/wrong-password 命名在假 verifier 下无区分度（DEC-016 背景
+    自认）。替换后 debug/release 全量 ctest 43/43 复验零回归（本机链路
+    环境为既有 [skip] 降级路径，本次替换使补跑面语义就绪，不改变当前
+    结果）。**created 分支 argon2id 创建耗时实测（DEC-016 影响与风险/
+    验证方式③）**：一次性探针 build/scratch/verifier_probe/（.gitignore
+    内，不入库）直测生产同参调用 `create_password_verifier(
+    kAkiPairingPassword, PasswordHashParameters{})`（local_identity.hpp
+    created 分支），Release 构建，本机（Windows 11 工作站/MSVC 14.44）
+    连跑 5 次：创建 67/60/58/61/57 ms，正确口令 verify 全 MATCH
+    （55-67 ms），encoded 前缀实测 `$argon2id$v=19$m=65536,t=2,p=1$`
+    （与 DEC-016 m=64MiB/t=2 披露一致）。复现：`cmake -S
+    build/scratch/verifier_probe -B build/scratch/verifier_probe/build
+    && cmake --build build/scratch/verifier_probe/build --config
+    Release --target verifier_probe &&
+    build/scratch/verifier_probe/build/Release/verifier_probe.exe`。
+    ④ 的存量 profile（本机 %APPDATA%\aki 走既有分支）声明不变；
+    首启动耗时面以本条实测登记，⑧ 的 43/43 数据经复验仍然成立。
+  - 收口批（2026-09-27，第 3 轮评审 should-fix 项）：①Fake revoke 去除
+    合成 on_pairing_completed（真实 NodeSession revoke 从不触发配对观察
+    器，合成事件必然被状态机拒绝、徒增 updates_rejected 噪声）；②集成
+    回环 presence/发现断言改谓词内 drain+load 截止轮询（connected 事件
+    回调先 submit 后自增计数，单次快照在 owner 应用前抢跑——CI run
+    36278949737 asan 实测；本机防火墙降级路径未实跑，由 CI 实跑验证）；
+    ③test_app_managers 路由用例标题 eleven→twelve；④④⑧ 记录数字订正
+    （见上）；⑤UpsertDevice 整行替换覆写隐患兑现登记（「风险与阻塞」）；
+    ⑥退役 SetConnectionPath 注释残留 2 处清理；⑦test_peer_sessions_
+    loopback 持久化载体 :memory:→<data_root>/db/aki.db3（CI 第 5 轮
+    run 36295393398 asan/tsan 同点暴露：轮询修复使测试首次跑通全链后，
+    尾部重启恢复断言得 0 行——:memory: 载体无 schema、设备行从未落盘，
+    M3-06 起从未实跑段，按 §11.1 ②③ 恢复组合先行修复）。debug 全量
+    ctest 复验。
+  - **⑨ 如实降级（M3-09 纪律）**：双端配对→信任全链路（pairing
+    restricted → pair_peer → observer 结果 → Trusted 端到端）受本机防火墙
+    拦截 TLS 入站限制未执行——网络无关半边全部验证（SPI 路由/状态机转移
+    边/UiActions 通道/verifier 往返/Fake 注入路径）；补跑条件沿 M3-09
+    登记（防火墙放行入站 TCP / LAN 双端真机，M5-08 双端验收同批）。
+  - 限制与补跑条件：CI 五档门禁随本工作项 PR 首跑（本会话未推送）；存量
+    profile 的配对在 M5-07 设置面前不可用（DEC-016 处置：删除重建）；
+    fingerprint 渲染为 Windows CascadiaMono 实拍证据，Linux mono 路径随
+    CI/本机 Linux 会话确认（DEC-014 口径）。
+  - 同步：本里程碑（M5-04 勾选、本记录）、
+    [aki_design](../design/aki_design.md)（§4 指纹合并展示、§8.1 信任
+    SPI/第 12 sink 方法、§8.3 路由表、§9.1 消费面、§10.1 comm 映射）、
+    [aki_ui_design](../design/aki_ui_design.md) §3（指纹=DeviceId 规范串、
+    弹窗无口令框）、[DEC-006](../decisions/DEC-006-heyaki-api-contract.md)
+    映射 3（展示形式增补）、[DEC-015](../decisions/DEC-015-per-device-
+    connection-path.md)、[DEC-016](../decisions/DEC-016-pairing-password-
+    verifier.md)（均新建 Accepted）、总计划（当前状态条目 + 决策表）。
 

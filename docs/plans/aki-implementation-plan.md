@@ -8,6 +8,29 @@
 
 ## 当前状态
 
+- 2026-09-27：`M5-04` 完成：Devices 页（`SCOPE-04`/`SCOPE-02`/`SCOPE-03`/
+  `SCOPE-10` 展示面）——SPI 信任操作扩展（出站 `confirm_pairing`/
+  `revoke_trust` + 入站第 12 方法 `on_pairing_completed`，DEC-006 映射 3
+  落地；真实/Fake 对齐）；DeviceManager 信任三操作（confirm/reject/revoke，
+  §4 固定转移边校验、非法转移拒绝可见）+ 配对结果路由（Pending→Trusted/
+  Rejected）；[DEC-015](../decisions/DEC-015-per-device-connection-path.md)
+  落地（逐设备路径：DeviceStore 易失集合 + `SetDeviceConnectionPath`，退役
+  全局摘要；初连路径补发、断连置 Unknown）；UiActions 信任三操作；
+  Devices 页实体化（设备行：名称/类型/OS/逐设备路径徽标/在线圆点/信任
+  语义色/mono 指纹列 + Pending 确认弹窗（指纹核对，无口令框）/Trusted
+  撤销 + 发现启停与来源分期披露（M3-09 如实呈现））；
+  [DEC-016](../decisions/DEC-016-pairing-password-verifier.md) 落地
+  （kAkiPairingPassword + 真实 verifier 取代 M3-03 占位假编码串；存量
+  profile 处置登记）；新单测 test_device_trust（4 用例 76 断言）+
+  test_local_identity 口令往返用例；debug/release 全量 ctest 43/43 零回归；
+  Devices 页本机截图归档（RULE-11）；双端配对→信任全链路受防火墙限制沿
+  M3-09 降级（网络无关半边已验证，补跑条件登记）。同日评审修正：DEC-016
+  「测试同步」漏执行两项补齐——集成回环 8 文件 19 处 `pair_peer` 口令
+  字面量替换（17 处成功面→kAkiPairingPassword，2 处负例→显式非匹配值并
+  注明理由），created 分支 argon2id 创建耗时实测登记（Release 探针连跑
+  5 次 57-67 ms、verify MATCH 对拍、encoded 前缀实测 m=65536,t=2,p=1
+  ——DEC-016 验证方式③闭合）；替换后 debug/release ctest 43/43 复验
+  零回归。详见 M5 里程碑文档 M5-04 验证记录（评审修正条目）。
 - 2026-09-27：`M5-03` 完成：状态消费面与视图模型——`ui/models` 拆分为
   EUI-NEO 无关独立目标 `aki_ui_models`（四域视图模型纯函数派生 +
   `consume_ui_state` 水位消费面 + `UiActions` 注入出站面；测试 exe 直链，
@@ -554,7 +577,21 @@ cache 级全局 flags 对 eui_neo 与 bundled 第三方全图插桩零豁免、C
 保持上游默认 ON 不降档）、覆盖声明口径五条：插桩面全图 + ctest console
 执行面 + UI 运行期 tsan 证据本机 Linux 归档（RULE-11）+ 上游竞态抑制表
 登记制 + TSAN 声明限 Linux（第一方 GCC `-Wno-error=tsan` 豁免照抄 heyaki
-先例）））。
+先例））、[DEC-015](../decisions/DEC-015-per-device-connection-path.md)
+（2026-09-27，逐设备连接路径状态模型——DeviceStore 增逐设备易失路径集合 +
+`SetDeviceConnectionPath{device, path}` 部分更新类型（未知 id 拒绝、断连置
+Unknown、初连路径随 connected 事件补发），退役全局
+`SetConnectionPath`/`LatestMailbox` 单值摘要；否决全局摘要降级展示（跨设备
+错误归因 + SCOPE-04 可控建模不应挂偏差）、DeviceIdentity 字段镜像（整行
+替换覆写易失字段）、双轨并存与 per-device mailbox）、
+[DEC-016](../decisions/DEC-016-pairing-password-verifier.md)（2026-09-27，
+配对口令常量与本地 verifier 真实化——`kAkiPairingPassword` 冻结常量
+（heyaki/adapter→DeviceManager 内部传递，不进 SPI/UiActions 签名）+ 首启
+created 分支生成真实 argon2id verifier（取代 M3-03 验不了任何口令的占位
+假编码串）；确认弹窗无口令框（aki_ui_design §3 指纹确认）；存量 profile
+处置=删除 db/profile.sqlite 重建（不静默迁移）；固定口令=公开弱口令的
+安全披露与 M5-07 移除条件；否决弹窗口令输入框、沿用占位串、跳过真实
+pair_peer））。
 
 ## 跨里程碑通用完成定义
 

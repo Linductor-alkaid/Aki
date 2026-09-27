@@ -94,8 +94,9 @@ public:
                 *options_.session,
                 aki::heyaki::PeerSessionEvents{
                     .on_connected =
-                        [this](const aki::device::DeviceId& peer) {
-                            deliver_connected(peer);
+                        [this](const aki::device::DeviceId& peer,
+                            aki::device::ConnectionPath path) {
+                            deliver_connected(peer, path);
                         },
                     .on_disconnected =
                         [this](const aki::device::DeviceId& peer) {
@@ -126,6 +127,14 @@ public:
                 const NodeSession::FileTransferEventView& event) {
                 deliver_file_event(peer, event);
             });
+        // 配对一次性结果观察（M5-04，DEC-006 映射 3；Node 上下文回调 →
+        // 有界校验 + sink 投递，EXEC-02）。析构中和（捕获 this，与消息
+        // handler 同纪律）。
+        options_.session->set_pairing_observer(
+            [this](const aki::device::DeviceId& peer, bool success,
+                const std::string& detail) {
+                deliver_pairing_completed(peer, success, detail);
+            });
     }
 
     HeyakiNodeAdapter(const HeyakiNodeAdapter&) = delete;
@@ -143,6 +152,7 @@ public:
         if (options_.session != nullptr) {
             options_.session->set_message_handlers({}, {});
             options_.session->set_file_event_observer(nullptr);
+            options_.session->set_pairing_observer({});
         }
     }
 
@@ -158,10 +168,10 @@ public:
         }
     }
 
-    void deliver_connected(const aki::device::DeviceId& peer) {
+    void deliver_connected(const aki::device::DeviceId& peer,
+        aki::device::ConnectionPath path) {
         if (sink_ != nullptr) {
-            (void)sink_->on_device_connected(peer,
-                aki::device::ConnectionPath::Lan);
+            (void)sink_->on_device_connected(peer, path);
         }
     }
 
@@ -176,6 +186,14 @@ public:
         if (sink_ != nullptr) {
             (void)sink_->on_connection_path_changed(peer,
                 aki::device::ConnectionPath::Unknown, path);
+        }
+    }
+
+    // 配对一次性结果投递（M5-04；有界校验 + sink 投递，EXEC-02）。
+    void deliver_pairing_completed(const aki::device::DeviceId& peer,
+        bool success, const std::string& detail) {
+        if (sink_ != nullptr) {
+            (void)sink_->on_pairing_completed(peer, success, detail);
         }
     }
 
@@ -317,6 +335,26 @@ public:
                                 const aki::transfer::TransferId& id) {
                 return options_.session->cancel_file_transfer(peer, id);
             });
+    }
+
+    // ---- 信任操作出站（M5-04，DEC-006 映射 3；设计 §8.1）----
+    // 口令为 DEC-016 冻结常量（本层内传递，不进 SPI 签名）；scope 冻结
+    // {message.send, file.push:inbox}（NodeSession::pair_peer 缺省即该集）。
+    // 结果经 set_pairing_observer（构造时登记）→ on_pairing_completed 投递。
+    [[nodiscard]] bool confirm_pairing(
+        const aki::device::DeviceId& peer) override {
+        if (peer.empty()) {
+            return false;  // 有界校验（EXEC-02 出站面）。
+        }
+        return options_.session->pair_peer(peer, kAkiPairingPassword);
+    }
+
+    [[nodiscard]] bool revoke_trust(
+        const aki::device::DeviceId& peer) override {
+        if (peer.empty()) {
+            return false;
+        }
+        return options_.session->revoke_trust_grants(peer);
     }
 
     // ---- 观测（EXEC-06）----

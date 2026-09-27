@@ -276,6 +276,10 @@ TEST_CASE("Seeded Paused rows resume via wire progress and cancel terminates "
             override {
             return true;
         }
+        bool on_pairing_completed(DeviceId, bool, std::string_view)
+            override {
+            return true;
+        }
     } sink;
     sink.transfers = &transfers;
     adapter.set_sink(&sink);
@@ -485,6 +489,10 @@ TEST_CASE("Full-chain combo: archive, image message, receive merge, "
         }
         bool on_connection_path_changed(DeviceId,
             aki::device::ConnectionPath, aki::device::ConnectionPath)
+            override {
+            return true;
+        }
+        bool on_pairing_completed(DeviceId, bool, std::string_view)
             override {
             return true;
         }

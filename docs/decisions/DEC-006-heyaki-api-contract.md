@@ -66,7 +66,13 @@ M3 要以 pinned `third_party/heyaki` 替换 `FakeHeyakiAdapter`（[DEC-002](DEC
      scope：`message.send`（前缀通配语义，api.md scope 节）；M4-05 起文件
      推送需独立 scope `file.push:<root>`（heyaki `file_push_scope`）——配对
      申请增补为 `{message.send, file.push:<root>}`（[DEC-012](DEC-012-receive-merge-bearing.md)
-     ⑥；消息面冻结项不变）。
+     ⑥；消息面冻结项不变）。展示形式增补（M5-04，[DEC-016](DEC-016-pairing-password-verifier.md)
+     同批）：指纹确认数据（identity_public_key 32B）的公钥指纹展示 = 其
+     SHA-256 摘要的规范编码，即 DeviceId 规范串（`hy1_` + base32）——确认
+     弹窗中 Device ID 与公钥指纹同值合并展示（mono），不引入第二种编码；
+     `pair_peer` 的 password 提交值为冻结常量 `kAkiPairingPassword`
+     （[DEC-016](DEC-016-pairing-password-verifier.md)，verifier 同批真实化），
+     不进 SPI/UiActions 签名。
   4. 文本消息：`send_text_message` → `send_message(peer, MessageEnvelope{
      message_id=aki MessageId 16B 双射（规范字符串形式：`to_string` /
      `parse_message_id`，`hym1_` 前缀编码——M3-05 实测澄清，非裸 hex）,

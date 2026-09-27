@@ -47,6 +47,9 @@ struct MainWindowModel {
     std::shared_ptr<models::UiActions> actions;
     // 页面持有的操作反馈文案（出站入队 admission 结果；RULE-09 拒绝可见）。
     std::string last_action_feedback;
+    // 页面持有的信任确认弹窗态（M5-04）：待确认设备 id；空 = 弹窗关闭。
+    // 弹窗展示该设备的 mono 指纹（=DeviceId 规范串），确认/拒绝经 UiActions。
+    std::string pending_confirm_device;
 };
 
 // 三栏壳装配：导航栏(fixed 64) + 列表栏(fixed 264) + 内容栏(fill)，4px 可调

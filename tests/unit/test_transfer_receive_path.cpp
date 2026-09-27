@@ -307,6 +307,10 @@ struct ReceivePathStack {
             override {
             return true;
         }
+        bool on_pairing_completed(DeviceId, bool, std::string_view)
+            override {
+            return true;
+        }
     } sink;
 };
 

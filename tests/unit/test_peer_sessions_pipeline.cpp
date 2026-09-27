@@ -57,11 +57,14 @@ TEST_CASE("Peer session diff synthesizes connected/disconnected transitions",
     using aki::heyaki::NodeSession;
 
     std::vector<aki::device::DeviceId> connected;
+    std::vector<aki::device::ConnectionPath> connected_paths;
     std::vector<aki::device::DeviceId> disconnected;
     std::vector<aki::device::ConnectionPath> paths;
     aki::heyaki::PeerSessionEvents events;
-    events.on_connected = [&](const aki::device::DeviceId& id) {
+    events.on_connected = [&](const aki::device::DeviceId& id,
+        aki::device::ConnectionPath path) {
         connected.push_back(id);
+        connected_paths.push_back(path);
     };
     events.on_disconnected = [&](const aki::device::DeviceId& id) {
         disconnected.push_back(id);
@@ -116,7 +119,8 @@ TEST_CASE("Peer session diff ignores non-authenticated churn",
 
     int events_fired = 0;
     aki::heyaki::PeerSessionEvents events;
-    events.on_connected = [&](const aki::device::DeviceId&) { ++events_fired; };
+    events.on_connected = [&](const aki::device::DeviceId&,
+        aki::device::ConnectionPath) { ++events_fired; };
     events.on_disconnected = [&](const aki::device::DeviceId&) { ++events_fired; };
     events.on_connection_path_changed =
         [&](const aki::device::DeviceId&, aki::device::ConnectionPath) {

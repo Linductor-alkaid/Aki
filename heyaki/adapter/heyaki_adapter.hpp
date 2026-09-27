@@ -56,6 +56,12 @@ public:
     virtual bool on_transfer_paused(aki::transfer::TransferId transfer) = 0;
     virtual bool on_connection_path_changed(aki::device::DeviceId device,
         aki::device::ConnectionPath from, aki::device::ConnectionPath to) = 0;
+    // 配对一次性结果投递面（M5-04，设计 §8.1 第 12 方法；DEC-006 映射 3）：
+    // Node 上下文回调 → Adapter 有界校验 + 投递（EXEC-02）。success 映射
+    // UpsertDevice(→ Trusted)、失败映射 UpsertDevice(→ Rejected)（detail
+    // 供诊断，不进 Store）；不新增 AppEvent 主路径类型。
+    virtual bool on_pairing_completed(aki::device::DeviceId device,
+        bool success, std::string_view detail) = 0;
 
 protected:
     HeyakiAdapterSink() = default;
@@ -105,6 +111,18 @@ public:
     virtual bool pause_transfer(const aki::transfer::TransferId& transfer_id) = 0;
     virtual bool resume_transfer(const aki::transfer::TransferId& transfer_id) = 0;
     virtual bool cancel_transfer(const aki::transfer::TransferId& transfer_id) = 0;
+
+    // 信任操作面（M5-04，设计 §8.1；DEC-006 映射 3 落地面）。bool 返回值为
+    // 有界 admission / 提交结果，拒绝可见（RULE-09）；配对一次性结果经
+    // on_pairing_completed 异步返回。口令处理在 Adapter/heyaki 层内部
+    // （DEC-016 冻结常量），不进 SPI 签名。
+    // 指纹确认后发起配对（→ pair_peer，scope 冻结 {message.send,
+    // file.push:inbox}）；提交被拒 = 会话缺失/非 pairing_restricted/重复
+    // pending。
+    virtual bool confirm_pairing(const aki::device::DeviceId& peer) = 0;
+    // 撤销既有信任（→ revoke_trust_grants，撤销该 peer 全部有效 grant）；
+    // 无有效 grant 时 false（无操作可见）。
+    virtual bool revoke_trust(const aki::device::DeviceId& peer) = 0;
 
 protected:
     HeyakiAdapter() = default;

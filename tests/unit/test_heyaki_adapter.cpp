@@ -86,7 +86,7 @@ using aki::app::DeviceDiscoveredEvent;
 using aki::app::DeviceDisconnectedEvent;
 using aki::app::MessageDeliveredEvent;
 using aki::app::MessageReceivedEvent;
-using aki::app::SetConnectionPath;
+using aki::app::SetDeviceConnectionPath;
 using aki::app::TransferCompletedEvent;
 using aki::app::TransferProgressEvent;
 using aki::app::TransferStartedEvent;
@@ -192,11 +192,29 @@ public:
 
     bool on_connection_path_changed(DeviceId device, ConnectionPath from,
         ConnectionPath to) override {
+        // 事件与路径更新都需要 device——先复制提交路径（DEC-015 按设备键），
+        // 再以 move 构造事件（避免 move 后空 id 使路径更新被拒）。
+        const bool applied = owner_.submit_update(
+            SetDeviceConnectionPath{device, to});
         const bool posted =
             post(ConnectionPathChangedEvent{std::move(device), from, to});
-        const bool applied = owner_.submit_update(SetConnectionPath{to});
         return posted && applied;
     }
+
+    // 配对一次性结果面（M5-04，sink 第 12 方法）：记录到达供路由断言。
+    bool on_pairing_completed(DeviceId device, bool success,
+        std::string_view detail) override {
+        pairing_results.push_back(PairingResult{std::move(device), success,
+            std::string(detail)});
+        return true;
+    }
+
+    struct PairingResult {
+        DeviceId device;
+        bool success = false;
+        std::string detail;
+    };
+    std::vector<PairingResult> pairing_results;
 
 private:
     bool post(AppEventPayload payload) {
@@ -313,17 +331,40 @@ TEST_CASE("Injected connection path change drives the LatestMailbox summary",
     FakeHeyakiAdapter fake;
     fake.set_sink(&bridge);
 
+    // 设备行先行注册（DEC-015：路径更新要求已知设备 id）。
+    REQUIRE(owner.submit_update(UpsertDevice{make_discovered("dev-1").identity}));
+    REQUIRE(owner.submit_update(UpsertDevice{make_discovered("dev-2").identity}));
+    owner.drain();
+
+    // 未知设备 id 的路径更新：submit 层为通道 admission（true）；owner 在
+    // drain 时拒绝并经 updates_rejected 可观测（DEC-015，RULE-09）。
+    REQUIRE(fake.inject_connection_path_changed(DeviceId{"ghost"}, ConnectionPath::Unknown,
+        ConnectionPath::Lan));
+
     REQUIRE(fake.inject_connection_path_changed(DeviceId{"dev-1"}, ConnectionPath::Unknown,
         ConnectionPath::Lan));
     REQUIRE(fake.inject_connection_path_changed(DeviceId{"dev-1"}, ConnectionPath::Lan,
         ConnectionPath::P2p));
     REQUIRE(fake.inject_connection_path_changed(DeviceId{"dev-1"}, ConnectionPath::P2p,
         ConnectionPath::Relay));
+    REQUIRE(fake.inject_connection_path_changed(DeviceId{"dev-2"}, ConnectionPath::Unknown,
+        ConnectionPath::Lan));
     owner.drain();
+    REQUIRE(owner.stats().updates_rejected >= 1);
 
-    ConnectionPath path = ConnectionPath::Unknown;
-    REQUIRE(owner.try_load_connection_path(path));
-    REQUIRE(path == ConnectionPath::Relay);
+    // 逐设备路径（DEC-015）：两台设备两条不同路径同时正确——全局单值摘要
+    // 无法表达的形态。
+    executor::comm::Snapshot<AppState> snapshot;
+    int attempts = 0;
+    while (!owner.try_load_snapshot(snapshot) && attempts < 64) {
+        ++attempts;
+    }
+    REQUIRE(attempts < 64);
+    REQUIRE(snapshot.value.devices.connection_paths.size() == 2);
+    REQUIRE(snapshot.value.devices.connection_paths[0].device.value == "dev-1");
+    REQUIRE(snapshot.value.devices.connection_paths[0].path == ConnectionPath::Relay);
+    REQUIRE(snapshot.value.devices.connection_paths[1].device.value == "dev-2");
+    REQUIRE(snapshot.value.devices.connection_paths[1].path == ConnectionPath::Lan);
 
     // 路径事件按序进入主路径。
     for (const std::uint64_t expected_sequence : {1U, 2U, 3U}) {
@@ -333,9 +374,10 @@ TEST_CASE("Injected connection path change drives the LatestMailbox summary",
         REQUIRE(std::holds_alternative<ConnectionPathChangedEvent>(event.payload));
     }
 
-    // 设计第 10.1 节：连接路径摘要不落入 Store，不触发快照发布。
-    REQUIRE(owner.snapshot_sequence() == 0);
-    REQUIRE(owner.stats().snapshots_published == 0);
+    // DEC-015：路径更新落入 Store（触发快照发布——本用例 drain 后序列为
+    // 注册发布 1 次 + 路径更新发布 1 次 = 2；旧「单值摘要不落 Store」口径
+    // 已随全局 LatestMailbox 退役）。
+    REQUIRE(owner.snapshot_sequence() == 2);
 }
 
 TEST_CASE("Injected messages keep FIFO order on the mandatory event path",

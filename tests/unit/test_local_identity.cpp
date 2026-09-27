@@ -64,3 +64,39 @@ TEST_CASE("Endpoint id for the frozen application id is deterministic",
     CHECK(identity.endpoint_id
         == aki::heyaki::provision_local_identity(root).endpoint_id);
 }
+
+// M5-04（DEC-016）：配对口令常量 ↔ 真实 verifier 往返锁定。M3-03 的占位
+// verifier 为假编码（对任何口令 crypto_pwhash_str_verify 均拒绝——冻结调研
+// 探针实测），Pending→Trusted 永久不可达；本用例锁定 kAkiPairingPassword
+// 经 create_password_verifier 生成的 verifier 可验证正确口令、拒绝他串，
+// 并锁定策略下限（<8 Unicode 标量的口令生成被拒）。网络无关（纯 crypto 面；
+// 双端 Pending→Trusted 全链路归 M5-08/M3-09 补跑）。
+TEST_CASE("kAkiPairingPassword round-trips through create/verify password",
+    "[unit][local_identity][dec016]") {
+    namespace hh = ::heyaki;
+
+    const auto verifier_result = hh::create_password_verifier(
+        aki::heyaki::kAkiPairingPassword, hh::PasswordHashParameters{});
+    REQUIRE(verifier_result.has_value());
+    const hh::PasswordVerifier verifier = *verifier_result.value_if();
+
+    // 正确口令 MATCH；他串拒绝（含前缀/大小写扰动）。
+    const auto matched = hh::verify_password(
+        aki::heyaki::kAkiPairingPassword, verifier);
+    REQUIRE(matched.has_value());
+    REQUIRE(matched.value_if() != nullptr);
+    REQUIRE(*matched.value_if());
+    for (const char* wrong :
+        {"aki", "aki-mvp-pairing-passphras", "Aki-Mvp-Pairing-Passphrase",
+            ""}) {
+        const auto rejected = hh::verify_password(wrong, verifier);
+        REQUIRE(rejected.has_value());
+        REQUIRE(rejected.value_if() != nullptr);
+        REQUIRE_FALSE(*rejected.value_if());
+    }
+
+    // 策略下限：< 8 Unicode 标量的口令无法生成 verifier。
+    const auto too_short = hh::create_password_verifier(
+        "aki-mvp", hh::PasswordHashParameters{});
+    REQUIRE_FALSE(too_short.has_value());
+}

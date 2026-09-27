@@ -560,3 +560,14 @@ target_link_libraries(test_ui_actions PRIVATE
     aki_ui_models)
 add_test(NAME test_ui_actions COMMAND test_ui_actions)
 set_tests_properties(test_ui_actions PROPERTIES LABELS "unit")
+
+# M5-04：Devices 域信任操作面测试（DEC-006 映射 3：三操作转移边/配对结果
+# 路由/UiActions 信任通道/逐设备路径 DEC-015；网络无关，Fake 注入）。
+add_executable(test_device_trust unit/test_device_trust.cpp)
+target_compile_features(test_device_trust PRIVATE cxx_std_20)
+aki_apply_warnings(test_device_trust PRIVATE)
+target_link_libraries(test_device_trust PRIVATE
+    Catch2::Catch2WithMain
+    aki_ui_models)
+add_test(NAME test_device_trust COMMAND test_device_trust)
+set_tests_properties(test_device_trust PROPERTIES LABELS "unit")

@@ -91,7 +91,7 @@ using aki::app::AppStateOwnerStats;
 using aki::app::AppStateUpdate;
 using aki::app::DeviceConnectedEvent;
 using aki::app::MessageReceivedEvent;
-using aki::app::SetConnectionPath;
+using aki::app::SetDeviceConnectionPath;
 using aki::app::TransferProgressEvent;
 using aki::app::UpsertConversation;
 using aki::app::UpsertDevice;
@@ -222,30 +222,43 @@ TEST_CASE("Single-writer drain publishes one consistent snapshot per batch",
     REQUIRE_FALSE(owner.load_snapshot_newer_than(snapshot.sequence, newer));
 }
 
-TEST_CASE("LatestMailbox carries only the newest connection path",
-    "[unit][app_state][latest_mailbox]") {
+TEST_CASE("Per-device connection path upserts, idempotence and rejection",
+    "[unit][app_state][device_path]") {
     AppStateOwner owner;
 
-    REQUIRE(owner.submit_update(SetConnectionPath{ConnectionPath::Lan}));
-    REQUIRE(owner.submit_update(SetConnectionPath{ConnectionPath::P2p}));
-    REQUIRE(owner.submit_update(SetConnectionPath{ConnectionPath::Relay}));
+    // 未知 id 拒绝并可观测（DEC-015；RULE-09）。
+    REQUIRE(owner.submit_update(
+        SetDeviceConnectionPath{DeviceId{"ghost"}, ConnectionPath::Lan}));
+    owner.drain();
+    REQUIRE(owner.stats().updates_rejected == 1);
+
+    // 未知 id 拒绝（DEC-015）；本地身份行已注册后路径更新生效。
+    REQUIRE(owner.submit_update(UpsertDevice{make_device("local")}));
+    REQUIRE(owner.submit_update(
+        SetDeviceConnectionPath{DeviceId{"local"}, ConnectionPath::Lan}));
+    REQUIRE(owner.submit_update(
+        SetDeviceConnectionPath{DeviceId{"local"}, ConnectionPath::P2p}));
+    REQUIRE(owner.submit_update(
+        SetDeviceConnectionPath{DeviceId{"local"}, ConnectionPath::Relay}));
     owner.drain();
 
-    ConnectionPath path = ConnectionPath::Unknown;
-    REQUIRE(owner.try_load_connection_path(path));
-    REQUIRE(path == ConnectionPath::Relay);
+    // 同值幂等 no-op：不触发快照发布（updates_applied 吸收）。
+    const auto applied_before = owner.stats().updates_applied;
+    const auto published_before = owner.stats().snapshots_published;
+    REQUIRE(owner.submit_update(
+        SetDeviceConnectionPath{DeviceId{"local"}, ConnectionPath::Relay}));
+    owner.drain();
+    REQUIRE(owner.stats().updates_applied == applied_before + 1);
+    REQUIRE(owner.stats().snapshots_published == published_before);
 
-    // 最新值语义：对最新序列没有更新可取（stale read 显式返回 false）。
-    const std::uint64_t seq = owner.connection_path_sequence();
-    std::uint64_t new_sequence = 0;
-    REQUIRE_FALSE(owner.try_load_connection_path_newer_than(seq, path, new_sequence));
-
-    // 覆盖计数可观测：3 次发布，前 2 次被覆盖。
-    REQUIRE(owner.connection_path_stats().overwritten_count == 2);
-
-    // 单值摘要不触发 Store 快照发布（设计第 10.1 节：不在 AppState 内）。
-    REQUIRE(owner.snapshot_sequence() == 0);
-    REQUIRE(owner.stats().snapshots_published == 0);
+    // 逐设备取值：按设备键 join 后为最新值。
+    executor::comm::Snapshot<AppState> snapshot;
+    REQUIRE(owner.try_load_snapshot(snapshot));
+    REQUIRE(snapshot.value.devices.connection_paths.size() == 1);
+    REQUIRE(snapshot.value.devices.connection_paths[0].device.value
+        == "local");
+    REQUIRE(snapshot.value.devices.connection_paths[0].path
+        == ConnectionPath::Relay);
 }
 
 TEST_CASE("Topic fans out events in order and makes rejection visible",

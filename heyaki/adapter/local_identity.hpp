@@ -15,14 +15,17 @@
 // 宿主配置决定（M3-03，如实记录）：secret_backend.prefer_os_backend = false——
 // 控制台宿主与自动化测试需要确定性（不依赖 OS 钥匙串），走 heyaki 加密文件
 // 回退（allow_encrypted_file_fallback 默认 true）；OS 后端集成属后续设置面
-// 议题（M5）。password_verifier 为占位 verifier（heyaki 自身测试同型）——
-// 本地口令流程随 M5 设置面引入，DEC-006 未冻结口令处理。pairing 默认授予
-// scope 取 DEC-006 冻结常量 message.send。
+// 议题（M5）。password_verifier 自 M5-04 起为 kAkiPairingPassword 的真实
+// argon2id verifier（DEC-016——M3-03 占位串为假编码、验不了任何口令，已
+// 退役；存量 profile 处置见 DEC-016「影响与风险」：删除 db/profile.sqlite
+// 重建，不静默迁移）。pairing 默认授予 scope 取 DEC-006 冻结常量
+// message.send。
 #pragma once
 
 #include "device/device/device_types.hpp"
 
 #include <heyaki/identity.hpp>
+#include <heyaki/password.hpp>
 #include <heyaki/profile_store.hpp>
 
 #include <array>
@@ -39,9 +42,18 @@ namespace aki::heyaki {
 // DEC-006 冻结常量：application_id。
 inline constexpr char kAkiApplicationId[] = "org.aki.app";
 
+// DEC-016 冻结常量：MVP 配对授权口令（≥8 个 Unicode 标量，满足
+// PasswordSecurityPolicy.minimum_unicode_scalars）。目标端以其验证 pair_peer
+// 提交（verifier 同批真实化）；在 heyaki/adapter→DeviceManager 内部传递，
+// 不进 SPI/UiActions 签名。固定口令=公开弱口令（安全语义披露见 DEC-016），
+// 移除条件：M5-07 设置面引入用户口令。
+inline constexpr char kAkiPairingPassword[] = "aki-mvp-pairing-passphrase";
+
 // 本地身份（std/aki 类型公开面）。
 struct LocalIdentity {
-    aki::device::DeviceId id;          // ::heyaki::to_string(device_id) 规范 hex
+    aki::device::DeviceId id;          // ::heyaki::to_string(device_id)——hy1_
+                                       // 前缀 base32 规范串（SHA-256 摘要，
+                                       // 非 hex；DEC-006 映射 1 实测修正）
     aki::device::PublicKey public_key; // Ed25519 公钥 32 字节
     std::string endpoint_id;           // endpoint_for(kAkiApplicationId) 规范 hex
     bool created = false;              // true = 本次启动新建；false = 既有加载
@@ -110,14 +122,24 @@ private:
         if (readiness.value_if()->ready()) {
             return;
         }
-        hh::PasswordVerifier verifier{.format_version = 1U,
-            .parameters = hh::PasswordHashParameters{},
-            .encoded = "$argon2id$v=19$m=65536,t=2,p=1$aki$aki"};
+        // DEC-016：真实 argon2id verifier（kAkiPairingPassword 的摘要）——
+        // 仅 created 分支承担创建耗时（m=64MiB/t=2，启动恢复段主线程同步，
+        // §11.1 ②）。存量 profile（占位 verifier）不在此触达：处置见头注。
+        auto verifier = hh::create_password_verifier(
+            kAkiPairingPassword, hh::PasswordHashParameters{});
+        if (!verifier) {
+            const auto* error = verifier.error_if();
+            throw std::runtime_error(
+                std::string("local identity: create_password_verifier "
+                            "failed: ")
+                + std::string(hh::error_code_name(error->code())) + ": "
+                + std::string(error->safe_detail()));
+        }
         hh::PairingPolicy pairing;
         pairing.default_scopes = {"message.send"};  // DEC-006 冻结配对 scope
         hh::LocalProfileInitialization initialization{
             .application_id = kAkiApplicationId,
-            .password_verifier = std::move(verifier),
+            .password_verifier = std::move(*verifier.value_if()),
             .password_generation = 1U,
             .pairing_policy = std::move(pairing),
             .lan = hh::LanConfiguration{}};

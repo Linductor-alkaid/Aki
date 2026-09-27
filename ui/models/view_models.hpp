@@ -1,4 +1,4 @@
-// 四域视图模型派生（设计 §9.1 视图模型派生条款，M5-03）。
+// 四域视图模型派生（设计 §9.1 视图模型派生条款，M5-03；M5-04 信任/路径扩展）。
 //
 // 纯函数：快照（Store 值语义集合）→ 只读视图模型；网络无关可单测
 // （tests/unit/test_ui_models.cpp）。本层为 EUI-NEO 无关的独立构建目标
@@ -7,8 +7,9 @@
 // 派生结果；操作一律经注入出站接口 UiActions 下达（ui_actions.hpp）。
 //
 // 派生语义：
-//   - 设备列表 = DeviceStore × presence/连接路径摘要（连接路径为状态 owner
-//     LatestMailbox 的最新单值摘要，随派生入参注入——Store 不含路径字段）；
+//   - 设备列表 = DeviceStore × presence/逐设备连接路径（DEC-015：路径为
+//     DeviceStore 级易失集合，按设备键 join；无条目即 Unknown）× 信任操作
+//     可用性（§4 固定转移边：仅 Pending 可确认/拒绝、仅 Trusted 可撤销）；
 //   - 会话列表 = ConversationStore × 最后消息摘要（MessageStore 按会话端点
 //     归属过滤后取最新一条；DEC-009 ② 的会话解析约定：消息属于其
 //     {sender, receiver} == {local, remote} 的会话）；
@@ -34,14 +35,27 @@ struct DeviceView {
     aki::device::DeviceClass device_class = aki::device::DeviceClass::Other;
     aki::device::TrustState trust_state = aki::device::TrustState::Unknown;
     aki::device::PresenceState presence = aki::device::PresenceState::Offline;
-    // 连接路径摘要（LatestMailbox 最新单值；无逐设备路径字段——M5-04 展示
-    // 语义按 aki_ui_design §3 细化时如需逐设备路径，经 DEC 记录扩展 Store）。
+    // 逐设备连接路径（DEC-015：DeviceStore.connection_paths 按设备键 join；
+    // 无条目 = Unknown——M5-04 退役全局单值摘要）。
     aki::device::ConnectionPath connection_path = aki::device::ConnectionPath::Unknown;
+    // 公钥指纹可用性（指纹=DeviceId 规范串 hy1_…，即 id 字段本身；relay
+    // 等来源可能缺公钥——缺失态显式呈现，不以 DeviceId 冒充已验证指纹）。
+    bool fingerprint_available = false;
+
+    // 信任操作可用性（§4 固定转移边；M5-04 信任操作面）。
+    [[nodiscard]] bool can_confirm() const noexcept {
+        return trust_state == aki::device::TrustState::Pending;
+    }
+    [[nodiscard]] bool can_reject() const noexcept {
+        return trust_state == aki::device::TrustState::Pending;
+    }
+    [[nodiscard]] bool can_revoke() const noexcept {
+        return trust_state == aki::device::TrustState::Trusted;
+    }
 };
 
 [[nodiscard]] std::vector<DeviceView> derive_device_views(
-    const aki::app::DeviceStore& store,
-    aki::device::ConnectionPath latest_connection_path);
+    const aki::app::DeviceStore& store);
 
 // ---- 会话域 ----
 

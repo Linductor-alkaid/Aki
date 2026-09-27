@@ -184,8 +184,8 @@ TEST_CASE("Two-node full transfer chain: image message, archive, control, "
         [&](const DeviceId& peer, bool ok, const std::string&) {
             if (ok && peer == identity_a.id) paired_b.store(true);
         });
-    REQUIRE(side_a.pair_peer(identity_b.id, "aki-full-pw"));
-    REQUIRE(side_b.pair_peer(identity_a.id, "aki-full-pw"));
+    REQUIRE(side_a.pair_peer(identity_b.id, aki::heyaki::kAkiPairingPassword));
+    REQUIRE(side_b.pair_peer(identity_a.id, aki::heyaki::kAkiPairingPassword));
     if (!wait_until([&] { return paired_a.load() && paired_b.load(); }, 20s)) {
         std::printf("[skip] pairing handshake did not complete after "
                     "submission: full transfer loopback not verified; rerun "
