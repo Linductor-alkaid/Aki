@@ -1594,9 +1594,48 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
     （tsan 档零 data race 报告 + 用例通过）**尚未取得**——PR 档 CI
     五档与 master push tsan 档观察随本修复 MR 闭环执行（本会话未推送，
     如实登记；间歇缺陷以多次绿档佐证收敛，单次绿不宣称证明）；MR 描述
-    须复述本条。(b) 若 CI 观察轮次不足或再现他因红档，按工程规范 §4
+    须复述本条。（→ 已取得：同日 #51 合入后回填，见下方「CI 证据
+    回填」条。）
+    (b) 若 CI 观察轮次不足或再现他因红档，按工程规范 §4
     登记原因/负责人/补跑条件，不勾选完成。(c) 退出-1 双端项（含本测试
     的真实双端语义）沿 M5-08 ⑤ 降级登记不变，负责人 Linductor。
-  - **同步**：本里程碑（M5-09 记录 ⑧ 闭环注记 + 本记录）、总计划
-    （当前状态条目）。无决策记录（修复为 ⑧ 已登记路径的执行，无新
+  - **CI 证据回填（2026-09-28；#51 已合入 master `5803240`，gh 只读
+    核实，本会话执行）**：
+    - **PR 档五档全绿（验收 (3)）**：`gh pr checks 51` → 五档全部
+      pass——Linux asan job 108680281118 / Linux debug 108680281065 /
+      **Linux tsan 108680281121（8m36s）** / Linux ubsan 108680281088 /
+      Windows debug (MSVC) 108680280912，全部属 run `36340772532`。
+      **headSha 订正（2026-09-28 复核）**：`gh run view 36340772532
+      --json headSha` → `6104928c3db4a2d729ee5aa596e18a343037e990`＝
+      修复分支 `fix/bug-20260927-002-peer-session-callback-assertions`
+      tip（PR 档 run 跑在分支 tip 上，非合入提交）；原记「headSha =
+      `58032409b63d` = 合入提交」为错误绑定——`58032409b63d` 实为
+      master push run `36341461485` 的 headSha（`gh run view
+      36341461485 --json headSha` 实测，见下条）。五档 job 号与全
+      pass 结论不受影响。
+    - **master push tsan 档观察（验收 (4)，第 1 轮）**：push run
+      `36341461485`（headSha `58032409`，event=push，触发
+      2026-09-27T18:39:37Z）→ `gh run view 36341461485` 轮询至完成：
+      **completed success**，五 job 全绿——Windows 13m0s（job
+      108682262057）/ ubsan 10m39s（108682262251）/ asan 10m49s
+      （108682262280）/ **tsan 12m7s（job 108682262305）** / debug
+      9m41s（108682262366）。
+    - **tsan job 证据细读（命令 `gh run view 36341461485 --job
+      108682262305 --log`）**：`100% tests passed, 0 tests failed out
+      of 43`；**`ThreadSanitizer` 报告计数 0**（对照修复前 run
+      36328366422 同 job 同测试 1 报告即红）；`[skip]` 行计数 0——两
+      修复二进制**实跑全路径而非环境跳过**：`Test #24:
+      test_peer_sessions_loopback ... Passed 27.59 sec`、`Test #26:
+      test_disconnect_recovery_loopback ... Passed 42.69 sec`（回调内
+      修复段在 tsan 下真实执行）。
+    - **观察轮次与收敛口径（记录 (a)「间歇缺陷以多次绿档佐证收敛，
+      单次绿不宣称证明」的履行）**：修复后 master push 观察轮次 = 1
+      （绿）；对照修复前基线 = 2026-09-27 近 6 轮中 2 红（同因，
+      run 36328366422 / 36311065064）。**不宣称缺陷已收敛**：首轮绿
+      与修复前红档的间歇性（同内容树曾有绿档）尚不可区分于运气；
+      后续 master push 合入随批继续观察并按本条格式累计轮次；若再现
+      同因红档按 (b) 重开缺陷（负责人 Linductor），他因红档另行登记。
+      观察不足轮次如实写明：**当前 1 轮**。
+  - **同步**：本里程碑（M5-09 记录 ⑧ 闭环注记 + 本记录 + 本回填条）、
+    总计划（当前状态条目）。无决策记录（修复为 ⑧ 已登记路径的执行，无新
     取舍）；无设计变更。

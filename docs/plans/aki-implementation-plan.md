@@ -21,9 +21,15 @@
   验证（本会话执行）：debug/release 两测试二进制重编 0 error；debug/release
   全量 ctest 各 43/43 零回归；修复二进制各连跑 ×10 exit 0（本机 [skip]
   路径，如实限定）；tsan 本机 configure 失败取证（`HEYAKI_SANITIZER=thread
-  requires GCC or Clang`）——**tsan 直接证据（多次连跑零 data race）随本
-  修复 MR 的 PR 档五档 CI 与 master push tsan 档观察取得，本会话未推送、
-  如实登记，不冒充绿档**。详见 M5 里程碑 BUG-20260927-002 验证记录。
+  requires GCC or Clang`）。**已合入并取得 CI 直接证据（同日回填）**：修复
+  经 #51 合入 master（`5803240`）——PR 档五档全绿（run 36340772532，tsan
+  job 108680281121）；master push tsan 观察第 1 轮：run 36341461485
+  completed success（tsan job 108682262305，12m7s——43/43 全过、
+  ThreadSanitizer 报告 0、[skip] 0，两修复二进制实跑全路径 Passed
+  27.59s/42.69s）。**观察轮次 = 1，不宣称收敛**（「多次绿档佐证」口径，
+  后续 master push 随批继续观察；再现同因红档按 §4 重开登记，负责人
+  Linductor）。详见 M5 里程碑 BUG-20260927-002 验证记录（含 CI 证据
+  回填条）。
 - 2026-09-27：`M5-09` 完成（收口审计与退出证据归集，纯审计与文档，无产品
   代码变更；`M5-01`~`M5-09` 工作项全部完成）：设计-实现审计矩阵逐项一致
   （aki_design §6.1/§9/§9.1/§10/§10.1/§11.1/§14 对 ui/ 四子目录 +
