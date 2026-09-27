@@ -135,10 +135,10 @@ public:
         if (peer.empty() || !has_valid_grant_) {
             return false;  // 无有效 grant（DEC-006 映射 3：无操作可见）。
         }
+        // 真实 NodeSession 仅在配对结果路径触发观察器，revoke 从不触发
+        // （M5-04 评审对齐）：不合成 on_pairing_completed，避免制造必然被
+        // 状态机拒绝（Revoked→Trusted 非法）的 PairingCompletedWork 噪声。
         revoked_peers_.push_back(peer);
-        if (sink_ != nullptr) {
-            (void)sink_->on_pairing_completed(peer, true, {});
-        }
         return true;
     }
 
