@@ -142,11 +142,19 @@ TEST_CASE("Peer session pipeline drives presence and path state over the loopbac
         std::_Exit(0);
     }
 
-    // 不持久化断言的载体：DB 控制面 + 处理器（DEC-009 ①）。SetPresence/
-    // SetDeviceConnectionPath 在映射中无作业（§11.1 ①）——统计最终对账。
+    // 持久化载体：恢复组合先行（§11.1 ②③ 生产顺序——恢复期主线程独占
+    // 唯一连接，完成后才注册 DatabaseWorker），载体锚定生产布局
+    // <data_root>/db/aki.db3（DEC-004）：UpsertDevice 作业同步落盘，尾部
+    // 「重启恢复后 presence 归一化 Offline」断言据此可见。原 :memory: 载体
+    // 无 schema 且随进程消失——设备行从未持久化，恢复得 0 行（CI run
+    // 36295393398 asan/tsan 实测 351 行挂 0 == 1；M3-06 起该段在 CI 从未
+    // 实跑——DEC-016 真实 verifier 落地前配对必然 [skip] 降级）。
+    // SetPresence/SetDeviceConnectionPath 在映射中无作业（§11.1 ①）——
+    // device_jobs 计数对账不变。
+    aki::persistence::RecoveryResult recovered =
+        aki::persistence::perform_startup_recovery(root_a);
     auto control = std::make_shared<aki::persistence::DatabaseWorkerControl>(
-        std::make_unique<aki::persistence::Repositories>(
-            aki::persistence::Database::open(":memory:")));
+        std::move(recovered.repositories));
     executor::BlockingWorkerSpec worker_spec;
     worker_spec.name = "aki.db-worker";
     worker_spec.config.thread_name = "aki-db-worker";

@@ -643,7 +643,12 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
     36278949737 asan 实测；本机防火墙降级路径未实跑，由 CI 实跑验证）；
     ③test_app_managers 路由用例标题 eleven→twelve；④④⑧ 记录数字订正
     （见上）；⑤UpsertDevice 整行替换覆写隐患兑现登记（「风险与阻塞」）；
-    ⑥退役 SetConnectionPath 注释残留 2 处清理。debug 全量 ctest 复验。
+    ⑥退役 SetConnectionPath 注释残留 2 处清理；⑦test_peer_sessions_
+    loopback 持久化载体 :memory:→<data_root>/db/aki.db3（CI 第 5 轮
+    run 36295393398 asan/tsan 同点暴露：轮询修复使测试首次跑通全链后，
+    尾部重启恢复断言得 0 行——:memory: 载体无 schema、设备行从未落盘，
+    M3-06 起从未实跑段，按 §11.1 ②③ 恢复组合先行修复）。debug 全量
+    ctest 复验。
   - **⑨ 如实降级（M3-09 纪律）**：双端配对→信任全链路（pairing
     restricted → pair_peer → observer 结果 → Trusted 端到端）受本机防火墙
     拦截 TLS 入站限制未执行——网络无关半边全部验证（SPI 路由/状态机转移
