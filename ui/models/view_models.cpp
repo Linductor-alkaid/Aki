@@ -82,13 +82,14 @@ std::vector<ConversationView> derive_conversation_views(
             if (!message_belongs_to(*it, conversation)) {
                 continue;
             }
-            view.last_message.has_value = true;
-            view.last_message.id = it->id;
-            view.last_message.type = it->type;
-            view.last_message.delivery = it->state;
-            view.last_message.timestamp = it->timestamp;
-            view.last_message.preview = message_preview(*it);
-            break;
+        view.last_message.has_value = true;
+        view.last_message.id = it->id;
+        view.last_message.type = it->type;
+        view.last_message.delivery = it->state;
+        view.last_message.timestamp = it->timestamp;
+        view.last_message.preview = message_preview(*it);
+        view.last_message.outbound = it->sender == conversation.local_device;
+        break;
         }
         views.push_back(std::move(view));
     }
@@ -112,6 +113,72 @@ std::vector<aki::conversation::Message> derive_conversation_messages(
         }
     }
     return stream;
+}
+
+std::vector<MessageView> derive_message_views(
+    const aki::app::MessageStore& store,
+    const aki::conversation::Conversation& conversation,
+    aki::device::DeviceId local_device,
+    const aki::app::TransferStore& transfers) {
+    std::vector<MessageView> views;
+    if (!(local_device == conversation.local_device)
+        && !(local_device == conversation.remote_device)) {
+        return views;  // 端点守卫：不匹配返回空流（可见空态，不猜测归属）。
+    }
+    views.reserve(store.messages.size());
+    for (const aki::conversation::Message& message : store.messages) {
+        if (!message_belongs_to(message, conversation)) {
+            continue;
+        }
+        MessageView view;
+        view.id = message.id;
+        view.outbound = message.sender == conversation.local_device;
+        view.type = message.type;
+        view.delivery = message.state;
+        view.timestamp = message.timestamp;
+        std::visit(
+            [&view](const auto& payload) {
+                namespace ac = aki::conversation;
+                using Payload = std::decay_t<decltype(payload)>;
+                if constexpr (std::is_same_v<Payload, ac::TextPayload>
+                    || std::is_same_v<Payload, ac::SystemPayload>) {
+                    view.text = payload.text;
+                } else if constexpr (std::is_same_v<Payload,
+                                         ac::ImagePayload>) {
+                    view.has_media = true;
+                    view.media = payload.media;
+                    view.transfer_id = payload.transfer_id;
+                } else if constexpr (std::is_same_v<Payload,
+                                         ac::VideoPayload>) {
+                    view.has_media = true;
+                    view.media = payload.media;
+                    // VideoPayload 同构 transfer_id 缺口（§6.1，M4 范围外）
+                    // ——无 join 键，卡片恒为「无传输行」兜底态。
+                } else if constexpr (std::is_same_v<Payload,
+                                         ac::FilePayload>) {
+                    view.has_media = true;
+                    view.media = payload.file;
+                    view.transfer_id = payload.transfer_id;
+                }
+            },
+            message.payload);
+        if (view.has_media && !view.transfer_id.empty()) {
+            // 文件卡片 join（§6.1② 消费侧 join：TransferStore 按 TransferId）。
+            for (const aki::transfer::Transfer& transfer : transfers.transfers) {
+                if (transfer.id == view.transfer_id) {
+                    view.transfer_tracked = true;
+                    view.transfer_state = transfer.state;
+                    view.transfer_progress = transfer.total > 0
+                        ? static_cast<double>(transfer.transferred)
+                            / static_cast<double>(transfer.total)
+                        : 0.0;
+                    break;
+                }
+            }
+        }
+        views.push_back(std::move(view));
+    }
+    return views;
 }
 
 std::vector<TransferView> derive_transfer_views(

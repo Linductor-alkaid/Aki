@@ -1,6 +1,9 @@
 // UiActions 组合根绑定实现（语义见 ui_actions.hpp）。
 #include "ui/models/ui_actions.hpp"
 
+#include "app/application/image_flow.hpp"
+#include "heyaki/adapter/wire_ids.hpp"
+
 #include <filesystem>
 #include <utility>
 
@@ -10,19 +13,27 @@ UiActions make_ui_actions(aki::app::DeviceManager& devices,
     aki::app::ConversationManager& conversations,
     aki::app::MessageManager& messages, aki::app::TransferManager& transfers) {
     UiActions actions;
+    // wire 标识生成（M5-05）：heyaki/adapter/wire_ids 规范 id 入口（§6.1
+    // 生成入口收敛；纯函数，页面点击回调上下文可调）。
+    actions.new_message_id = [] { return aki::heyaki::new_message_id(); };
+    actions.new_transfer_id = [] { return aki::heyaki::new_transfer_id(); };
     actions.send_text =
         [&messages](aki::device::DeviceId to,
             aki::conversation::MessageId message_id, std::string text) {
             return messages.send_text(
                 std::move(to), std::move(message_id), std::move(text));
         };
+    // 图片发送 hash-first 编排（M5-05，DEC-010/DEC-011）：先传输准入，
+    // 消息经 hash 延续异步发出（stored_sha256 随 FileMetadata 携带）。
     actions.send_image =
-        [&messages](aki::device::DeviceId to,
+        [&transfers, &messages](aki::device::DeviceId to,
             aki::conversation::MessageId message_id,
             aki::transfer::FileMetadata media,
-            aki::transfer::TransferId transfer_id, bool transfer_admitted) {
-            return messages.send_image(std::move(to), std::move(message_id),
-                std::move(media), std::move(transfer_id), transfer_admitted);
+            aki::transfer::TransferId transfer_id,
+            std::filesystem::path source_path) {
+            return aki::app::send_image_message_with_hash(transfers, messages,
+                to, message_id, media, transfer_id, std::move(source_path))
+                == aki::app::ImageSendFlowResult::Submitted;
         };
     actions.start_transfer =
         [&transfers](aki::device::DeviceId to,

@@ -8,6 +8,25 @@
 
 ## 当前状态
 
+- 2026-09-27：`M5-05` 完成：Conversations 页与聊天窗口（`SCOPE-05`/
+  `SCOPE-06`/`SCOPE-07` UI 面 + `SCOPE-08` 会话内文件卡片）——会话列表
+  （M5-03 ConversationView 派生复用 + 最后消息方向/投递徽标扩展，Trusted
+  门控 + New chat 弹窗）；聊天窗口（变高气泡列按 M5-01 复核结论「卡片
+  自绘 + scrollview」组合承接、气泡左右归属 + 投递语义色 §3、文件卡片
+  card+progress+button（M5-06 复用形态）+ TransferStore 消费侧 join +
+  无传输行兜底态、图片预览 dialog、断连横幅分支）；发送面页面形改造——
+  wire id 生成收敛 [aki_design §6.1](../design/aki_design.md)
+  `heyaki/adapter/wire_ids.hpp`（`NodeSession::new_transfer_id` 委托同
+  入口 + `new_message_id` 同型）+ UiActions 增 id 生成器注入、send_image
+  绑定 hash-first 编排（DEC-010/DEC-011）；视图模型 MessageView 扩展；
+  唤醒缺口修复（GUI 实测发现）：`AppStateOwner::on_update_submitted`
+  受理点唤醒（aki_design §9.1 修订）——发送/接收结果不再滞留至下一次
+  输入事件；文本发送 GUI 实测（canonical `hym1_` admission + 真实
+  Adapter 无会话拒绝 → Failed 徽标 + 列表摘要实时更新）；新断言
+  test_ui_models 116 + test_ui_actions 65；debug/release 全量 ctest
+  43/43 零回归；本机 GUI 截图 ×5 + 运行日志归档（RULE-11）；双端真机
+  链路（Delivered 回报/图片 wire 面/断连恢复/传输操作面）受防火墙限制
+  沿 M3-09 降级登记，补跑归 M5-08。详见 M5 里程碑文档 M5-05 验证记录。
 - 2026-09-27：`M5-04` 完成：Devices 页（`SCOPE-04`/`SCOPE-02`/`SCOPE-03`/
   `SCOPE-10` 展示面）——SPI 信任操作扩展（出站 `confirm_pairing`/
   `revoke_trust` + 入站第 12 方法 `on_pairing_completed`，DEC-006 映射 3

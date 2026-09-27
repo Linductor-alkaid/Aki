@@ -11,6 +11,7 @@
 
 #include "ui/models/ui_actions.hpp"
 #include "ui/models/ui_state_consumer.hpp"
+#include "ui/pages/conversations_page.hpp"
 #include "ui/theme/aki_theme.hpp"
 
 #include <eui/dsl.h>
@@ -50,6 +51,9 @@ struct MainWindowModel {
     // 页面持有的信任确认弹窗态（M5-04）：待确认设备 id；空 = 弹窗关闭。
     // 弹窗展示该设备的 mono 指纹（=DeviceId 规范串），确认/拒绝经 UiActions。
     std::string pending_confirm_device;
+    // Conversations 页页面模型（M5-05：选中会话/输入草稿/消息视图缓存/
+    // 弹窗 open 态；语义见 conversations_page.hpp）。
+    ConversationsPageModel conversations;
 };
 
 // 三栏壳装配：导航栏(fixed 64) + 列表栏(fixed 264) + 内容栏(fill)，4px 可调
