@@ -134,6 +134,7 @@ struct MessageView {
 struct TransferView {
     aki::transfer::TransferId id;
     std::string file_name;
+    std::string mime_type;  // 文件卡片媒体标注（M5-06；空 → 卡片兜底标注）。
     aki::device::DeviceId peer;  // 方向对端（outbound=receiver，inbound=sender）。
     aki::transfer::TransferState state = aki::transfer::TransferState::Queued;
     std::uint64_t transferred = 0;
@@ -143,6 +144,23 @@ struct TransferView {
     double progress = 0.0;
     bool outbound = false;  // sender==local_device。
     bool terminal = false;  // is_terminal(state)。
+
+    // 操作可用性（M5-06 Transfers 页操作面；§3/§7 状态机固定边派生——
+    // 返回值只作 UI 门控，操作本身经 UiActions 传输三接口下达，admission
+    // 拒绝可见）：
+    //   - can_pause：仅 Transferring（运行期暂停；Queued→Paused/
+    //     Negotiating→Paused 为 DEC-013 重启降级边，非用户动作面）；
+    //   - can_resume：仅 Paused（DEC-013② 恢复为显式动作；接收行恢复经
+    //     wire 进度事件推进/对端重发，发送行经无会话取消——见 ⑥）；
+    //   - can_cancel：全部非终态（含 Paused 孤儿降级行——DEC-013⑥ 无会话
+    //     行 cancel_transfer 直接终态入口的 UI 触达）。
+    [[nodiscard]] bool can_pause() const noexcept {
+        return state == aki::transfer::TransferState::Transferring;
+    }
+    [[nodiscard]] bool can_resume() const noexcept {
+        return state == aki::transfer::TransferState::Paused;
+    }
+    [[nodiscard]] bool can_cancel() const noexcept { return !terminal; }
 };
 
 [[nodiscard]] std::vector<TransferView> derive_transfer_views(

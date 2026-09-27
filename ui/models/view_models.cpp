@@ -189,6 +189,7 @@ std::vector<TransferView> derive_transfer_views(
         TransferView view;
         view.id = transfer.id;
         view.file_name = transfer.file.name;
+        view.mime_type = transfer.file.mime_type;
         view.peer = transfer.sender == local_device ? transfer.receiver
                                                     : transfer.sender;
         view.state = transfer.state;

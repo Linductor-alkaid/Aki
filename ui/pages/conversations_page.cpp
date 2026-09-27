@@ -9,6 +9,7 @@
 // 处理）执行；出站操作全经 UiActions（RULE-01/RULE-02/DEC-008）。
 #include "ui/pages/conversations_page.hpp"
 
+#include "ui/components/transfer_card.hpp"
 #include "ui/pages/main_window.hpp"
 
 #include "components/button.h"
@@ -106,18 +107,6 @@ core::Color trust_color(const AkiSemanticPalette& semantic,
 
 // §3 传输态语义色：Transferring brand / Paused warning / Failed destructive /
 // Completed success / Queued·Negotiating·Cancelled 中性。
-core::Color transfer_color(const AkiSemanticPalette& semantic,
-    aki::transfer::TransferState state) {
-    using aki::transfer::TransferState;
-    switch (state) {
-    case TransferState::Transferring: return semantic.brand;
-    case TransferState::Paused: return semantic.warning;
-    case TransferState::Failed: return semantic.destructive;
-    case TransferState::Completed: return semantic.success;
-    default: break;
-    }
-    return semantic.text_subtlest;
-}
 
 // §3 投递态图标（aki_ui_design §2.6 码点登记表）：Queued 时钟 / Sending
 // paper-plane / Sent 单勾 / Delivered 双勾 / Failed 叹号。
@@ -160,24 +149,6 @@ std::string time_label(std::chrono::system_clock::time_point timestamp) {
     char buffer[8] = {};
     std::snprintf(buffer, sizeof(buffer), "%02d:%02d", local.tm_hour,
         local.tm_min);
-    return buffer;
-}
-
-std::string size_label(std::uint64_t bytes) {
-    char buffer[32] = {};
-    if (bytes >= 1024ull * 1024ull * 1024ull) {
-        std::snprintf(buffer, sizeof(buffer), "%.1f GB",
-            static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0));
-    } else if (bytes >= 1024ull * 1024ull) {
-        std::snprintf(buffer, sizeof(buffer), "%.1f MB",
-            static_cast<double>(bytes) / (1024.0 * 1024.0));
-    } else if (bytes >= 1024ull) {
-        std::snprintf(buffer, sizeof(buffer), "%.1f KB",
-            static_cast<double>(bytes) / 1024.0);
-    } else {
-        std::snprintf(buffer, sizeof(buffer), "%llu B",
-            static_cast<unsigned long long>(bytes));
-    }
     return buffer;
 }
 
@@ -338,96 +309,33 @@ void compose_bubble_meta(eui::Ui& ui, const ThemeColorTokens& tokens,
         .build();
 }
 
-// 文件卡片（Image/Video/File 气泡本体；§4 card+progress+button 形态——
-// M5-06 Transfers 页复用同一形态与语义色）。宽度固定、高度由子元素外延
-// wrap（单 stack 绝对排版）。
+// 文件卡片（Image/Video/File 气泡本体）：本体形态抽入共享组件
+// ui/components/transfer_card（§4「会话内与 Transfers 页复用同一组件」，
+// M5-06 落地抽取），本函数仅补会话侧增补面（图片 Preview 入口）。
 void compose_file_card(eui::Ui& ui, const ThemeColorTokens& tokens,
     const AkiSemanticPalette& semantic, const std::string& id,
     const models::MessageView& message, float inner_width,
     MainWindowModel& model) {
     const auto& metrics = tokens.metrics;
-    const float caption_line = metrics.typography.caption * kLineHeightFactor;
-    const float icon_advance = metrics.typography.caption
-        + metrics.spacing.compact;
-
-    // 方向 + 文件名（§2.6：收/发方向箭头；mono 语义不适用文件名——普通
-    // caption 呈现）。
-    ui.stack(id)
+    ui.column(id)
         .width(inner_width)
         .wrapContent()
+        .gap(metrics.spacing.tiny)
         .content([&] {
-            components::text(ui, id + ".direction")
-                .icon(message.outbound ? eui::utf8(0xF176)
-                                       : eui::utf8(0xF175))
-                .position(0.0f, 0.0f)
-                .fontSize(metrics.typography.caption)
-                .color(semantic.text_subtle)
-                .build();
-            components::text(ui, id + ".name")
-                .text(message.media.name)
-                .position(icon_advance, 0.0f)
-                .fontSize(metrics.typography.caption)
-                .fontWeight(600)
-                .maxWidth(inner_width - icon_advance)
-                .color(tokens.text)
-                .build();
-            const float size_y = caption_line;
-            components::text(ui, id + ".size")
-                .text(size_label(message.media.size_bytes) + " · "
-                    + (message.media.mime_type.empty()
-                            ? "application/octet-stream"
-                            : message.media.mime_type))
-                .position(0.0f, size_y)
-                .fontSize(metrics.typography.micro)
-                .color(semantic.text_subtlest)
-                .build();
-
-            // 进度行（transfer join；无传输行 = §6.1 已登记单侧到达边角的
-            // 兜底态，不猜测进度——DEC-010/DEC-013）。
-            const float progress_y =
-                size_y + metrics.typography.micro + metrics.spacing.tiny;
-            float state_y = progress_y;
-            if (message.transfer_tracked) {
-                ui.stack(id + ".progress.wrap")
-                    .position(0.0f, progress_y)
-                    .size(inner_width, 6.0f)
-                    .content([&] {
-                        components::ProgressStyle progress_style(tokens);
-                        progress_style.fill = transfer_color(semantic,
-                            message.transfer_state);
-                        components::progress(ui, id + ".progress")
-                            .size(inner_width, 6.0f)
-                            .value(static_cast<float>(
-                                message.transfer_progress))
-                        .style(progress_style)
-                            .build();
-                    })
-                    .build();
-                state_y = progress_y + 6.0f + metrics.spacing.tiny;
-            }
-            const std::string state_text = message.transfer_tracked
-                ? std::string(aki::transfer::to_string(
-                      message.transfer_state))
-                    + " · "
-                    + std::to_string(static_cast<int>(
-                        message.transfer_progress * 100.0))
-                    + "%"
-                : "no transfer row (single-side arrival)";
-            components::text(ui, id + ".state")
-                .text(state_text)
-                .position(0.0f, state_y)
-                .fontSize(metrics.typography.micro)
-                .color(message.transfer_tracked
-                        ? transfer_color(semantic, message.transfer_state)
-                        : semantic.warning)
-                .build();
+            widgets::TransferCardData data;
+            data.outbound = message.outbound;
+            data.file_name = message.media.name;
+            data.mime_type = message.media.mime_type;
+            data.size_bytes = message.media.size_bytes;
+            data.tracked = message.transfer_tracked;
+            data.state = message.transfer_state;
+            data.progress = message.transfer_progress;
+            widgets::compose_transfer_card_body(
+                ui, tokens, semantic, id + ".body", data, inner_width);
 
             // 图片预览入口（§4 image+dialog；弹窗 open 态页面持有）。
             if (message.type == aki::conversation::MessageType::Image) {
                 components::button(ui, id + ".preview")
-                    .position(0.0f,
-                        state_y + metrics.typography.micro
-                            + metrics.spacing.tiny)
                     .size(96.0f, metrics.control.menuItem)
                     .text("Preview")
                     .fontSize(metrics.typography.hint)
@@ -574,7 +482,7 @@ void compose_preview_dialog(eui::Ui& ui, const ThemeColorTokens& tokens,
                 .color(tokens.text)
                 .build();
             components::text(ui, "aki.chat.preview.meta")
-                .text(size_label(message->media.size_bytes) + " · "
+                .text(widgets::format_bytes(message->media.size_bytes) + " · "
                     + (message->media.mime_type.empty()
                             ? "application/octet-stream"
                             : message->media.mime_type))
