@@ -75,7 +75,9 @@ peer 携带 data_path/signaling_route，diff 产出逐设备事件），「降�
   与 连接→换路→断连→重连 全序列。
 - 关联发现（另行登记，不在本决策范围）：UpsertDevice 整行替换对易失字段
   presence 的覆写隐患（连接中被重新发现可能 Online→Offline）——map 形态
-  使路径免疫，presence 仍在替换集内。
+  使路径免疫，presence 仍在替换集内。已登记：
+  docs/plans/m5-eui-neo-ui-mvp.md「风险与阻塞」（M5-04 收口批，
+  2026-09-27）。
 - 已知存量消费口径：全局 mailbox 的「不洪泛」性质由 drain 合并保持
   （test_peer_sessions_loopback 原断言语义由逐设备 upsert 同样满足）。
 

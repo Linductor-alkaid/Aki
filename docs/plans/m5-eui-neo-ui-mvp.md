@@ -210,6 +210,14 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   `ui/theme` 装配须逐项覆写并留回归对照，不得依赖上游默认档。
 - **主线程 compose 与 executor 关闭顺序**：`onShutdown` 编入 `EXEC-01`
   后，窗口/GPU 设备销毁与 worker 回收次序需测试覆盖（关闭路径 DOD-02）。
+- **UpsertDevice 整行替换对易失字段的覆写隐患**（`DEC-015` 关联发现的
+  登记兑现，2026-09-27 收口批）：`apply_trust_transition`
+  （app/application/device_manager.hpp:230-252）从最近已发布快照读-改-写
+  整行 upsert——快照滞后于 owner 在途更新时可能覆写并发 presence 变化
+  （连接中被重新发现可能 Online→Offline）；wire 节奏的
+  PairingCompletedWork 结果被拒时仅计 handler_rejections 即丢弃（无延迟
+  重排）。M5-04 按「用户操作节奏吸收」接受（记录②），后续工作项：结果
+  丢弃时延迟重排或 drain 后重读，与该覆写隐患同批处置。
 - pinned EUI-NEO 升级不属本里程碑；许可证检查（字体/图标/shader/assets）
   在正式发行前完成（设计第 9 节），登记于 `M5-09` 复核项。
 
@@ -560,7 +568,8 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
     映射路径，宿主删除 M3-06 的 Lan 硬编码）；断连置 Unknown（DM 断连
     处理同批提交）。设计 §10.1/§8.3/§9.1 同批修订（M1-08）。
   - **④ DEC-016 口令常量 + verifier 真实化**：`kAkiPairingPassword` 冻结
-    常量（20 标量 ≥8 策略下限）；`converge_local_initialization` created
+    常量（26 标量 ≥8 策略下限；2026-09-27 收口订正，原文误记 20）；
+    `converge_local_initialization` created
     分支以 `create_password_verifier` 生成真实 argon2id verifier（取代
     M3-03 占位假编码串——冻结调研探针实测对任何口令均拒绝）；存量 profile
     处置=删除 db/profile.sqlite 重建（本机 %APPDATA%ki 即存量，GUI/
@@ -596,7 +605,11 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
     onShutdown 关闭序完好（aki-run.log），Devices 页点击切页截图归档
     （aki-m5-04-devices.png）；退出-3 grep 七项全 0（自建线程/禁用面/EUI
     越层/ui 持 transport/ui 直写 Store/退役全局路径残留 0/kAkiPairing
-    Password 仅 heyaki/adapter 两文件）。
+    Password 引用 heyaki/adapter 2 文件 + tests 9 文件，均为合法引用）。
+    ⑧ 订正（2026-09-27 收口批，第 3 轮评审发现）：退役全局路径注释残留
+    实有 2 处（app_state_updates.hpp 重复词组、update_jobs.hpp 退役
+    SetConnectionPath 旧口径），本批修正后「残留 0」成立；「仅 heyaki/
+    adapter 两文件」为评审修正批（集成测试字面量替换）之前的口径。
   - 评审修正（2026-09-27）：DEC-016「测试同步」两条在原变更集漏执行，
     本日补齐并复验——
     **集成回环口令字面量替换**：8 个集成测试文件 19 处 `pair_peer`
@@ -622,6 +635,15 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
     build/scratch/verifier_probe/build/Release/verifier_probe.exe`。
     ④ 的存量 profile（本机 %APPDATA%\aki 走既有分支）声明不变；
     首启动耗时面以本条实测登记，⑧ 的 43/43 数据经复验仍然成立。
+  - 收口批（2026-09-27，第 3 轮评审 should-fix 项）：①Fake revoke 去除
+    合成 on_pairing_completed（真实 NodeSession revoke 从不触发配对观察
+    器，合成事件必然被状态机拒绝、徒增 updates_rejected 噪声）；②集成
+    回环 presence/发现断言改谓词内 drain+load 截止轮询（connected 事件
+    回调先 submit 后自增计数，单次快照在 owner 应用前抢跑——CI run
+    36278949737 asan 实测；本机防火墙降级路径未实跑，由 CI 实跑验证）；
+    ③test_app_managers 路由用例标题 eleven→twelve；④④⑧ 记录数字订正
+    （见上）；⑤UpsertDevice 整行替换覆写隐患兑现登记（「风险与阻塞」）；
+    ⑥退役 SetConnectionPath 注释残留 2 处清理。debug 全量 ctest 复验。
   - **⑨ 如实降级（M3-09 纪律）**：双端配对→信任全链路（pairing
     restricted → pair_peer → observer 结果 → Trusted 端到端）受本机防火墙
     拦截 TLS 入站限制未执行——网络无关半边全部验证（SPI 路由/状态机转移
