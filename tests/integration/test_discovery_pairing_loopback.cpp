@@ -234,8 +234,16 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
         return discovered_events.load() > 0;
     }, 15s));  // 验收 ①：A 发现 B（事件携带公钥指纹/端点/来源）
 
+    // 事件计数达标与 drain 之间仍有入队窗口（回调先 submit 后自增）——
+    // 谓词内 drain+load+查找按截止时间收敛，而非单次快照。
     executor::comm::Snapshot<aki::app::AppState> snapshot;
-    REQUIRE(state_owner.try_load_snapshot(snapshot));
+    REQUIRE(wait_until([&] {
+        state_owner.drain();
+        if (!state_owner.try_load_snapshot(snapshot)) {
+            return false;
+        }
+        return find_device(snapshot, identity_b.id) != nullptr;
+    }, 15s));
     const DeviceIdentity* discovered_b = find_device(snapshot, identity_b.id);
     REQUIRE(discovered_b != nullptr);
     REQUIRE(discovered_b->trust_state == TrustState::Unknown);

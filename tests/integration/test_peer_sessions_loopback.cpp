@@ -283,15 +283,23 @@ TEST_CASE("Peer session pipeline drives presence and path state over the loopbac
         std::_Exit(0);
     }
 
+    // connected_events 在回调内先 submit_update（异步入队）后自增；本测试
+    // 的 owner 上下文是测试线程——事件达标时更新尚未经 drain 应用（CI run
+    // 36278949737 asan 实测原单次快照断言挂）。沿 test_transfer_full_loopback
+    // 先例在轮询谓词内 drain+load：按截止时间等 Online 生效。
     executor::comm::Snapshot<aki::app::AppState> snapshot;
-    REQUIRE(state_owner.try_load_snapshot(snapshot));
-    bool presence_online = false;
-    for (const auto& device : snapshot.value.devices.devices) {
-        if (device.id == identity_b.id) {
-            presence_online = device.presence == PresenceState::Online;
+    REQUIRE(wait_until([&] {
+        state_owner.drain();
+        if (!state_owner.try_load_snapshot(snapshot)) {
+            return false;
         }
-    }
-    REQUIRE(presence_online);
+        for (const auto& device : snapshot.value.devices.devices) {
+            if (device.id == identity_b.id) {
+                return device.presence == PresenceState::Online;
+            }
+        }
+        return false;
+    }, 15s));
 
     // 不持久化断言（验收 ③ 半边）：SetPresence/SetDeviceConnectionPath 无 DB 作业
     //——device_jobs 不因 presence/path 事件增长（仅 UpsertDevice 作业计入）。
