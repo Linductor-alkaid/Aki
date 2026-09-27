@@ -356,7 +356,10 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
             impl.recovery->store, aki::persistence::TransferIoWorkerOptions{});
 
     // 4) AppStateOwner：加载结果播种初始快照 + 接受后处理器（DEC-009 ①）；
-    //    快照发布唤醒回调经构造选项注入（M5-03，设计 §9.1 跨线程唤醒接线）。
+    //    快照发布唤醒回调经构造选项注入（M5-03，设计 §9.1 跨线程唤醒接线）；
+    //    M5-05 起更新受理点同注 on_update_submitted——Manager handler 在
+    //    executor 任务上受理更新时唤醒主循环 drain（发布只发生在主线程
+    //    drain，受理点不唤醒则发送/接收结果滞留至下一次输入事件）。
     impl.sink.control = impl.db;
     impl.sink.store = impl.recovery->store;
     impl.sink.receive_dir = impl.receive_dir;
@@ -364,6 +367,11 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
     owner_options.on_publish = [wake = impl.wake] {
         if (wake) {
             wake();  // 异常由 owner 全捕获计数（publish_hook_failures）。
+        }
+    };
+    owner_options.on_update_submitted = [wake = impl.wake] {
+        if (wake) {
+            wake();  // 异常由 owner 全捕获计数（submit_hook_failures）。
         }
     };
     impl.state_owner.emplace(std::move(owner_options),

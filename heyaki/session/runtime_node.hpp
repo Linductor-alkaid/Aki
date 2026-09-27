@@ -26,6 +26,7 @@
 #include "conversation/message/message_types.hpp"
 #include "device/device/device_types.hpp"
 #include "heyaki/adapter/local_identity.hpp"
+#include "heyaki/adapter/wire_ids.hpp"
 #include "transfer/transfer/transfer_types.hpp"
 
 #include <heyaki/node.hpp>
@@ -412,21 +413,11 @@ public:
 
     // 新 TransferId 生成（DEC-011 ④ 定案，M4-04）：16 随机字节（全零重抽）→
     // heyaki 规范串（hyt1_ + 26 base32，按构造规范）——ad-hoc 串（如 "t-1"）
-    // 在 push_file 转换与 codec/DEC-010 谓词处被拒；生成入口统一收敛于此
-    //（aki/std 公开面，<random> 为标准库）。
+    // 在 push_file 转换与 codec/DEC-010 谓词处被拒。M5-05 起实现委托
+    // heyaki/adapter/wire_ids.hpp 的统一入口（§6.1 生成入口单一；UI 出站面
+    // 经同一入口绑定），本静态成员保持既有调用方兼容。
     [[nodiscard]] static aki::transfer::TransferId new_transfer_id() {
-        std::random_device random;
-        for (;;) {
-            ::heyaki::TransferId::Storage bytes{};
-            for (auto& byte : bytes) {
-                byte = static_cast<std::byte>(random());
-            }
-            const ::heyaki::TransferId candidate{bytes};
-            if (!candidate.is_zero()) {
-                return aki::transfer::TransferId{
-                    ::heyaki::to_string(candidate)};
-            }
-        }
+        return aki::heyaki::new_transfer_id();
     }
 
     // 出站文本（DEC-006 映射 4）：MessageEnvelope{message_id = aki MessageId

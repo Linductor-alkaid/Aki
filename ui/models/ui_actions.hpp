@@ -1,11 +1,23 @@
 // UI 操作出站面（设计 §9.1 视图模型派生条款「操作一律经 Application 出站面」
-// 的具体化，M5-03；M5-04 信任三操作扩展，DEC-008 Manager 模式）。
+// 的具体化，M5-03；M5-04 信任三操作扩展，DEC-008 Manager 模式；M5-05 发送
+// 面页面形改造——wire id 生成收敛注入 + 图片 hash-first 编排）。
 //
 // 页面只持本接口（std::function 绑定面），不持有 Manager/Adapter/transport
 // 对象（RULE-01/RULE-02）；绑定由组合根完成（aki_host 暴露 Manager 访问面，
 // GUI main.cpp / console 驱动调用 make_ui_actions）。每个绑定直呼 Manager
-// 公开出站方法（= Manager 泵入队 admission），返回值即入队结果——拒绝可见
-// 不静默（RULE-09）。
+// 公开出站方法 / 编排层入口（返回值即入队 admission），拒绝可见不静默
+//（RULE-09）。
+//
+// M5-05 发送面：
+//   - new_message_id/new_transfer_id 生成器绑定 heyaki/adapter/wire_ids 的
+//     规范 id 入口（§6.1：TransferId 唯一性由调用方生成保证；MessageId 须
+//     过真实 NodeSession 规范串双射）——页面不携带 wire 编码知识（RULE-10），
+//     只经本接口取 id；生成器为纯函数（std::random_device），点击回调上下文
+//     可调。
+//   - send_image 绑定编排层 send_image_message_with_hash（app/application/
+//     image_flow.hpp，DEC-010/DEC-011 hash-first：先传输准入，消息等
+//     stored_sha256 完成后经 TM 泵延续发出；source_path 为文件对话框选取的
+//     本地路径）。返回值为闸门第 1 步 admission。
 //
 // EUI-NEO 无关（RULE-10，纯 std/aki 类型）；信任判定操作（Pending 确认/
 // 拒绝/Revoked 撤销）随 M5-04 落地（DEC-006 映射 3；口令处理在
@@ -17,18 +29,29 @@
 #include "app/application/message_manager.hpp"
 #include "app/application/transfer_manager.hpp"
 
+#include <filesystem>
 #include <functional>
 
 namespace aki::ui::models {
 
 struct UiActions {
-    // 消息域（MessageManager::send_text/send_image；transfer_admitted 语义
-    // 见 SendImageWork——编排层闸门，M5-05 图片发送链路接入 hash-first）。
+    // wire 标识生成（M5-05；规范 hym1_/hyt1_ 串，§6.1 生成入口收敛）。
+    std::function<aki::conversation::MessageId()> new_message_id;
+    std::function<aki::transfer::TransferId()> new_transfer_id;
+
+    // 消息域（MessageManager::send_text/send_image）。message_id 由页面经
+    // new_message_id 取得后传入（RULE-08 稳定 id：id 在发送前生成、可用于
+    // 本地乐观展示的对账键）。
     std::function<bool(aki::device::DeviceId, aki::conversation::MessageId,
         std::string)>
         send_text;
+    // 图片发送 hash-first 编排（M5-05，DEC-010/DEC-011）：transfer_id 由
+    // 页面经 new_transfer_id 取得；media 仅 name/size_bytes/mime_type（
+    // stored_sha256 由编排层 hash 延续填充）；source_path 为文件对话框只读
+    // 选取的本地路径。返回 false = 传输准入失败（消息行经编排补偿记 Failed）。
     std::function<bool(aki::device::DeviceId, aki::conversation::MessageId,
-        aki::transfer::FileMetadata, aki::transfer::TransferId, bool)>
+        aki::transfer::FileMetadata, aki::transfer::TransferId,
+        std::filesystem::path)>
         send_image;
 
     // 传输域（TransferManager 四接口）。
@@ -53,7 +76,7 @@ struct UiActions {
         ensure_conversation;
 };
 
-// 组合根绑定：四 Manager → UiActions（直呼公开出站方法，无中间状态）。
+// 组合根绑定：四 Manager + wire id 生成器 + 图片 hash-first 编排 → UiActions。
 [[nodiscard]] UiActions make_ui_actions(aki::app::DeviceManager& devices,
     aki::app::ConversationManager& conversations,
     aki::app::MessageManager& messages, aki::app::TransferManager& transfers);

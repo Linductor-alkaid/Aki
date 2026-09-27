@@ -13,10 +13,15 @@ target_compile_features(aki_ui_models PUBLIC cxx_std_20)
 target_include_directories(aki_ui_models PUBLIC ${PROJECT_SOURCE_DIR})
 # 依赖方向（RULE-01）：ui/models -> Application（Manager 出站面头文件）->
 # Domain；不依赖 eui。manager 头文件的 HeyakiAdapter SPI 经 aki_heyaki 传播。
+# M5-05：UiActions 组合根绑定 wire 标识生成（heyaki/adapter/wire_ids.hpp，
+# §6.1 生成入口收敛），to_string 符号与 include 路径经 heyaki::core 提供
+#（local_identity.hpp 先例同款：adapter 层单头 inline 实现 + 消费方链接
+# heyaki 库）。
 target_link_libraries(aki_ui_models PUBLIC
     aki_app
     aki_persistence
-    aki_heyaki)
+    aki_heyaki
+    heyaki::core)
 aki_apply_warnings(aki_ui_models PRIVATE)
 
 # M5-02：渲染/compose 面。测试 exe 不链 aki_ui（保持 console，DEC-005）——
@@ -24,7 +29,8 @@ aki_apply_warnings(aki_ui_models PRIVATE)
 # tests/unit/test_ui_theme_values.cpp 承载。
 add_library(aki_ui STATIC
     theme/aki_theme.cpp
-    pages/main_window.cpp)
+    pages/main_window.cpp
+    pages/conversations_page.cpp)
 target_compile_features(aki_ui PUBLIC cxx_std_20)
 target_include_directories(aki_ui PUBLIC ${PROJECT_SOURCE_DIR})
 target_link_libraries(aki_ui PUBLIC aki_ui_models eui::neo)

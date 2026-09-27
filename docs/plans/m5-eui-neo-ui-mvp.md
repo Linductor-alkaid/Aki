@@ -12,7 +12,7 @@
 > 真实 Adapter、NodeSession、发现/消息/图片/传输/presence/重连管道与恢复
 > 语义均已就绪
 > 建议发布点：v0.5.0（MVP）
-> 更新日期：2026-09-27（M5-03 完成同日）
+> 更新日期：2026-09-27（M5-05 完成同日）
 
 ## 目标
 
@@ -178,9 +178,25 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   verifier（取代 M3-03 占位假编码串，存量 profile 处置登记）；
   test_device_trust 76 断言 + 口令往返用例；debug/release 全量 ctest 43/43
   零回归；Devices 页本机截图归档。见下方 2026-09-27（M5-04）验证记录。）
-- [ ] `M5-05` Conversations 页与聊天窗口（可验收：`SCOPE-05`/`SCOPE-06`/
+- [x] `M5-05` Conversations 页与聊天窗口（可验收：`SCOPE-05`/`SCOPE-06`/
   `SCOPE-07` UI 面 + 会话内文件卡片逐项可演示——含文本/图片发送与消息
   历史滚动）。
+  （2026-09-27 完成：Conversations 页实体化——会话列表（复用 M5-03
+  ConversationView 派生 + 最后消息摘要/方向/投递徽标扩展）+ 聊天窗口
+  （头部信任/路径徽标、§3 断连横幅、变高气泡列按「卡片自绘 +
+  scrollview」承接（M5-01 复核结论实测成立）、文本/图片消息气泡与
+  文件卡片（进度语义色，M5-06 Transfers 页复用形态）、输入区、图片
+  预览弹窗、New chat（Trusted 设备选择）弹窗）；发送面页面形改造——
+  wire id 生成收敛 `heyaki/adapter/wire_ids.hpp`（`NodeSession::
+  new_transfer_id` 委托同入口，§6.1 同步）+ UiActions 增 id 生成器注入/
+  send_image 绑定 hash-first 编排（DEC-010/DEC-011）；视图模型扩展
+  MessageView（方向/投递态/媒体载荷 + TransferStore 消费侧 join，无传输
+  行单侧到达兜底态）；唤醒缺口修复（本机 GUI 实测）——owner 增
+  `on_update_submitted` 受理点唤醒钩子（§9.1 同步），发送结果不再滞留至
+  下一次输入事件；文本发送 GUI 实测（real Adapter 无会话拒绝 → Failed
+  徽标可见 + 列表摘要实时更新）；新断言 test_ui_models 116 + test_ui_
+  actions 65；debug/release 全量 ctest 43/43 零回归；本机 GUI 截图 ×5 +
+  运行日志归档（RULE-11）。见下方 2026-09-27（M5-05）验证记录。）
 - [ ] `M5-06` Transfers 页（可验收：传输集中列表与暂停/恢复/取消操作面
   可演示；接收根残留 GC 议题实现或显式延后并登记触发条件）。
 - [ ] `M5-07` Settings 页与主题（可验收：主题三选按 `DEC-005` 缺口处置
@@ -666,4 +682,135 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
     映射 3（展示形式增补）、[DEC-015](../decisions/DEC-015-per-device-
     connection-path.md)、[DEC-016](../decisions/DEC-016-pairing-password-
     verifier.md)（均新建 Accepted）、总计划（当前状态条目 + 决策表）。
+
+- 2026-09-27（`M5-05` 完成；Windows 11 工作站（桌面会话）/ MSVC 2022
+  BuildTools 14.44.35207 / CMake 4.1.0；负责人：Linductor）：
+  - **① 会话列表（SCOPE-05）**：`ui/pages/conversations_page.{hpp,cpp}`
+    落地列表栏会话行（复用 M5-03 `derive_conversation_views` 派生；扩展
+    `LastMessageSummary.outbound`——投递徽标仅己方最后消息展示，§3）；
+    行内绝对排版（名称/预览/时间/投递徽标/Disconnected·Archived 徽标）+
+    透明点击面；Rejected/Revoked 远端行无点击面（§3 会话入口禁用）；
+    New chat 弹窗 = Trusted 设备选择面（`UiActions::ensure_conversation`，
+    幂等）。
+  - **② 聊天窗口（SCOPE-06/07）**：头部（对端名 + 路径 caption 徽标 +
+    会话态 + 信任语义色徽标）；§3 断连横幅（Disconnected → `warning` 底
+    + 三角叹号 + 「连接断开，等待恢复」）；消息历史 = scrollview + 气泡
+    card（wrapContentHeight）+ text(wrap)（M5-01 复核结论「卡片自绘 +
+    scrollview」实测成立——变高列由内容列 wrapContent 度量，virtuallist
+    固定行高模型不适用处按组合策略承接，不改 pinned 依赖）；气泡左右
+    归属 = 己方 accent 右侧 / 对方 card+边框左侧（§4 surface 层级区分）；
+    投递态图标（§2.6 码点：Queued 时钟/Sending paper-plane/Sent 单勾/
+    Delivered 双勾 `success`/Failed 叹号 `destructive`，仅己方消息）；
+    系统消息居中 caption。
+  - **③ 会话内文件卡片（SCOPE-08）**：Image/Video/File 载荷渲染为
+    card+progress+button 卡片（§4 映射，M5-06 Transfers 页复用同一形态
+    与语义色）：方向箭头（§2.6 f175/f176）+ 文件名 + 大小/mime + 进度条
+    + 态文案（Transferring `brand`/Paused `warning`/Failed `destructive`/
+    Completed `success`/其余中性，§3）；TransferStore 消费侧 join（§6.1②
+    按 TransferId；进度 fraction total==0 → 0 不除零）；无传输行 →
+    `warning` "no transfer row (single-side arrival)" 兜底态（DEC-010/
+    DEC-013 边角，不猜进度）；图片卡片带 Preview 按钮 → 预览弹窗
+    （image+dialog，§4；出站本地路径已知时渲染 image 元素，接收侧/无
+    路径显式 metadata 态——不以占位图冒充）。
+  - **④ 文本/图片发送链路**：输入区 input+button（onEnter/发送按钮 →
+    `send_draft`；图片按钮 → `eui::platform::openFileDialog` 只读选取
+    （M5-01 复核满足）+ 扩展名→mime 映射 + `std::filesystem::file_size`
+    → `send_image`）——对话框与文件 stat 仅在点击回调上下文（主线程
+    事件处理）执行，compose 三不纪律不破。**发送面页面形改造（M5-05）**：
+    (a) wire id 生成收敛 `heyaki/adapter/wire_ids.hpp`（local_identity.hpp
+    先例：单头 inline 实现；`new_message_id`/`new_transfer_id` = 16 随机
+    字节全零重抽 → `heyaki::to_string` 规范串；`NodeSession::
+    new_transfer_id` 改为委托同入口，生成入口单一——§6.1 同步）；(b)
+    `UiActions` 增 `new_message_id`/`new_transfer_id` 生成器绑定（页面不
+    携带 wire 编码知识，RULE-10）+ `send_image` 签名改 `source_path`、
+    绑定改编排层 `send_image_message_with_hash`（hash-first：先传输准入，
+    消息等 stored_sha256 完成后经 TM 泵延续发出，DEC-010/DEC-011）。
+    `send_text` 页面形态不变（id 经生成器取得后传入）。
+  - **⑤ 唤醒缺口修复（本机 GUI 实测发现，§9.1 同步）**：现行管线
+    Manager handler 跑在 executor 任务上、publish 只发生在主线程 drain
+    （`HostRuntime::pump_state`）——M5-03 的 on_publish 唤醒仅在发布后
+    触发，主循环无从得知「有待 drain 的更新」：GUI 发送文本后 admission
+    反馈可见（点击自身触发重组）而消息行滞留至下一次输入事件。修复：
+    `AppStateOwnerOptions` 增 `on_update_submitted`（`submit_update`/
+    `submit_update_for` 受理成功后于提交者上下文同步调用——唯一的跨线程
+    状态生产点；拒绝不触发；异常全捕获计数 `submit_hook_failures`，原子
+    计数——多线程提交者）；`HostRuntime` 注入同一 wake 回调。GUI 复测：
+    发送后气泡当帧可见。设计 §9.1 快照消费与唤醒条款先行修订（M1-08）。
+  - **⑥ 视图模型扩展（`ui/models/view_models`）**：`MessageView` +
+    `derive_message_views`（端点归属守卫、方向、投递态、文本/媒体载荷
+    语义、TransferStore join 进度/状态、无传输行兜底态）；消息预算 4096
+    内有界派生。页面模型 `ConversationsPageModel`：选中会话/输入草稿/
+    消息视图派生缓存（水位×选中去重重派生）/滚动代数/弹窗 open 态/
+    出站图片源路径登记（容量 64，RULE-09）。
+  - **⑦ 滚动/弹窗契约（探针定形）**：pinned scrollview 运行期滚动状态
+    按元素 id 持有（首次构建播种 offset、其后运行期所有）——「回到底部」
+    以 `history_scroll_gen` 代数进位切换 scrollview id 表达（选中切换/
+    新消息入流 +1；投递态原位更新不进位，不打断阅读位置）；用户滚动
+    位置在两次代数进位之间由运行期保持；measure cache 以
+    代数:条数:末条 id 为 contentKey。气泡 x 归属须在行内 stack 绝对定位
+    （直接挂内容列会被列布局拉回左缘——本机实测）；dialog 背板/居中
+    须显式 `.screen(窗口宽高)`（默认 800x600——实测）；背板关闭请求经
+    `onOpenChange` 回写页面持有 open 态（单向数据流对称面）。
+  - **⑧ 测试**：test_ui_models 扩展（MessageView 派生：方向/媒体 join
+    进度 0.5/无传输行兜底/端点守卫；LastMessageSummary.outbound；新
+    on_update_submitted 用例——受理触发/拒绝不触发/钩子异常全捕获计数
+    /executor 任务内受理跨线程触发，共 116 断言 10 用例，直跑通过）；
+    test_ui_actions 更新+扩展（send_image 新签名路由 hash-first 编排：
+    TM 准入 + Fake 传输命令 + 无 IO 承载空 hash 延续不发消息（§6.1②，
+    全链路归 test_transfer_send_path）；wire id 生成用例——
+    parse_message_id/parse_transfer_id 规范性 + 唯一性，共 65 断言
+    2 用例，直跑通过）；既有 43 项语义零损失。
+  - **⑨ 验证（可复现命令与结果）**：configure `cmake --preset debug`
+    通过；debug 全量 `ctest --preset debug` → 100% passed 43/43
+    （179.6s）；release `cmake --build --preset release --config
+    Release` 0 error 0 warning + `ctest --preset release` → 100%
+    passed 43/43（170.5s）；直跑 test_ui_models.exe（116 断言）/
+    test_ui_actions.exe（65 断言）/test_host_runtime.exe（67 断言）
+    全过。
+  - **⑩ GUI 本机会话（RULE-11 归档）**：Release aki.exe，GUI 数据根经
+    `APPDATA` 注入 scratch 剖面 `build/scratch/m5-profile/`（真实
+    `%APPDATA%ki` 未触碰）；演示数据经 scratch 种子探针
+    `build/scratch/m5-demo-seed/`（gitignored，standalone CMake 直链
+    Release 树 aki_persistence 静态库，不入产品构建图——M5-01 探针
+    先例）写入受信对端/会话/消息/传输行。GUI 实测：会话列表（最后消息
+    摘要/方向投递徽标/时间）、聊天窗口（气泡左右归属 + 投递语义色 +
+    文件卡片 Completed `success` 100% / 恢复降级 Paused `warning` 72%
+    ——DEC-013 重启降级边在 GUI 可见）、文本发送实测（real Adapter 无
+    会话 → admission `hym1_` 规范 id 可见 + 消息行 Failed 徽标 + 列表
+    摘要实时更新——发送/唤醒/消费/派生全链）、图片预览弹窗（无本地
+    路径 metadata 态 + DEC-011 登记的「消息行重启重建 stored_sha256
+    为空」在 GUI 呈现）、New chat 弹窗、onShutdown 关闭序完好（8 步 +
+    fully_stopped=1 + workers 2/2 + db_drained=1）。截图 ×5 +
+    aki-run-m5-05-final.log 归档 `build/scratch/`（会话内文件卡片
+    Completed/Paused、文本发送 Failed 徽标、预览弹窗、New chat 弹窗）。
+  - **⑪ 退出-3 grep（本项扩面，最终代码态）**：第一方线程创建 0；
+    ui/+main.cpp 的 app::async/core::network/eui::network 0；EUI-NEO
+    include/类型越过 ui/ 0；ui/ 直写 Store（submit_update/post_event/
+    drain_updates）0；ui/ 持 transport 对象 0（ui_actions.hpp 注释提及
+    NodeSession 为文档性引用）；eui include 仅 main.cpp + ui/pages 渲染
+    面（models 无 eui）；test_ui_models.exe dumpbin 对
+    eui::/components::/glfw 符号 0 命中（DEC-005 维持）。
+  - 限制与补跑条件（沿 M3-09/M4-07/M5-04 ⑨ 降级纪律）：
+    (a) 双端真机的文本 Delivered 回报、图片 wire 面（codec/文件本体）、
+    断连→恢复横幅转换、传输暂停/恢复/取消操作面未在本会话执行——
+    防火墙拦截入站 TCP / 无 LAN 双端；网络无关半边（视图派生、UiActions
+    路由、hash-first 闸门、真实 Adapter 无会话拒绝路径）已验证；补跑归
+    M5-08 双端验收同批。(b) GUI 会话中的图片发送按钮点击 → 原生文件
+    对话框 → hash-first 闸门拒绝路径（无会话 → 传输行 Failed、
+    message_id NULL、canonical `hyt1_` id）在 GUI 会话期间实际产生
+    （DB 实证；点击来源无法精确归因——本机为使用者台面机，窗口自动化
+    期间可能存在人工交互）——该行语义与闸门契约一致，作为 GUI 会话
+    副产品如实登记。(c) 文件卡片 Failed/Cancelled 态、断连横幅、
+    Archived 徽标为条件分支，本会话不可达（无真实断连）——Failed 态由
+    test_ui_models 派生断言承载，横幅渲染随 M5-08。(d) 会话行/弹窗
+    设备选择超视口滚动、图片本体（image 元素本地路径态）像素级复核随
+    M5-06+/M5-08。(e) CI 五档门禁随本工作项 PR 首跑（本会话未推送，
+    如实登记）；TSAN 运行期 UI 证据按 DEC-014 口径归本机 Linux。
+  - 同步：本里程碑（M5-05 勾选、本记录）、
+    [aki_design](../design/aki_design.md) §6.1（wire id 生成入口收敛）、
+    §9.1（UiActions 发送面形态 + on_update_submitted 唤醒条款）、
+    [aki_ui_design](../design/aki_ui_design.md) §3（无传输行兜底态）、
+    §5（M5-05 落地记录）、总计划（当前状态条目）。无新决策记录：
+    wire id 收敛/受理唤醒为 §6.1/§9.1 既有契约的修订与具体化（M1-08
+    先改设计后合代码），未越契约边界。
 

@@ -1,4 +1,5 @@
-// 四域视图模型派生（设计 §9.1 视图模型派生条款，M5-03；M5-04 信任/路径扩展）。
+// 四域视图模型派生（设计 §9.1 视图模型派生条款，M5-03；M5-04 信任/路径扩展；
+// M5-05 消息视图/文件卡片 join）。
 //
 // 纯函数：快照（Store 值语义集合）→ 只读视图模型；网络无关可单测
 // （tests/unit/test_ui_models.cpp）。本层为 EUI-NEO 无关的独立构建目标
@@ -14,7 +15,9 @@
 //     归属过滤后取最新一条；DEC-009 ② 的会话解析约定：消息属于其
 //     {sender, receiver} == {local, remote} 的会话）；
 //   - 消息流 = MessageStore 按会话过滤（同端点归属约定，时间升序保持
-//     Store 顺序）；
+//     Store 顺序）；MessageView 附加方向/投递态与媒体载荷的文件卡片 join
+//     （TransferStore 按 TransferId 关联，§6.1② 消费侧 join；无传输行的
+//     媒体消息显式兜底态——DEC-010 已登记的单侧到达边角）；
 //   - 传输列表 = TransferStore（含进度 fraction、方向、终态标志）。
 #pragma once
 
@@ -67,8 +70,11 @@ struct LastMessageSummary {
     aki::conversation::DeliveryState delivery = aki::conversation::DeliveryState::Queued;
     std::chrono::system_clock::time_point timestamp{};
     // 预览文本：Text/System 为文本本体；Image/Video/File 为媒体名
-    // （"[image] name" 形态）；具体展示语义归 M5-05。
+    //（"[image] name" 形态；M5-05 会话列表消费）。
     std::string preview;
+    // 最后消息方向（outbound = sender == conversation.local_device；投递徽标
+    // 仅己方消息展示——对端消息无投递态语义，§3）。
+    bool outbound = false;
 };
 
 struct ConversationView {
@@ -90,6 +96,38 @@ struct ConversationView {
     const aki::app::MessageStore& store,
     const aki::conversation::Conversation& conversation,
     aki::device::DeviceId local_device);
+
+// 单条消息的聊天窗口视图（M5-05）：方向/投递态/载荷语义 + 媒体消息的文件
+// 卡片 join（TransferStore 按 TransferId 关联，§6.1② 消费侧 join）。
+struct MessageView {
+    aki::conversation::MessageId id;
+    bool outbound = false;  // sender == local_device（§9.1 气泡左右归属）。
+    aki::conversation::MessageType type = aki::conversation::MessageType::Text;
+    aki::conversation::DeliveryState delivery = aki::conversation::DeliveryState::Queued;
+    std::chrono::system_clock::time_point timestamp{};
+    // 文本本体（Text/System）；媒体消息为空（媒体语义走 media/transfer）。
+    std::string text;
+    // 媒体载荷（Image/Video/File）：has_media = true；Image/Video/File 的
+    // 气泡渲染为文件卡片（进度组件与 Transfers 页复用，aki_ui_design §4）。
+    bool has_media = false;
+    aki::transfer::FileMetadata media;
+    aki::transfer::TransferId transfer_id;
+    // 文件卡片 join（TransferStore 按 transfer_id 查找）：无传输行的媒体
+    // 消息是 §6.1 已登记的单侧到达边角——transfer_tracked = false 时卡片
+    // 以「无传输行」兜底态显式呈现，不猜测进度（DEC-010 边角登记）。
+    bool transfer_tracked = false;
+    aki::transfer::TransferState transfer_state = aki::transfer::TransferState::Queued;
+    // 进度 fraction ∈ [0,1]；total==0 → 0（不除零，与 TransferView 同口径）。
+    double transfer_progress = 0.0;
+};
+
+// 选中会话的消息视图流（端点归属守卫同 derive_conversation_messages；
+// 返回值语义副本——消息预算 4096（RULE-09），派生为有界工作单元）。
+[[nodiscard]] std::vector<MessageView> derive_message_views(
+    const aki::app::MessageStore& store,
+    const aki::conversation::Conversation& conversation,
+    aki::device::DeviceId local_device,
+    const aki::app::TransferStore& transfers);
 
 // ---- 传输域 ----
 

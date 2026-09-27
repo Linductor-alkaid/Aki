@@ -55,6 +55,10 @@ struct AppStateOwnerStats {
     std::uint64_t publish_hook_failures = 0;
     // 钩子成功调用次数（发布→唤醒调用序断言的计数面）。
     std::uint64_t publish_hook_calls = 0;
+    // 更新受理唤醒钩子计数（M5-05，on_update_submitted；原子——钩子在提交者
+    // 上下文（executor handler 任务）调用，多线程并发累加，非 owner 单写者）。
+    std::atomic<std::uint64_t> submit_hook_calls{0};
+    std::atomic<std::uint64_t> submit_hook_failures{0};
 };
 
 // 接受后处理器（DEC-009 ①，设计第 10.1 节；对齐 ManagerPump 的 Handler 先例）：
@@ -78,6 +82,14 @@ struct AppStateOwnerOptions {
     // 此注入。类型保持 EUI-NEO 无关（RULE-10）；实现纪律同接受后处理器：
     // 不得抛出（owner 全捕获计入 publish_hook_failures，不中断本批 drain）。
     std::function<void()> on_publish{};
+    // 更新受理唤醒钩子（M5-05，设计 §9.1 快照消费与唤醒条款修订）：updates_
+    // 通道受理成功后于提交者上下文同步调用。现行管线里 Manager handler 跑在
+    // executor 任务上（唯一的跨线程状态生产点），而 publish 只发生在主线程
+    // drain——若不在受理点唤醒，主循环无从得知有待 drain 的更新，发送/接收
+    // 结果直到下一次输入事件才可见（M5-05 本机 GUI 实测）。典型实现与
+    // on_publish 同为 GUI 的 app::requestUpdate（重复唤醒无害）。实现纪律同
+    // on_publish：不得抛出（全捕获计数 submit_hook_failures）。
+    std::function<void()> on_update_submitted{};
 };
 
 class AppStateOwner {
@@ -110,14 +122,22 @@ public:
 
     // ---- Manager 侧（任意上下文）：入队即 admission，不等于已生效 ----
     [[nodiscard]] bool submit_update(AppStateUpdate update) {
-        return updates_.try_send(std::move(update));
+        if (!updates_.try_send(std::move(update))) {
+            return false;
+        }
+        run_submit_hook();
+        return true;
     }
 
     // 满载时的有界等待投递适配（非实时；超时/关闭均为明确结果，不静默重试）。
     template <class Rep, class Period>
     [[nodiscard]] executor::comm::CommResult submit_update_for(
         AppStateUpdate update, std::chrono::duration<Rep, Period> timeout) {
-        return updates_.send_for(std::move(update), timeout);
+        auto result = updates_.send_for(std::move(update), timeout);
+        if (result.ok) {
+            run_submit_hook();
+        }
+        return result;
     }
 
     [[nodiscard]] bool post_event(AppEvent event) {
@@ -299,6 +319,21 @@ private:
             ++stats_.publish_hook_calls;
         } catch (...) {
             ++stats_.publish_hook_failures;
+        }
+    }
+
+    // 更新受理唤醒钩子调用（M5-05）：提交者上下文（executor handler 任务，
+    // 多线程并发）；异常全捕获计数不上浮（同 run_publish_hook 纪律）。计数
+    // 为原子——非 owner 单写者面。
+    void run_submit_hook() {
+        if (!options_.on_update_submitted) {
+            return;
+        }
+        try {
+            options_.on_update_submitted();
+            stats_.submit_hook_calls.fetch_add(1, std::memory_order_relaxed);
+        } catch (...) {
+            stats_.submit_hook_failures.fetch_add(1, std::memory_order_relaxed);
         }
     }
 

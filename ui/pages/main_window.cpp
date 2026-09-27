@@ -39,11 +39,11 @@ constexpr std::array<NavEntry, 4> kNavEntries{{
     {NavPage::Settings, "Setup"},
 }};
 
-// 列表栏/内容栏占位文案（M5-05~07 接入后由视图模型派生替换）。
+// 列表栏占位文案（M5-05 起按页实体化：Conversations 页为会话列表）。
 const char* list_placeholder(NavPage page) {
     switch (page) {
     case NavPage::Conversations:
-        return "conversation list placeholder (M5-05)";
+        return "conversation list";
     case NavPage::Devices:
         return "device rows in the content pane (M5-04)";
     case NavPage::Transfers:
@@ -192,14 +192,26 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
             .size(kListColumnWidth - metrics.spacing.content * 2.0f, 1.0f)
             .color(tokens.border)
             .build();
-        components::text(ui, "aki.list.placeholder")
-            .text(list_placeholder(model.page))
-            .position(list_x + metrics.spacing.content,
+        if (model.page == NavPage::Conversations) {
+            // ---- Conversations 页列表（M5-05，SCOPE-05）----
+            composeConversationList(ui, tokens, semantic,
+                list_x + metrics.spacing.content,
                 metrics.spacing.section + metrics.typography.title
-                    + metrics.spacing.content)
-            .fontSize(metrics.typography.body)
-            .color(semantic.text_subtlest)
-            .build();
+                    + metrics.spacing.content,
+                kListColumnWidth - metrics.spacing.content * 2.0f,
+                height - (metrics.spacing.section + metrics.typography.title
+                             + metrics.spacing.content),
+                width, height, model);
+        } else {
+            components::text(ui, "aki.list.placeholder")
+                .text(list_placeholder(model.page))
+                .position(list_x + metrics.spacing.content,
+                    metrics.spacing.section + metrics.typography.title
+                        + metrics.spacing.content)
+                .fontSize(metrics.typography.body)
+                .color(semantic.text_subtlest)
+                .build();
+        }
 
         // ---- 第三栏：内容栏（fill）----
         ui.rect("aki.content.bg")
@@ -439,6 +451,11 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 .fontSize(metrics.typography.caption)
                 .color(semantic.text_subtlest)
                 .build();
+        } else if (model.page == NavPage::Conversations) {
+            // ---- 聊天窗口（M5-05，SCOPE-06/07 UI 面 + SCOPE-08 会话内
+            //      文件卡片）----
+            composeChatWindow(ui, tokens, semantic, content_x, 0.0f,
+                content_width, height, width, height, model);
         } else {
             components::text(ui, "aki.content.placeholder")
                 .text(navPageTitle(model.page))
@@ -450,7 +467,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 .build();
             components::text(ui, "aki.content.placeholder.hint")
                 .text("state consumption wired (M5-03); page views land in"
-                      " M5-05..07")
+                      " M5-06..07")
                 .position(content_x + metrics.spacing.section,
                     metrics.spacing.section + metrics.typography.title
                         + metrics.spacing.tiny)

@@ -1,5 +1,7 @@
 // M5-03：UiActions 出站面边界测试（设计 §9.1「操作一律经 Application 出站
 // 面」+ DEC-008 Manager 模式）。
+// M5-05：发送面页面形改造覆盖——wire 标识生成（规范 hym1_/hyt1_ 串，§6.1
+// 生成入口收敛）+ 图片 hash-first 编排路由（DEC-010/DEC-011）。
 //
 // 覆盖：页面 → 注入出站接口（make_ui_actions 绑定）→ Manager 泵 →（Fake
 // Adapter SPI / 状态 owner）的完整通道；入队 admission 结果直接可见（拒绝
@@ -14,6 +16,8 @@
 #include "app/state/app_state_owner.hpp"
 #include "heyaki/adapter/fake_heyaki_adapter.hpp"
 #include "ui/models/ui_actions.hpp"
+
+#include <heyaki/ids.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -82,15 +86,21 @@ TEST_CASE("UiActions route page operations through Manager pumps to the SPI",
         == "alpha");
 
     // 消息域：send_text → 泵 → Adapter SPI 出站（Fake 记录）+ 消息行入快照。
+    // M5-05：message_id 由页面经 UiActions::new_message_id 取得（规范串，
+    // 真实 NodeSession 双射可解析）。
+    const auto text_message_id = stack.actions.new_message_id();
     REQUIRE(stack.actions.send_text(aki::device::DeviceId{"alpha"},
-        aki::conversation::MessageId{"m-1"}, "hello from the ui surface"));
+        text_message_id, "hello from the ui surface"));
     stack.quiesce();
     REQUIRE(stack.adapter.sent_texts().size() == 1);
     REQUIRE(stack.adapter.sent_texts()[0].to.value == "alpha");
     REQUIRE(stack.adapter.sent_texts()[0].text == "hello from the ui surface");
+    REQUIRE(stack.adapter.sent_texts()[0].message_id.value
+        == text_message_id.value);
     REQUIRE(stack.state.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.messages.messages.size() == 1);
-    REQUIRE(snapshot.value.messages.messages[0].id.value == "m-1");
+    REQUIRE(snapshot.value.messages.messages[0].id.value
+        == text_message_id.value);
 
     // 设备域：发现启停经出站接口 → Adapter（Fake 记录方法）。
     REQUIRE(stack.actions.start_discovery(
@@ -101,22 +111,6 @@ TEST_CASE("UiActions route page operations through Manager pumps to the SPI",
     stack.quiesce();
     REQUIRE_FALSE(stack.adapter.discovery_running());
     REQUIRE(stack.adapter.discovery_started().size() == 1);
-
-    // 入队 admission 结果直接可见（返回 bool 即泵收件箱 admission；拒绝
-    // 不静默——满载拒绝形态由 ManagerPump 收件箱预算测试覆盖，此处断言
-    // 正常路径 admission==true 且绑定面不吞返回值）。聚合载荷先落局部变量：
-    // REQUIRE 宏的顶层逗号分割不受花括号保护（MSVC 实测）。
-    const aki::transfer::FileMetadata image_media{
-        .name = "pic.png", .size_bytes = 3, .mime_type = "image/png",
-        .stored_sha256 = "ab"};
-    const bool image_admitted =
-        stack.actions.send_image(aki::device::DeviceId{"alpha"},
-            aki::conversation::MessageId{"m-2"}, image_media,
-            aki::transfer::TransferId{"hyt1_test"}, true);
-    REQUIRE(image_admitted);
-    stack.quiesce();
-    REQUIRE(stack.adapter.sent_images().size() == 1);
-    REQUIRE(stack.adapter.sent_images()[0].transfer_id.value == "hyt1_test");
 
     // 传输域绑定存在且可调（无接收端环境：start_transfer 入队 admission
     // 为断言面；wire 侧推进语义归 M4 既有回环/单测——此处锁定「页面命令
@@ -136,12 +130,71 @@ TEST_CASE("UiActions route page operations through Manager pumps to the SPI",
     REQUIRE(stack.adapter.transfer_commands().front().source_path
         == std::filesystem::path{"payload/policy.pt"});
 
+    // 图片域（M5-05，hash-first 编排路由，DEC-010/DEC-011）：send_image →
+    // TM.start_transfer 准入（闸门第 1 步）→ Fake 收到传输命令；无 IO 承载
+    // 时 hash 延续以空 hash 触发、编排不发消息（§6.1②——消息半边全链路归
+    // test_transfer_send_path，此处锁定「页面命令经 UiActions 进入编排」的
+    // 通道与降级语义）。聚合载荷先落局部变量：REQUIRE 宏的顶层逗号分割不
+    // 受花括号保护（MSVC 实测）。
+    const aki::transfer::FileMetadata image_media{
+        .name = "pic.png", .size_bytes = 3, .mime_type = "image/png",
+        .stored_sha256 = ""};
+    const auto image_message_id = stack.actions.new_message_id();
+    const auto image_transfer_id = stack.actions.new_transfer_id();
+    const bool image_admitted =
+        stack.actions.send_image(aki::device::DeviceId{"alpha"},
+            image_message_id, image_media, image_transfer_id,
+            std::filesystem::path{"payload/pic.png"});
+    REQUIRE(image_admitted);
+    stack.quiesce();
+    REQUIRE(stack.adapter.sent_images().empty());
+    // 传输命令第二笔 = 图片传输 Start（source_path 为对话框选取路径语义）。
+    REQUIRE(stack.adapter.transfer_commands().size() >= 2);
+    const auto& image_command = stack.adapter.transfer_commands().back();
+    REQUIRE(image_command.kind
+        == aki::heyaki::FakeHeyakiAdapter::TransferCommand::Kind::Start);
+    REQUIRE(image_command.transfer_id.value == image_transfer_id.value);
+    REQUIRE(image_command.source_path
+        == std::filesystem::path{"payload/pic.png"});
+    REQUIRE(stack.state.try_load_snapshot(snapshot));
+    // 传输行已准入；无 IO 承载 → 空 hash 延续 → 无图片消息行（仅 send_text）。
+    REQUIRE(snapshot.value.transfers.transfers.size() == 2);
+    REQUIRE(snapshot.value.messages.messages.size() == 1);
+
     // 全栈受控关闭（EXEC-01；本用例每栈独立 owner，AGENTS 规则 7/8）。
     const auto report = stack.owner.shutdown([&] {
         (void)stack.transfers.flush(2s);
         (void)stack.devices.flush(2s);
         (void)stack.conversations.flush(2s);
         (void)stack.messages.flush(2s);
+        stack.state.close();
+    });
+    REQUIRE(report.fully_stopped());
+}
+
+TEST_CASE("UiActions wire id generation is canonical and unique",
+    "[unit][ui_actions][dec010][m5_05]") {
+    ActionStack stack{"ids"};
+
+    // 规范形式：真实 NodeSession 的 to_heyaki_*_id 双射可解析（非规范串在
+    // 真实路径被拒——admission false、消息行 Failed，§6.1）。
+    const auto message_a = stack.actions.new_message_id();
+    const auto message_b = stack.actions.new_message_id();
+    const auto transfer_a = stack.actions.new_transfer_id();
+    const auto transfer_b = stack.actions.new_transfer_id();
+
+    const auto parsed_message = ::heyaki::parse_message_id(message_a.value);
+    REQUIRE(static_cast<bool>(parsed_message));
+    REQUIRE(parsed_message.error == ::heyaki::IdentifierDecodeError::none);
+    const auto parsed_transfer = ::heyaki::parse_transfer_id(transfer_a.value);
+    REQUIRE(static_cast<bool>(parsed_transfer));
+    REQUIRE(parsed_transfer.error == ::heyaki::IdentifierDecodeError::none);
+
+    // 唯一性（16 随机字节；同型两次生成不同——碰撞概率可忽略）。
+    REQUIRE(message_a.value != message_b.value);
+    REQUIRE(transfer_a.value != transfer_b.value);
+
+    const auto report = stack.owner.shutdown([&] {
         stack.state.close();
     });
     REQUIRE(report.fully_stopped());

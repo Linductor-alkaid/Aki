@@ -265,9 +265,15 @@ codec 常量，紧于 heyaki 1MiB）→ **有界拒绝可见**：入站不投递
    业务拒绝发生在 TM 排空 handler 的会话表守卫（经 `handler_rejections`
    可见，RULE-09）——不新增传输行、不替换旧在飞会话，消息引用的仍是
    既有 TransferId；TransferId 唯一性由调用方生成保证——生成入口
-   `NodeSession::new_transfer_id()`：16 随机字节（`std::random_device`，
-   全零重抽）→ `heyaki::to_string` 规范串（`hyt1_` + 26 base32；M4-04
-   定案，DEC-011④）。
+   `aki::heyaki::new_transfer_id()`（`heyaki/adapter/wire_ids.hpp`；M5-05
+   收敛：`NodeSession::new_transfer_id()` 委托同一入口）：16 随机字节
+   （`std::random_device`，全零重抽）→ `heyaki::to_string` 规范串
+   （`hyt1_` + 26 base32；M4-04 定案，DEC-011④）。MessageId 生成入口
+   同型落地 `aki::heyaki::new_message_id()`（M5-05；规范 `hym1_` 串——
+   非规范 MessageId 在真实 NodeSession 的 `to_heyaki_message_id` 双射处
+   被拒、消息行记 Failed）。UI 出站面不携带 wire 编码知识（RULE-10）：
+   两个生成器经 `UiActions::new_transfer_id`/`new_message_id`（组合根
+   `make_ui_actions` 绑定）供页面取用。
 2. **运行期零传导**：peer ack 事件（`on_message_delivered`/
    `on_message_send_failed`）与传输终态事件（`on_transfer_completed`）互不
    跨通道回写——`Delivered→Failed` 非法（§6 状态机）、`ack_timeout` 两可语义
@@ -841,12 +847,24 @@ EUI-NEO 组合模型为 M5-01 探针实测——compose 为**保留模式、事�
   `publish_hook_failures` 不中断 drain；类型 `std::function<void()>` EUI-NEO
   无关，RULE-10）——组合根（`HostRuntime::ensure_assembled`）装配参数传入，
   GUI 宿主传 `app::requestUpdate()`，console/测试宿主传计数器或 no-op。
+  M5-05 修订（本机 GUI 实测发现的唤醒缺口）：publish 只发生在主线程 drain，
+  而 Manager handler 跑在 executor 任务上——若仅在发布点唤醒，主循环无从得知
+  「有待 drain 的更新」，发送/接收结果直到下一次输入事件才可见。故增补第二
+  唤醒点 `AppStateOwnerOptions::on_update_submitted`：`submit_update`/
+  `submit_update_for` 受理成功后于提交者上下文（executor handler 任务）同步
+  调用，异常全捕获计数 `submit_hook_failures`（原子计数——多线程并发提交者）。
+  两个钩子在组合根注入同一回调（GUI = `app::requestUpdate()`，重复唤醒无害）；
+  拒绝（通道满/关闭）不触发钩子。
   UI 操作出站面以注入接口 `UiActions` 承载（`ui/models`，`std::function`
-  绑定四 Manager 公开出站方法——send_text/send_image、传输四接口、发现
-  启停、ensure_conversation、M5-04 起信任三操作 confirm/reject/revoke；
-  页面只持 `UiActions`，不持有 Manager/transport 对象，RULE-01/RULE-02），
-  由组合根绑定、页面经模型读取；信任判定操作随 M5-04 落地（DeviceManager
-  三操作 + 配对结果路由，§8.1 第 12 sink 方法）。
+  绑定四 Manager 公开出站方法/编排层入口——传输四接口、发现启停、
+  ensure_conversation、M5-04 起信任三操作 confirm/reject/revoke；M5-05 起
+  发送面为页面形：`new_message_id`/`new_transfer_id` 绑定 §6.1 的 wire id
+  生成入口（`heyaki/adapter/wire_ids.hpp`），`send_text` 绑定
+  MessageManager::send_text（id 由页面经生成器取得），`send_image` 绑定
+  §6.1② 的 hash-first 编排 `send_image_message_with_hash`（source_path 为
+  文件对话框只读选取路径）；页面只持 `UiActions`，不持有 Manager/transport
+  对象，RULE-01/RULE-02），由组合根绑定、页面经模型读取；信任判定操作随
+  M5-04 落地（DeviceManager 三操作 + 配对结果路由，§8.1 第 12 sink 方法）。
 - **首帧装配例外（M5-02 增补）**：宿主组合根（第 8.3 节七步 + 数据根解析 +
   Node 启动）落位为 EUI-NEO 无关的 `app/lifecycle/host_runtime`
   （`HostRuntime::ensure_assembled(data_root)` / `shutdown_with_report()`，

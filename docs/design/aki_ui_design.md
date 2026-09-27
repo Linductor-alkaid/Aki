@@ -149,6 +149,7 @@ Tailwind 默认调色板取值（hex→归一化在实现时完成）：
 | Delivery Queued/Sending/Sent/Delivered/Failed | 时钟 / 单勾（中性）/ 双勾 `success` / `destructive` + 重试 |
 | Conversation Disconnected | 会话头部 `warning` 横条"连接断开，等待恢复"（恢复不新建会话） |
 | Transfer 各态 | 文件卡片 + 进度条：Transferring `brand`，Paused `warning`，Failed `destructive`+重试，Completed `success`，Cancelled/Queued 中性 |
+| 媒体消息无传输行（§6.1 单侧到达边角，M5-05） | 文件卡片以 `warning` 文案 "no transfer row (single-side arrival)" 兜底态显式呈现，无进度条——不猜测进度、不以占位冒充（DEC-010/DEC-013）；重启恢复后非终态传输行降级 Paused（DEC-013），按 Paused `warning` 呈现 |
 | 连接路径 LAN / P2P / Relay | `caption` 中性徽标，路径切换不产生新会话 |
 
 ## 4. 页面与 EUI-NEO 组件映射
@@ -212,6 +213,27 @@ Transfers / Settings。组件选型（`RISK-2026-002` 的盘点基线，M5 用 p
   - 文件对话框：`eui::platform::openFileDialog` 只读打开（平台能力文档：
     不支持目录/保存）——满足发送选取链路（图片发送 open 选取 + hash-first
     发起），接收侧按接收根无对话框需求——满足度确认。
+
+- **M5-05 落地记录（2026-09-27，Conversations 页与聊天窗口；本机 GUI 实测
+  与探针定形）**：
+  - §4 组件映射逐项落地：会话列表=scrollview 行（行内绝对排版 + 透明点击
+    面，非 virtuallist——预算 256 行有界）、消息气泡=card(wrapContentHeight)
+    + text(wrap) 组合（M5-01 复核结论「卡片自绘 + scrollview」实测成立：
+    变高气泡列由 scrollview 内容列 wrapContent 度量，嵌套 wrap 布局引擎
+    原生支持）、图片消息=image+dialog、文件卡片=card+progress+button、
+    输入区=input+button（图标按钮 FA 码点 §2.6）。
+  - 探针定形实测结论（本机 GUI 会话）：① scrollview 内容列为纵排布局、
+    掌管子元素 x——气泡左右归属（己方 accent 右侧 / 对方 card 左侧，§4
+    surface 层级区分）必须在行内 stack 绝对定位，直接把 card 挂进内容列
+    会被列布局拉回左缘；② pinned scrollview 运行期滚动状态按元素 id 持有
+    （首次构建播种 offset、其后运行期所有）——「回到底部」以滚动代数进位
+    切换 scrollview id 表达（选中切换/新消息入流 +1），用户滚动位置在两次
+    代数进位之间由运行期保持；③ dialog open 态页面持有 + requestUpdate
+    唤醒重组拾取（M5-01 waker 契约）在预览/新建会话弹窗复验成立。
+  - 会话头部断连横幅（§3 Conversation Disconnected）以 `warning` 底色 +
+    三角叹号图标 + 「连接断开，等待恢复」文案落地；信任徽标 Trusted
+    `success` / Rejected·Revoked `destructive`，Rejected/Revoked 的会话
+    行无点击面（§3 会话入口禁用）。
 
 ## 6. 来源与许可
 

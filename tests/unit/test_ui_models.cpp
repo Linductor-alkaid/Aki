@@ -1,4 +1,6 @@
 // M5-03：ui/models 视图模型派生 + 快照消费面 + 发布→唤醒回调单测。
+// M5-05：消息视图（方向/媒体/文件卡片 join/单侧到达兜底）+ 会话列表最后
+// 消息方向扩展。
 //
 // 覆盖（验收标准）：
 //   - 四域视图模型派生断言（空态/终态/易变字段/端点归属/进度 fraction）；
@@ -152,8 +154,90 @@ TEST_CASE("Conversation views carry last-message summary per endpoints",
     REQUIRE(views[0].last_message.id.value == "m2");
     REQUIRE(views[0].last_message.type == aki::conversation::MessageType::Image);
     REQUIRE(views[0].last_message.preview == "[image] cat.png");
+    // M5-05：最后消息方向（入站消息 → outbound=false，投递徽标不展示）。
+    REQUIRE_FALSE(views[0].last_message.outbound);
     REQUIRE(views[1].last_message.has_value);
     REQUIRE(views[1].last_message.preview == "other conversation");
+    REQUIRE(views[1].last_message.outbound);
+}
+
+TEST_CASE("Message views expose direction, media join and fallback",
+    "[unit][ui_models][m5_05]") {
+    const aki::conversation::Conversation conversation{
+        aki::conversation::ConversationId{"conv-alpha"},
+        aki::device::DeviceId{"local"}, aki::device::DeviceId{"alpha"},
+        aki::conversation::ConversationState::Active};
+
+    aki::app::MessageStore messages;
+    messages.messages.push_back(
+        make_text_message("m1", "local", "alpha", "outbound text"));
+    messages.messages.push_back(
+        make_text_message("m2", "alpha", "local", "inbound text"));
+    // 图片消息：TransferStore 有行 → 卡片 join（进度/状态可见）。
+    aki::conversation::Message image_message;
+    image_message.id = aki::conversation::MessageId{"m3"};
+    image_message.sender = aki::device::DeviceId{"local"};
+    image_message.receiver = aki::device::DeviceId{"alpha"};
+    image_message.type = aki::conversation::MessageType::Image;
+    image_message.payload = aki::conversation::ImagePayload{
+        aki::transfer::FileMetadata{.name = "cat.png", .size_bytes = 1024,
+            .mime_type = "image/png", .stored_sha256 = "aa"},
+        aki::transfer::TransferId{"hyt1_tracked"}};
+    messages.messages.push_back(image_message);
+    // 文件消息：无传输行 → 单侧到达兜底态（DEC-010 已登记边角，不猜进度）。
+    aki::conversation::Message file_message;
+    file_message.id = aki::conversation::MessageId{"m4"};
+    file_message.sender = aki::device::DeviceId{"alpha"};
+    file_message.receiver = aki::device::DeviceId{"local"};
+    file_message.type = aki::conversation::MessageType::File;
+    file_message.payload = aki::conversation::FilePayload{
+        aki::transfer::FileMetadata{.name = "policy.pt", .size_bytes = 10,
+            .mime_type = "application/octet-stream", .stored_sha256 = "ab"},
+        aki::transfer::TransferId{"hyt1_orphan"}};
+    messages.messages.push_back(file_message);
+    // 他会话消息不入流。
+    messages.messages.push_back(
+        make_text_message("m5", "local", "beta", "other"));
+
+    aki::app::TransferStore transfers;
+    aki::transfer::Transfer tracked;
+    tracked.id = aki::transfer::TransferId{"hyt1_tracked"};
+    tracked.sender = aki::device::DeviceId{"local"};
+    tracked.receiver = aki::device::DeviceId{"alpha"};
+    tracked.file.name = "cat.png";
+    tracked.transferred = 512;
+    tracked.total = 1024;
+    tracked.state = aki::transfer::TransferState::Transferring;
+    transfers.transfers.push_back(tracked);
+
+    const auto views = derive_message_views(messages, conversation,
+        aki::device::DeviceId{"local"}, transfers);
+    REQUIRE(views.size() == 4);
+    // 方向（outbound = sender == conversation.local_device）。
+    REQUIRE(views[0].outbound);
+    REQUIRE_FALSE(views[1].outbound);
+    REQUIRE(views[0].text == "outbound text");
+    REQUIRE_FALSE(views[0].has_media);
+    // 图片 join：tracked、进度 0.5、非终态。
+    REQUIRE(views[2].has_media);
+    REQUIRE(views[2].media.name == "cat.png");
+    REQUIRE(views[2].transfer_id.value == "hyt1_tracked");
+    REQUIRE(views[2].transfer_tracked);
+    REQUIRE(views[2].transfer_state
+        == aki::transfer::TransferState::Transferring);
+    REQUIRE(views[2].transfer_progress > 0.49);
+    REQUIRE(views[2].transfer_progress < 0.51);
+    // 无传输行的文件消息：显式兜底态（transfer_tracked=false，进度 0）。
+    REQUIRE(views[3].has_media);
+    REQUIRE(views[3].media.name == "policy.pt");
+    REQUIRE(views[3].transfer_id.value == "hyt1_orphan");
+    REQUIRE_FALSE(views[3].transfer_tracked);
+    REQUIRE(views[3].transfer_progress == 0.0);
+
+    // 端点守卫：本地身份不是会话端点 → 可见空态。
+    REQUIRE(derive_message_views(messages, conversation,
+                aki::device::DeviceId{"stranger"}, transfers)
+                .empty());
 }
 
 TEST_CASE("Message stream filters by conversation endpoints with local guard",
@@ -389,6 +473,63 @@ TEST_CASE("Injected wake callback is callable from executor tasks",
     REQUIRE(wake_off_submit_thread.load());
     REQUIRE(observed_sequence.load() == owner.snapshot_sequence());
     REQUIRE(observed_sequence.load() > 0);
+
+    const auto report = executor_owner.shutdown();
+    REQUIRE(report.fully_stopped());
+}
+
+TEST_CASE("Update-submit wake hook fires on submitter context and contains"
+    " exceptions",
+    "[unit][ui_models][exec03][m5_05]") {
+    // M5-05（设计 §9.1 唤醒条款修订）：Manager handler 在 executor 任务上
+    // submit_update 受理更新——受理点唤醒（on_update_submitted）是主循环
+    // 得知「有待 drain 更新」的唯一信号（publish 只发生在主线程 drain）。
+    // 本用例断言：受理成功即触发（提交者上下文）、拒绝不触发、钩子异常
+    // 全捕获计数不中断提交。
+    aki::app::ExecutorOwner executor_owner;
+    REQUIRE(executor_owner.initialize());
+
+    AppStateOwnerOptions options;
+    std::atomic<int> wakes{0};
+    std::atomic<bool> threw{false};
+    options.on_update_submitted = [&wakes, &threw] {
+        wakes.fetch_add(1);
+        if (wakes.load() == 1) {
+            threw.store(true);
+            throw std::runtime_error("wake hook boom");
+        }
+    };
+    AppStateOwner owner{options};
+
+    // 主线程受理：钩子触发；首次调用抛异常被 owner 全捕获（submit_hook_
+    // failures=1），不影响受理结果；第二次调用正常计数。
+    REQUIRE(owner.submit_update(UpsertDevice{make_device("alpha")}));
+    REQUIRE(owner.submit_update(UpsertDevice{make_device("beta")}));
+    REQUIRE(wakes.load() == 2);
+    REQUIRE(threw.load());
+    // 抛异常的那次不计成功调用（calls 在钩子返回后累加），计入 failures。
+    REQUIRE(owner.stats().submit_hook_calls.load() == 1);
+    REQUIRE(owner.stats().submit_hook_failures.load() == 1);
+
+    // 拒绝（终态复活：Failed -> Failed 为幂等接受；此处以容量超限构造拒绝
+    // 面：关闭后提交返回 false 且不触发钩子）。先 drain 清空再关闭。
+    owner.drain();
+    const auto wakes_before = wakes.load();
+    owner.close();
+    REQUIRE_FALSE(owner.submit_update(UpsertDevice{make_device("gamma")}));
+    REQUIRE(wakes.load() == wakes_before);
+
+    // executor 任务内受理（跨线程生产面 = 现行 Manager handler 上下文）。
+    std::atomic<int> task_wakes{0};
+    AppStateOwnerOptions task_options;
+    task_options.on_update_submitted = [&task_wakes] { task_wakes.fetch_add(1); };
+    AppStateOwner task_owner{task_options};
+    auto future = executor_owner.executor().submit_auto([&task_owner] {
+        return task_owner.submit_update(UpsertDevice{make_device("alpha")})
+            && task_owner.stats().submit_hook_calls.load() == 1 ? 1 : 0;
+    });
+    REQUIRE(future.get() == 1);
+    REQUIRE(task_wakes.load() == 1);
 
     const auto report = executor_owner.shutdown();
     REQUIRE(report.fully_stopped());
