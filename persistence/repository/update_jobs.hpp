@@ -11,8 +11,8 @@
 // 本文件的 make_transfer_terminal_job 是无文件联动的终态列更新（与 discard
 // 作业并列入队，覆盖「终态宣告但无文件动作」的行更新语义）。
 //
-// SetPresence 与 SetConnectionPath 无作业：presence 是易失在线状态（恢复后
-// 默认 Offline），连接路径是覆盖式单值摘要（§11.1 ① 明确不持久化）。
+// SetPresence 与 SetDeviceConnectionPath 无作业：presence 是易失在线状态
+// （恢复后默认 Offline），连接路径是逐设备易失集合（§11.1 ① 明确不持久化）。
 //
 // RULE-10：公开面仅领域类型与 std 类型。作业捕获值语义载荷（无共享可变状态）。
 #pragma once

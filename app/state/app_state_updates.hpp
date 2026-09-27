@@ -42,7 +42,7 @@ struct UpdateTransferProgress {
 
 // 逐设备连接路径部分更新（M5-04，DEC-015）：DeviceStore 级易失集合按设备
 // 键 upsert；未知 id 拒绝并可观测（SetPresence 先例）。取代退役的全局
-// 退役的全局 SetConnectionPath/LatestMailbox 单值摘要（设计 §10.1 同批修订）。
+// SetConnectionPath/LatestMailbox 单值摘要（设计 §10.1 同批修订）。
 struct SetDeviceConnectionPath {
     aki::device::DeviceId device;
     aki::device::ConnectionPath path = aki::device::ConnectionPath::Unknown;
