@@ -170,6 +170,11 @@ const app::DslAppConfig& app::dslAppConfig() {
         .title("Aki")
         .windowSize(1080, 720)
         .minWindowSize(880, 560)
+        // 窗口/任务栏图标：Heyaki 图标（2026-09-27 用户确认；资产溯源见
+        // assets/icons/README.md，POST_BUILD 随 exe 部署）。不设置时框架
+        // 回落 EUI-NEO assets/icon.png。exe 内嵌图标同源（aki-icon.ico），
+        // 经根 CMakeLists 覆写 EUI_NEO_APP_ICON_RESOURCE 注入。
+        .iconPath("assets/icons/aki-icon.png")
         // 托盘 M5-02 不启用（DslAppConfig tray 默认 false；启用时须复验
         // tray exit 同汇入 app::shutdown 的关闭配对，设计 §9.1）。
         .onShutdown([] {

@@ -2,7 +2,7 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-09-26
+> 更新日期：2026-09-27
 > 权威约束：[ZCode Design System](zcode-design-system.md)（直接采用，见下）
 > 上位设计：[Aki 设计方案](aki_design.md)第 9/10 节
 > 实现基线：pinned `third_party/EUI-NEO`
@@ -105,6 +105,36 @@ Tailwind 默认调色板取值（hex→归一化在实现时完成）：
 - 键盘导航一等公民、状态不得仅用颜色编码、容忍翻译变长（上游
   "Accessibility and Internationalization"）。
 
+### 2.6 图标资源与应用图标
+
+- **界面图标字体**：pinned EUI-NEO 自带
+  `assets/Font Awesome 7 Free-Solid-900.otf`，经 `text(...)`/`button(...)`
+  的 `.icon(codepoint)` 消费（上游 DSL.md「图标」节；FontAwesome 码点必须
+  配套该字体，不依赖系统兜底）。Aki 不引入第二套界面图标来源；图标尺寸按
+  第 2.2 节 12/14/16/20/24（默认 16）。码点登记如下（2026-09-27 对
+  pinned v0.6.0 捆绑字体 cmap 逐一验证存在；新增图标必须同法验证并登记）：
+
+| 语义点 | 图标（FA7 Solid 名） | 码点 |
+| --- | --- | --- |
+| 导航 Conversations / Devices / Transfers / Settings | comments / network-wired / arrow-right-arrow-left / gear | `f086` / `f6ff` / `f0ec` / `f013` |
+| 信任 Unknown / Pending / Trusted / Rejected / Revoked | circle-question / clock / circle-check / circle-xmark / ban | `f29c` / `f017` / `f058` / `f05a` / `f05e` |
+| 投递 Queued / Sending / Sent / Delivered / Failed | clock / paper-plane / check / check-double / circle-exclamation | `f017` / `f1d8` / `f00c` / `f560` / `f06a` |
+| 失败重试 | arrow-rotate-right | `f01e` |
+| 传输 收/发方向 / Paused | arrow-down-long / arrow-up-long / circle-pause | `f175` / `f176` / `f28b` |
+| 路径 LAN / P2P / Relay | network-wired / link / tower-broadcast | `f6ff` / `f0c1` / `f519` |
+| 操作 发送 / 附件 / 图片 / 发现开始·停止 | paper-plane / paperclip / image / magnifying-glass·stop | `f1d8` / `f0c6` / `f03e` / `f002`·`f04d` |
+| 会话断连横幅 | triangle-exclamation | `f071` |
+| Presence 圆点 | 维持第 3 节 rect 几何实现（实心/空心），不换字体图标 | — |
+
+- **应用图标（程序图标）**：经用户确认（2026-09-27）采用 Heyaki 图标。
+  资产由 `scripts/make_app_icons.py` 自 pinned heyaki
+  `docs/icon/heyaki-transparent.png` 生成（溯源与许可见
+  [assets/icons/README.md](../../assets/icons/README.md)）：
+  `assets/icons/aki-icon.png`（256px 窗口/任务栏图标，`dslAppConfig
+  .iconPath` 消费）与 `assets/icons/aki-icon.ico`（16~256 多尺寸，Windows
+  exe 内嵌 `IDI_APP_ICON`——消费侧覆写 `EUI_NEO_APP_ICON_RESOURCE` 属性，
+  替换上游默认 EUI-NEO 图标；不改 pinned 依赖）。
+
 ## 3. Aki 领域状态的视觉语义
 
 状态机语义以[设计文档](aki_design.md)第 3~7 节为准；视觉全部使用第 2.3 节
@@ -191,3 +221,9 @@ Transfers / Settings。组件选型（`RISK-2026-002` 的盘点基线，M5 用 p
   `packages/ui/src/styles.css` 默认 light/dark 主题（`@theme` 与 `.dark` 块）。
 - 上游许可 Apache-2.0；归档文件保留来源与许可头部，升级时整篇替换正文并
   更新 commit。
+- Heyaki 应用图标：源图取自 pinned heyaki `docs/icon/heyaki-transparent.png`
+  （@ `e114508a`，v1.0.1-38-ge114508），MIT（`third_party/heyaki/LICENSE`）；
+  Aki 侧生成物、溯源与再生成见 [assets/icons/README.md](../../assets/icons/README.md)。
+- Font Awesome Free Solid（界面图标字体）：随 pinned EUI-NEO assets 分发，
+  许可以 EUI-NEO 仓库内标注为准（发行前资产许可审计登记项，锁文件
+  `used_by` 已注）。

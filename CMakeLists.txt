@@ -53,6 +53,29 @@ set(EUI_WINDOW_BACKEND "glfw" CACHE STRING "" FORCE)
 set(EUI_RENDER_BACKEND "opengl" CACHE STRING "" FORCE)
 add_subdirectory(third_party/EUI-NEO)
 
+# 应用图标（2026-09-27 用户确认，aki_ui_design §2.6）：Windows exe 内嵌
+# 图标采用 Heyaki 图标（assets/icons/aki-icon.ico，scripts/make_app_icons.py
+# 生成）。eui_neo_configure_app 经 EUI_NEO_APP_ICON_RESOURCE 全局属性把上游
+# assets/icon.ico 编入每个 app target；pinned 依赖不可改动，故在消费侧于
+# add_subdirectory 之后、configure 之前覆写该属性为 Aki 自己的 rc（仅影响
+# 本仓库 target；上游若改名则覆写静默失效、退回 EUI-NEO 图标，不致构建
+# 失败）。运行期窗口图标为 assets/icons/aki-icon.png（main.cpp iconPath），
+# 由 aki target 的 POST_BUILD 部署（见 eui_neo_configure_app(aki) 之后）。
+if(WIN32)
+    set(AKI_APP_ICON_ICO "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/aki-icon.ico")
+    if(NOT EXISTS "${AKI_APP_ICON_ICO}")
+        message(FATAL_ERROR
+            "Aki app icon missing: ${AKI_APP_ICON_ICO} "
+            "(regenerate via scripts/make_app_icons.py)")
+    endif()
+    set(AKI_APP_ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/aki_app_icon.rc")
+    file(TO_NATIVE_PATH "${AKI_APP_ICON_ICO}" AKI_APP_ICON_ICO_NATIVE)
+    string(REPLACE "\\" "\\\\" AKI_APP_ICON_ICO_ESCAPED "${AKI_APP_ICON_ICO_NATIVE}")
+    file(WRITE "${AKI_APP_ICON_RC}"
+        "IDI_APP_ICON ICON \"${AKI_APP_ICON_ICO_ESCAPED}\"\n")
+    set_property(GLOBAL PROPERTY EUI_NEO_APP_ICON_RESOURCE "${AKI_APP_ICON_RC}")
+endif()
+
 # executor 公开头文件按 SYSTEM include 处理：其头文件告警（如 MSVC C4324 对齐
 # 填充）不进入第一方 -Werror 门禁，与“第三方依赖不继承告警级别”的约定一致。
 # M3-01 起设置转移到 heyaki 提供的 executor target（Aki 侧副本不再进入构建图，
@@ -190,6 +213,16 @@ target_link_libraries(aki PRIVATE
     heyaki::client)
 aki_deploy_openssl_dlls(aki)
 eui_neo_configure_app(aki)
+# 运行期图标资产随 exe 部署（POST_BUILD 注册序在 eui_neo_configure_app 的
+# 上游 assets 拷贝之后执行；文件名 distinct，与上游 assets/ 无覆盖关系）。
+add_custom_command(TARGET aki POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:aki>/assets/icons"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/aki-icon.png"
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/aki-icon.ico"
+        "$<TARGET_FILE_DIR:aki>/assets/icons"
+    VERBATIM)
 # 框架注入源（glfw_app_main.cpp）不继承第一方 /W4 /WX——上游源码告警
 #（如 runtime_render.h C4100）不进第一方门禁（DEC-005「第三方不继承告警
 # 级别」；MSVC 无 /external:I 落点，以源级降档实现，最后一档生效）。
