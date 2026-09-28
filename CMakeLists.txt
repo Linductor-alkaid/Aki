@@ -137,10 +137,10 @@ function(aki_apply_warnings target scope)
     endif()
 endfunction()
 
-# OpenSSL 3 运行期 DLL 定位（M6-01 起由 POST_BUILD 部署与 CPack install
-# 共用）。根目录候选：CMake/OpenSSL 变量与 OPENSSL_ROOT_DIR 环境变量（CI
-# 注入），DLL 位于根或 bin/ 子目录；后命中者优先，未命中输出空串。
-function(aki_locate_openssl_dll dll out_var)
+# OpenSSL 运行期库定位候选根（M6-01 起由 POST_BUILD 部署与 CPack install
+# 共用）：CMake/OpenSSL 变量与 OPENSSL_ROOT_DIR 环境变量（CI 注入），
+# OPENSSL_INCLUDE_DIR 推导根殿后；后命中者优先。
+function(aki_openssl_root_candidates out_var)
     set(_roots "")
     if(DEFINED OPENSSL_ROOT_DIR AND OPENSSL_ROOT_DIR)
         list(APPEND _roots "${OPENSSL_ROOT_DIR}")
@@ -154,6 +154,13 @@ function(aki_locate_openssl_dll dll out_var)
         list(APPEND _roots "${_openssl_root}")
     endif()
     list(REMOVE_DUPLICATES _roots)
+    set(${out_var} "${_roots}" PARENT_SCOPE)
+endfunction()
+
+# OpenSSL 3 运行期 DLL 定位（Windows；DLL 位于候选根或 bin/ 子目录，
+# 未命中输出空串）。
+function(aki_locate_openssl_dll dll out_var)
+    aki_openssl_root_candidates(_roots)
     set(_dll_found "")
     foreach(_root IN LISTS _roots)
         foreach(_sub IN ITEMS "" bin)
@@ -163,6 +170,22 @@ function(aki_locate_openssl_dll dll out_var)
         endforeach()
     endforeach()
     set(${out_var} "${_dll_found}" PARENT_SCOPE)
+endfunction()
+
+# OpenSSL 3 运行期共享库定位（Linux，M6-02；.so SONAME 位于候选根或
+# lib/lib64 子目录，未命中输出空串。install(FILES) 跟随 symlink 拷贝
+# 真实文件，随包形态为无符号链接的同名库）。
+function(aki_locate_openssl_shared_lib so out_var)
+    aki_openssl_root_candidates(_roots)
+    set(_so_found "")
+    foreach(_root IN LISTS _roots)
+        foreach(_sub IN ITEMS lib lib64)
+            if(EXISTS "${_root}/${_sub}/${so}")
+                set(_so_found "${_root}/${_sub}/${so}")
+            endif()
+        endforeach()
+    endforeach()
+    set(${out_var} "${_so_found}" PARENT_SCOPE)
 endfunction()
 
 # M3-01：Windows 运行期 OpenSSL DLL 部署（DEC-006 影响节：MSVC 链接系统 OpenSSL 3，

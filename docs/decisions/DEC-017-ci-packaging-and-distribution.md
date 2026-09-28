@@ -48,6 +48,17 @@ M0~M5 的 CI 门禁（`.github/workflows/ci.yml` 五档矩阵）只产出测试�
   静态链接 libstdc++/libgcc**（`-static-libstdc++ -static-libgcc`），
   不要求用户侧 GLIBCXX ≥ 3.4.30；glibc 保持动态（2.31 为下限，不做
   静态链接——NSS/dlopen 语义风险，也不符合常规）。
+- **OpenSSL 3 随包分发（focal 事实约束）**：Ubuntu 20.04 系统 OpenSSL
+  为 1.1.1f，而 pinned heyaki 冻结 OpenSSL 3.x ABI（要求 ≥3.0、<4.0，
+  third_party/heyaki/CMakeLists.txt:116）——focal 系统库无法满足。
+  构建期在容器内源码构建 OpenSSL 3.5.4（3.x LTS 线，tarball 经
+  SHA-256 固定校验）shared 安装到 /usr/local 供构建图链接；运行期经
+  `AKI_BUNDLE_OPENSSL_LINUX`（显式开关，默认 OFF，仅 package job
+  开启）把 `libssl.so.3`/`libcrypto.so.3` 随包装入 /opt/aki，aki 以
+  `$ORIGIN` rpath 绑定同目录副本——用户机无需 OpenSSL 3。dpkg-shlibdeps
+  经 `SHLIBDEPS_PRIVATE_PARAMS "-l opt/aki"` 将随包私有库排除出系统包
+  Depends；系统 libssl1.1 仍经 libcurl4 依赖传递满足（libcurl 为 focal
+  系统库，OpenSSL 1.1 ABI）。
 - **deb 依赖声明**：`CPACK_DEBIAN_PACKAGE_SHLIBDEPS=ON` 自动生成
   （构建容器即 20.04，Depends 基线随之锁定）；显式追加 GLFW 运行期
   dlopen 集（`libx11-6 libxext6 libxrandr2 libxinerama1 libxcursor1
@@ -100,13 +111,20 @@ M0~M5 的 CI 门禁（`.github/workflows/ci.yml` 五档矩阵）只产出测试�
 
 - CI 增加两个 job：PR 与 master push 时长增加（容器内全量 release
   构建 + 测试 + 打包）；产物随 artifacts 保留（默认 90 天）。
-- 供应链新增面：`apt.kitware.com`（CMake 官方分发渠道）与
-  `ppa:ubuntu-toolchain-r/test`（GCC 12）。二者均为业界标准渠道，
-  已在本决策登记；若后续引入软件源级 pin/校验需求，按
-  `docs/supply-chain/` 纪律另行登记。
+- 供应链新增面：`apt.kitware.com`（CMake 官方分发渠道）、
+  `ppa:ubuntu-toolchain-r/test`（GCC 12）与 OpenSSL 3.5.4 源码 tarball
+  （GitHub release，SHA-256
+  `967311f84955316969bdb1d8d4b983718ef42338639c621ec4c34fddef355e99`
+  固定校验）。渠道均为业界标准来源，已在本决策登记；若后续引入
+  软件源级 pin/校验需求，按 `docs/supply-chain/` 纪律另行登记。
 - 已知边界（如实声明，RULE-11）：deb 在标准桌面环境的 Ubuntu 20.04+
   可安装运行；22.04+ 发行版因 libssl1.1 → libssl3 的 soname 演进不在
   本包兼容声明内；最小化/无桌面系统由显式 dlopen 集依赖保证可启动。
+  focal deb 内随包 OpenSSL 3 与系统 libcurl（1.1 ABI 编译）共存于同
+  一进程：ELF 全局符号解析下 libcurl 的 `SSL_*` 符号解析到先加载的
+  随包 libssl.so.3（OpenSSL 3 兼容层覆盖 focal libcurl 7.68 所用
+  API 集，风险低），该路径未经 20.04 真机验证——由 M6 退出-4 真机
+  安装启动补跑条件覆盖。
 - MSVC `/O2 /GS /sdl` 覆盖组合此前从未进入任何门禁（历史 release 证据
   均在上游旗标下），Windows 打包 job 首轮存在暴露新告警/行为的可能，
   按 MR 闭环迭代处理（M6 风险表跟踪）。

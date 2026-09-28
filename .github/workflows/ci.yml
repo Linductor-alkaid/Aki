@@ -161,6 +161,21 @@ jobs:
             wayland-protocols \
             libxkbcommon-dev \
             libglib2.0-dev
+      - name: Build OpenSSL 3.5 LTS (focal ships 1.1; heyaki freezes the OpenSSL 3.x ABI)
+        # focal 系统 OpenSSL 为 1.1.1f，pinned heyaki 要求 >=3.0 且 <4.0
+        #（third_party/heyaki/CMakeLists.txt:116）——源码构建 shared 到
+        # /usr/local 供构建图链接；运行期由 AKI_BUNDLE_OPENSSL_LINUX 随包
+        # 分发 libssl.so.3/libcrypto.so.3（DEC-017）。tarball SHA-256 固定
+        # 校验（3.5 LTS，2026-09-28 取自 GitHub release）。
+        run: |
+          curl -fsSLO https://github.com/openssl/openssl/releases/download/openssl-3.5.4/openssl-3.5.4.tar.gz
+          echo "967311f84955316969bdb1d8d4b983718ef42338639c621ec4c34fddef355e99  openssl-3.5.4.tar.gz" | sha256sum -c -
+          tar -xzf openssl-3.5.4.tar.gz
+          cd openssl-3.5.4
+          ./Configure linux-x86_64 shared no-tests --prefix=/usr/local --libdir=lib
+          make -j"$(nproc)"
+          make install_sw
+          ldconfig
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -178,6 +193,8 @@ jobs:
           -D CMAKE_C_COMPILER=gcc-12
           -D CMAKE_CXX_COMPILER=g++-12
           -D CMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+          -D OPENSSL_ROOT_DIR=/usr/local
+          -D AKI_BUNDLE_OPENSSL_LINUX=ON
       - name: Build
         run: cmake --build --preset release --parallel
       - name: Test

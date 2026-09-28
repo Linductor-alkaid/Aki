@@ -61,6 +61,33 @@ if(UNIX AND NOT APPLE)
         RENAME aki.png)
 endif()
 
+# M6-02（DEC-017）：OpenSSL 3 随包分发（显式开关，默认 OFF）。基线平台
+# Ubuntu 20.04 的系统 OpenSSL 为 1.1，而 pinned heyaki 冻结 OpenSSL 3.x
+# ABI（third_party/heyaki/CMakeLists.txt:116 要求 >=3.0、<4.0）——focal
+# 系统库无法满足，CI package job 在容器内构建 OpenSSL 3 到 /usr/local
+# 并开启本开关：libssl.so.3/libcrypto.so.3 随包装入 /opt/aki，aki 以
+# $ORIGIN rpath 绑定同目录副本，不要求用户机装 OpenSSL 3。
+option(AKI_BUNDLE_OPENSSL_LINUX
+    "Bundle the OpenSSL 3 shared libraries next to the executable (Linux package builds on distros without system OpenSSL 3)."
+    OFF)
+if(AKI_BUNDLE_OPENSSL_LINUX AND UNIX AND NOT APPLE)
+    foreach(_so IN ITEMS libssl.so.3 libcrypto.so.3)
+        aki_locate_openssl_shared_lib("${_so}" _aki_pkg_so)
+        if(_aki_pkg_so STREQUAL "")
+            message(FATAL_ERROR
+                "AKI_BUNDLE_OPENSSL_LINUX is ON but '${_so}' was not found "
+                "under OPENSSL_ROOT_DIR; set OPENSSL_ROOT_DIR to the "
+                "OpenSSL 3 install prefix (DEC-017).")
+        endif()
+        install(FILES "${_aki_pkg_so}" DESTINATION .)
+    endforeach()
+    # 可执行文件优先从安装目录解析随包 OpenSSL（先于系统路径）。
+    set_target_properties(aki PROPERTIES INSTALL_RPATH "$ORIGIN")
+    # dpkg-shlibdeps 把安装树内的私有库声明为私有目录：对其不生成系统包
+    # Depends、不报 no-dependency-information（其余 NEEDED 照常生成）。
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS_PRIVATE_PARAMS "-l opt/aki")
+endif()
+
 # M6-01（DEC-017）：CPack pre-build 裁剪——pinned heyaki 的 install() 规则
 # 无条件注册开发产物（third_party/heyaki/CMakeLists.txt:511 起；其
 # HEYAKI_AUTO_INSTALL 只控制 POST_BUILD 安装 custom target，不约束 install

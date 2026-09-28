@@ -65,18 +65,23 @@ release CRT app-local）与分发旗标基线经决策冻结为
 
 ## 风险与阻塞
 
-- **focal APT 源可用性**：Ubuntu 20.04 已过标准支持期（2025-04），
-  `archive.ubuntu.com` 对 focal 的保留策略可能变化（移至
-  old-releases.ubuntu.com）；首轮 CI 实测，若 404 则在 package-linux
-  步骤内切换源并登记。
-- **gcc-12 PPA 包可用性**：`ppa:ubuntu-toolchain-r/test` 对 focal 的
-  gcc-12 供给随上游维护变化；同上首轮实测。
+- ~~**focal APT 源可用性**~~：2026-09-28 CI 首轮实测——
+  `archive.ubuntu.com` focal 池可用，安装正常（run 36414428524
+  package-linux 日志），风险解除；保留观察（focal 退役推进）。
+- ~~**gcc-12 PPA 包可用性**~~：同轮实测——
+  `ppa:ubuntu-toolchain-r/test` gcc-12.5 正常安装，风险解除。
 - **MSVC `/O2 /GS /sdl` 覆盖组合**：此前从未进入任何门禁（历史 release
   证据在上游 `/O1 /GS- /sdl-` 旗标下），Windows 打包 job 首轮存在暴露
   新告警/行为的可能；按 MR 闭环迭代处理。
 - **GCC 12 vs 13 告警面差异**：release preset 携带
   `AKI_WARNINGS_AS_ERRORS=ON`，GCC 12 下可能出现 13 未见的诊断；同上
   迭代处理（保留诊断不升错的既有纪律可依例）。
+- **focal 无系统 OpenSSL 3**（首轮 CI 实测发现）：pinned heyaki 冻结
+  OpenSSL 3.x ABI（≥3.0、<4.0），focal 系统库 1.1.1f 无法满足——已按
+  DEC-017 处置：容器内源码构建 OpenSSL 3.5.4（SHA-256 固定校验）至
+  /usr/local + `AKI_BUNDLE_OPENSSL_LINUX` 随包分发 + `$ORIGIN` rpath +
+  shlibdeps 私有库排除。残留边界：随包 OpenSSL 3 与系统 libcurl（1.1
+  ABI）同进程共载的符号解析路径未经 20.04 真机验证（退出-4 覆盖）。
 
 ## 测试与退出条件
 
@@ -129,3 +134,16 @@ release CRT app-local）与分发旗标基线经决策冻结为
   16.77→10.49 MB；二进制 stripped；`ldd` 无 libstdc++/libgcc。
 
 Windows NSIS 链路无法在本机验证，随 `M6-03` CI 首轮实测归集证据。
+
+### 2026-09-28（CI 首轮 package-linux 实测与修复，run 36414428524）
+
+PR #55 首轮 CI：门禁五档进行中，`package-linux` 2m22s 失败于
+configure——focal 系统 OpenSSL 1.1.1f 不满足 heyaki 的
+`find_package(OpenSSL 3.0 REQUIRED)`（focal 源、gcc-12 PPA、Kitware
+cmake 4.4 均工作正常）。处置（DEC-017 增补「OpenSSL 3 随包分发」条
+款）：容器内源码构建 OpenSSL 3.5.4（tarball SHA-256
+`967311f8…def355e99` 固定校验）shared 至 /usr/local；新增
+`AKI_BUNDLE_OPENSSL_LINUX` 显式开关（默认 OFF，本地验证流程不变），
+随包分发 `libssl.so.3`/`libcrypto.so.3` 至 /opt/aki + `$ORIGIN`
+rpath + dpkg-shlibdeps 私有库目录排除（`-l opt/aki`）。修复 commit
+重推后按 MR 闭环重新等待 CI。
