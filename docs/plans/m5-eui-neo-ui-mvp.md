@@ -140,11 +140,17 @@ verifier 校验并签发 grant；`handle_pairing_request` 响应侧即升级会�
   `handle_pairing_result` 均报 `pairing_result_outside_restricted`）——
   单侧提交才是正确用法，回环测试已改为单侧流程后在本机首次真实跑通
   配对→信任→撤销→错误口令全链（不再 `[skip]` 降级）。
-- CI 证据（2026-09-29 回填，PR #58）：首轮 run 36475814621 七档全绿——
-  Linux debug 9m46s / asan 10m19s / ubsan 15m03s / tsan 13m03s、Windows
-  debug (MSVC) 13m05s、Windows setup.exe 18m58s、Ubuntu 20.04 deb 11m20s
-  （回环配对链在 CI LAN 沙箱真实跑通，无降级退出）。双端真机配对验收
-  待回填（条件沿用本记录上方待验收条款）。
+- CI 证据（2026-09-29 回填，PR #58 三轮）：首轮 run 36475814621 七档全绿
+  ——Linux debug 9m46s / asan 10m19s / ubsan 15m03s / tsan 13m03s、
+  Windows debug (MSVC) 13m05s、Windows setup.exe 18m58s、Ubuntu 20.04 deb
+  11m20s（回环配对链在 CI LAN 沙箱真实跑通，无降级退出）。证据回填重跑
+  （run 36478108803）tsan 档暴露 `BUG-20260929-tsan-sink`：回环测试发现
+  sink 在 executor timer 线程执行 Catch2 断言，与主线程断言构成
+  `RunContext::assertionPassedFastPath` 数据竞争（既有模式潜在竞争，非
+  本轮产品代码缺陷）——修复为原子记录 + 主线程断言后，合并门禁 run
+  36480925888 七档全绿（Linux debug 7m43s / asan 11m22s / ubsan 10m50s /
+  tsan 13m07s、Windows debug 12m47s、setup.exe 17m46s、deb 12m35s）。
+  双端真机配对验收待回填（条件沿用本记录上方待验收条款）。
 
 ## 范围与非目标
 
