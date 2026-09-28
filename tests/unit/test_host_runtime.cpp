@@ -19,6 +19,11 @@
 // onShutdown 的 GUI 真实接线（窗口/GPU 销毁与 worker 回收次序）以本机运行
 // 日志证据归档（aki-run.log；RULE-11 渲染层不进 CI）——本文件锁定其委托的
 // 同一 HostRuntime::shutdown_with_report 编排。
+//
+// M5-11（设计 §8.1/§11.1）：装配即启动 peer_sessions 观察管道
+//（peer_observation_started / peer_observation_running 证据面）与启动恢复
+// 播种策略 seeded_app_state（历史 Unknown 设备行不进入会话 DeviceStore，
+// 其余信任态与其他域原值恢复）——播种为纯函数单测，不触碰 HostRuntime 单例。
 #include "app/lifecycle/host_runtime.hpp"
 #include "heyaki/adapter/local_identity.hpp"
 
@@ -126,6 +131,10 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     REQUIRE(host.data_root() == data_root.string());
     // 幂等：重复装配返回首次结果。
     REQUIRE(&host.ensure_assembled(data_root.string()) == &assembly);
+
+    // ---- M5-11：peer_sessions 观察管道随装配启动（事件源常驻证据面）----
+    REQUIRE(assembly.peer_observation_started);
+    REQUIRE(host.peer_observation_running());
 
     // ---- ① 正常完成：宿主 executor 直接任务 ----
     auto answer = host.executor().submit_auto([] { return 42; });
@@ -283,6 +292,9 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     REQUIRE(&host.shutdown_with_report() == &report);
     REQUIRE(host.shutdown_completed());
 
+    // M5-11：观察管道随关闭钩子 ③.5 停止（peer_pipeline.stop → running 消失）。
+    REQUIRE_FALSE(host.peer_observation_running());
+
     // 关闭后提交显式拒绝（不静默，AGENTS 规则 10）。
     bool rejected_after_shutdown = false;
     try {
@@ -296,6 +308,93 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     // 清理（成功路径；失败保留诊断）。
     std::error_code ec;
     std::filesystem::remove_all(data_root, ec);
+}
+
+// ---- M5-11：启动恢复播种策略（纯函数，不触碰 HostRuntime 进程单例）----
+
+TEST_CASE("seeded_app_state drops recovered Unknown devices and preserves the rest",
+    "[unit][host_runtime][seeding][m5_11]") {
+    using aki::device::DeviceId;
+    using aki::device::DeviceIdentity;
+    using aki::device::PresenceState;
+    using aki::device::TrustState;
+
+    // 恢复行：五个信任态各一行（历史扫描残留 Unknown 打头）。
+    auto make_row = [](std::string id, TrustState trust) {
+        DeviceIdentity device;
+        device.id = DeviceId{std::move(id)};
+        device.display_name = device.id.value;
+        device.trust_state = trust;
+        // §11.1 ①：恢复行 presence 一律 Offline（易失，不跨会话恢复）。
+        device.presence = PresenceState::Offline;
+        return device;
+    };
+    aki::persistence::RecoveredData data;
+    data.devices.push_back(make_row("scan-residue", TrustState::Unknown));
+    data.devices.push_back(make_row("dev-pending", TrustState::Pending));
+    data.devices.push_back(make_row("dev-trusted", TrustState::Trusted));
+    data.devices.push_back(make_row("dev-rejected", TrustState::Rejected));
+    data.devices.push_back(make_row("dev-revoked", TrustState::Revoked));
+
+    // 其他域各一行：会话/消息/传输不受设备播种过滤影响（各自 FK 语义）。
+    aki::conversation::Conversation conversation;
+    conversation.id = aki::conversation::ConversationId{"conv-1"};
+    conversation.local_device = DeviceId{"local"};
+    conversation.remote_device = DeviceId{"dev-trusted"};
+    data.conversations.push_back(conversation);
+
+    aki::conversation::Message message;
+    message.id = aki::conversation::MessageId{"msg-1"};
+    message.sender = DeviceId{"dev-trusted"};
+    message.receiver = DeviceId{"local"};
+    message.type = aki::conversation::MessageType::Text;
+    message.state = aki::conversation::DeliveryState::Delivered;
+    data.messages.push_back(message);
+
+    aki::transfer::Transfer transfer;
+    transfer.id = aki::transfer::TransferId{"t-1"};
+    transfer.sender = DeviceId{"local"};
+    transfer.receiver = DeviceId{"dev-trusted"};
+    transfer.file.name = "model.gguf";
+    transfer.total = 128;
+    transfer.state = aki::transfer::TransferState::Completed;
+    data.transfers.push_back(transfer);
+
+    const auto seeded = aki::app::seeded_app_state(data);
+
+    // Unknown 历史残留不播种；其余四态原值原序通过。
+    REQUIRE(seeded.devices.devices.size() == 4);
+    REQUIRE(seeded.devices.devices[0].id == DeviceId{"dev-pending"});
+    REQUIRE(seeded.devices.devices[0].trust_state == TrustState::Pending);
+    REQUIRE(seeded.devices.devices[1].id == DeviceId{"dev-trusted"});
+    REQUIRE(seeded.devices.devices[1].trust_state == TrustState::Trusted);
+    REQUIRE(seeded.devices.devices[2].id == DeviceId{"dev-rejected"});
+    REQUIRE(seeded.devices.devices[2].trust_state == TrustState::Rejected);
+    REQUIRE(seeded.devices.devices[3].id == DeviceId{"dev-revoked"});
+    REQUIRE(seeded.devices.devices[3].trust_state == TrustState::Revoked);
+
+    // 其他域整域保留（深拷贝原值，行数与关键字段逐项一致）。
+    REQUIRE(seeded.conversations.conversations.size() == 1);
+    REQUIRE(seeded.conversations.conversations.front().id
+        == aki::conversation::ConversationId{"conv-1"});
+    REQUIRE(seeded.messages.messages.size() == 1);
+    REQUIRE(seeded.messages.messages.front().id
+        == aki::conversation::MessageId{"msg-1"});
+    REQUIRE(seeded.messages.messages.front().state
+        == aki::conversation::DeliveryState::Delivered);
+    REQUIRE(seeded.transfers.transfers.size() == 1);
+    REQUIRE(seeded.transfers.transfers.front().id
+        == aki::transfer::TransferId{"t-1"});
+    REQUIRE(seeded.transfers.transfers.front().state
+        == aki::transfer::TransferState::Completed);
+}
+
+TEST_CASE("seeded_app_state keeps an empty recovery clean", "[unit][host_runtime][seeding][m5_11]") {
+    const auto seeded = aki::app::seeded_app_state(aki::persistence::RecoveredData{});
+    REQUIRE(seeded.devices.devices.empty());
+    REQUIRE(seeded.conversations.conversations.empty());
+    REQUIRE(seeded.messages.messages.empty());
+    REQUIRE(seeded.transfers.transfers.empty());
 }
 
 int main(int argc, char* argv[]) {

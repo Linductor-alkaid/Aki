@@ -105,15 +105,6 @@ DeviceIdentity make_local_device_identity(const aki::heyaki::LocalIdentity& iden
     return device;
 }
 
-AppState app_state_from(const aki::persistence::RecoveredData& data) {
-    AppState state;
-    state.devices.devices = data.devices;
-    state.conversations.conversations = data.conversations;
-    state.messages.messages = data.messages;
-    state.transfers.transfers = data.transfers;
-    return state;
-}
-
 // DEC-009 ① 接受后处理器（main.cpp 同款；owner 单写者上下文按接受顺序同步
 // 调用，作业映射 §11.1 ① + update_jobs 工厂；入队拒绝双计数可见）。
 struct WritePathSink {
@@ -196,6 +187,24 @@ private:
 };
 
 }  // namespace
+
+// 启动恢复播种策略（M5-11，见 host_runtime.hpp 契约）：Unknown 恢复行是
+// 历史扫描残留，不进入会话 DeviceStore；其余信任态原值恢复（会话/消息/
+// 传输域不受影响——它们有各自的 FK 语义与恢复条款）。
+AppState seeded_app_state(const aki::persistence::RecoveredData& data) {
+    AppState state;
+    state.conversations.conversations = data.conversations;
+    state.messages.messages = data.messages;
+    state.transfers.transfers = data.transfers;
+    state.devices.devices.reserve(data.devices.size());
+    for (const auto& device : data.devices) {
+        if (device.trust_state == aki::device::TrustState::Unknown) {
+            continue;  // 历史扫描残留：不播种，重新在网时经发现管道再进入。
+        }
+        state.devices.devices.push_back(device);
+    }
+    return state;
+}
 
 struct HostRuntime::Impl {
     // ---- 声明序 = 构造序；析构为逆序（ExecutorOwner 最后析构，兜底关闭
@@ -381,7 +390,7 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
         }
     };
     impl.state_owner.emplace(std::move(owner_options),
-        app_state_from(impl.recovery->state),
+        seeded_app_state(impl.recovery->state),
         [&sink = impl.sink](const AppStateUpdate& update) { sink(update); });
 
     // 本地身份经 UpsertDevice 进入 Application State（SCOPE-01）。
@@ -531,6 +540,15 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
         return fail("seeded snapshot unreadable after assembly");
     }
 
+    // 7.6) peer_sessions 观察管道启动（M5-11：主动/被动配对 Unknown→Pending、
+    //      connected/disconnected presence 与路径、断线重连触发的事件源——
+    //      装配即常驻，早于任何扫描；停止编入关闭钩子 ③.5）。启动失败可见
+    //      （RULE-09）：executor 已 shutdown 等拒绝即装配失败。
+    if (!impl.peer_pipeline->start(std::chrono::milliseconds{200})) {
+        return fail("peer session pipeline start failed");
+    }
+    impl.assembly_report.peer_observation_started = true;
+
     impl.assembled = true;
     impl.assembly_report.ok = true;
     return impl.assembly_report;
@@ -589,6 +607,11 @@ void HostRuntime::stop_discovery_observation() {
     if (impl_->assembled) {
         impl_->adapter->stop_discovery();
     }
+}
+
+bool HostRuntime::peer_observation_running() const {
+    return impl_->assembled && impl_->peer_pipeline != nullptr
+        && impl_->peer_pipeline->running();
 }
 
 void HostRuntime::quiesce() {

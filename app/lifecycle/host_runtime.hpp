@@ -25,6 +25,7 @@
 #include "app/application/transfer_manager.hpp"
 #include "app/state/app_state.hpp"
 #include "app/state/app_state_owner.hpp"
+#include "persistence/recovery/startup_recovery.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -49,7 +50,18 @@ struct HostAssemblyReport {
     std::string local_device_id;
     bool lan_interfaces = false;
     std::string receive_dir;
+    // peer_sessions 观察管道随装配启动（M5-11：主动/被动配对、presence、
+    // 路径与断线重连的事件源；false = executor 拒绝，装配失败可见）。
+    bool peer_observation_started = false;
 };
+
+// 启动恢复播种策略（M5-11，§8.1/§11.1；组合根公开面供单测）：恢复行中
+// trust_state == Unknown 的设备是历史扫描残留（从未被用户确认，非 §8.1
+// 「已知设备记录」）——不进入会话 DeviceStore，避免设备列表跨会话累积；
+// 其重新出现在网时经发现观察管道以真实存活状态再次进入。Pending（在途
+// 确认）与 Trusted/Rejected/Revoked（用户决策/授权记录）原值恢复。
+[[nodiscard]] AppState seeded_app_state(
+    const aki::persistence::RecoveredData& data);
 
 // 受控关闭证据（§8.3 宿主钩子原序 + EXEC-01 步骤 2~5 + 写路径复验）。
 // hook_sequence 按实际执行顺序记录钩子步名，测试据此刻画「不省略不重排」。
@@ -117,6 +129,8 @@ public:
     [[nodiscard]] bool start_discovery_observation();
     [[nodiscard]] bool discovery_observation_running() const;
     void stop_discovery_observation();
+    // peer_sessions 观察管道运行态（M5-11：随装配启动，关闭钩子停止）。
+    [[nodiscard]] bool peer_observation_running() const;
     // 每步推进到静止：flush 四 Manager（有界预算）+ 状态 owner drain 至
     // 水位不变（main.cpp 同款语义）。
     void quiesce();
