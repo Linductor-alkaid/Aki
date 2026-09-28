@@ -615,8 +615,16 @@ LAN 广播/监听随 Node 常驻）。因此 `start_discovery` / `stop_discovery
 
 - 扫描型 LAN 发现：`start_discovery` / `stop_discovery` 即启停观察管道（周期
   轮询 `endpoints()` diff）；diff 中新出现的端点合成 `on_device_discovered`
-  （`DiscoveredDevice`，trust 取 `Unknown`）。停止发现不移除已入 Store 的设备
-  （已发现设备的信任确认不因观察管道停止而失效）。
+  （`DiscoveredDevice`，trust 取 `Unknown`，M5-11 起 presence 取 `Online`
+  ——目录条目即 LanPresence 签名验证 + 租约内存活的「正在运行 Aki / 已登录
+  Heyaki」证明；无 32 字节身份公钥的条目不合成）。上一轮询仍在广播、本轮
+  从目录消失（租约过期/对端退出）的设备经第 13 sink 方法
+  `on_device_presence(device, Offline)` 回落（DM 映射 `SetPresence(Offline)`
+  ——只写易失 presence，无主路径事件；会话级在线/离线仍由
+  connected/disconnected 承载）。`start_discovery` 重扫语义：seen/live 集重
+  置——重新扫描重新发现当前存活对端（历史 Unknown 行不阻塞再次上报）。
+  停止发现不移除已入 Store 的设备（已发现设备的信任确认不因观察管道停止
+  而失效），停止后亦不再产生存活回落（观察面停止即无 diff）。
 - 「发现 → 进入信任确认」触发：`on_device_discovered` 被 Sink 接受且
   `UpsertDevice` 被 owner 接受后，设备以 `Unknown` 进入 `DeviceStore` 并发布
   `DeviceDiscovered` 主路径事件——该事件即信任确认入口（宿主/UI 据此发起
@@ -627,7 +635,20 @@ LAN 广播/监听随 Node 常驻）。因此 `start_discovery` / `stop_discovery
   恢复直接进入 `DeviceStore`（trust 取记录值，`Trusted` / `Revoked` 等按记录
   恢复，presence 恢复为 `Offline`），不重放 `on_device_discovered`（已知设备
   不是新发现）；其再连接经 `peer_sessions()` diff 合成 `on_device_connected`
-  （DEC-006 映射）。
+  （DEC-006 映射）。M5-11 播种过滤（`seeded_app_state`，§11.1 ②）：Aki 自持
+  devices 表恢复行中 `trust_state == Unknown` 的条目是历史扫描残留（从未经
+  用户确认，不属本条「已知设备记录」），不进入会话 `DeviceStore`——设备列
+  表不跨会话累积扫描残留；其重新在网时经发现观察管道以真实存活状态再次
+  进入。`Pending`（在途确认）与 `Rejected` / `Revoked`（用户决策终态）原值
+  恢复。
+- 主动建链与设备认证（M5-11，DEC-006 映射 3 落地）：宿主组合根装配即常驻
+  启动 peer_sessions 观察管道（`PeerSessionPipeline`，200ms diff）——主动
+  `begin_pairing`（UI Connect，仅对 presence Online 的非本机行渲染）经
+  `connect_lan` 建链、会话进入 `pairing_restricted` → `on_pairing_ready` →
+  `Unknown -> Pending`；被动入站连接同样受限会话驱动 `Pending` 行（无需先
+  扫描）。确认弹窗收集对端本机口令 → `confirm_pairing` → `pair_peer` →
+  配对一次性结果 `on_pairing_completed` → `Pending -> Trusted`（错误口令保
+  持 `Pending` 可重试）。
 - 邀请链接与手动输入：M3 分期（范围与补做条件见里程碑范围条款）；接入时经
   同一 `on_device_discovered` 入口以对应 `DiscoveryMethod` 合成，触发语义与
   本节一致。
@@ -1142,7 +1163,11 @@ owner 构造。未注册窗口内处理器入队被明确拒绝且 rejected 计�
 标准装配序（第 8.3 节）中该窗口无任何更新流（恢复期 owner 未 drain、无事件源），
 预期计数为 0，非零即为装配缺陷信号。恢复完成前
 不注册 `RouterSink`、不启动发现、不注入任何事件（`EXEC-02` 启动段纪律）；open、
-迁移或加载失败时组合根干净退出并输出原因。
+迁移或加载失败时组合根干净退出并输出原因。M5-11 播种过滤：以加载结果构造
+`AppState` 经组合根策略函数 `seeded_app_state`（第 8.3 节 `app/lifecycle` 公开
+面，单测覆盖）——devices 域 `trust_state == Unknown` 的恢复行（历史扫描残留）
+不进入初始快照，其余信任态原值播种（第 8.1 节触发语义条款）；DB 行不删除，
+设备重新在网时经发现观察管道再次进入。
 
 **③ `DatabaseWorker` 在 `EXEC-01` 关闭顺序中的落点**：`DatabaseWorker` 经
 `ExecutorOwner::start_blocking_worker` 注册（第 8.2 节，M2 首次启用）。其排空

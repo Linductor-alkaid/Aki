@@ -12,7 +12,7 @@
 > 真实 Adapter、NodeSession、发现/消息/图片/传输/presence/重连管道与恢复
 > 语义均已就绪
 > 建议发布点：v0.5.0（MVP）
-> 更新日期：2026-09-28（M5-11 本机口令与设备认证）
+> 更新日期：2026-09-29（M5-11 真机缺陷修复：Connect 链路接通与扫描存活过滤）
 
 ## 目标
 
@@ -70,6 +70,44 @@ Linductor；真机验收条件为 Windows 与本机处于可入站 LAN、两端�
   负责人 Linductor；补跑条件为两端安装此变更构建、关闭旧实例、放行入站
   LAN/TCP，在双端执行首次设置、主动及被动配对、错误口令重试并保存 GUI
   截图和运行日志。完成前本工作项保持 `[ ]` / In Progress。
+
+2026-09-29（`M5-11` 真机缺陷修复：Connect 无效与扫描残留，负责人 Linductor）：
+
+用户双端真机测试暴露两项缺陷，本轮回修复（设计 §8.1/§11.1 同步修订）：
+
+- **Connect 按钮完全不生效**（根因：宿主级 `PeerSessionPipeline` 在
+  `ensure_assembled` 只构造、从未 start，适配器内部管线又
+  `peer_observation=false`——`connect_lan` 成功后 `pairing_restricted`
+  会话无人观察，`on_pairing_ready` 永不触发，设备恒为 Unknown）。修复：
+  装配即常驻启动 peer 管道（200ms diff；`HostAssemblyReport.
+  peer_observation_started` + `HostRuntime::peer_observation_running()`
+  可观测；启动失败计入装配失败），主动/被动配对、presence/路径、断线
+  重连事件源随之接通。
+- **扫描出现大量设备**（根因：每次发现的 Unknown 设备整行持久化，重启
+  全量恢复进 DeviceStore 无存活过滤——列表为历史所有见过设备的并集）。
+  修复：启动播种过滤（`seeded_app_state`，Unknown 恢复行不入会话
+  DeviceStore，DB 行不删）；发现观察管道重扫重置 seen/live、合成事件
+  presence 取 Online、广播消失经新增第 13 sink 方法 `on_device_presence`
+  → DM `SetPresence(Offline)` 回落；无 32 字节身份公钥的目录条目不合成。
+- UI：Connect 按钮仅对 presence Online 的非本机行渲染（离线行
+  `connect_lan` 必然被拒，不渲染无效按钮）。
+- 测试与证据（2026-09-29，委派 Independent-Verification-Agent 执行并回报
+  证据，负责人 Linductor）：新增/更新用例——`test_peer_sessions_pipeline`
+  增 `diff_lan_discovery` 七用例（在线合成/trusted 跳过/非 32 字节公钥跳过/
+  seen 去重/消失回落/重现不再合成/**trusted 毕业不误报离线**）；
+  `test_host_runtime` 增 `seeded_app_state` 两用例 + 装配/关闭
+  peer_observation 断言；`test_app_managers` 增 presence 路由用例（含未知
+  id owner 拒绝、空 id handler 拒绝可见）；双端 sink 适配与回环测试
+  presence 契约断言。验证期间发现并修复一处边界缺陷：设备由未信任毕业为
+  trusted 的 tick 会误报 `went_offline`（向刚信任设备发 Offline）——
+  trusted 分支改为从 live 集移除且不合成离线事件，新增用例锁定。三次
+  变异注入（Online→Offline、去播种过滤、去毕业 erase）均被对应用例捕获。
+  `cmake --build --preset debug|release -j` 全绿；两档
+  `ctest --output-on-failure` 均 **43/43 通过、0 失败**（8 个 LAN 回环
+  沿登记的防火墙 `[skip]` 降级通过，非静默）；`git diff --check` 通过。
+  本机 tsan/asan 档因缺 wayland/xkbcommon dev 包无法配置（sudo 需密码，
+  环境限制），由 CI 门禁 debug/asan/ubsan/tsan 四 Linux 档覆盖；CI 与
+  双端真机配对验收待回填。
 
 ## 范围与非目标
 
