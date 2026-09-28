@@ -57,8 +57,9 @@ release CRT app-local）与分发旗标基线经决策冻结为
   裁剪、分发旗标消费侧覆盖。本地 Linux 三轮 IVA 验证通过（deb 控制字段、
   布局、Depends 合并、裁剪、strip、静态链接、release 43/43），证据见
   验证记录。
-- [x] `M6-02` CI 打包 job：`package-linux`（ubuntu:20.04 容器 + Kitware
-  cmake + gcc-12 PPA + release + ctest + cpack DEB + artifacts）与
+- [x] `M6-02` CI 打包 job：`package-linux`（ubuntu:20.04 容器 + PyPI
+  cmake 3.x wheel + gcc-12 PPA + release + ctest + cpack DEB +
+  artifacts）与
   `package-windows`（release + ctest + cpack NSIS + artifacts）。
 - [ ] `M6-03` 收口：双端 CI 打包 job 全绿证据归集（含 Windows NSIS
   首轮实测）、本验证记录回填、总计划状态同步。
@@ -139,8 +140,8 @@ Windows NSIS 链路无法在本机验证，随 `M6-03` CI 首轮实测归集证�
 
 PR #55 首轮 CI：门禁五档进行中，`package-linux` 2m22s 失败于
 configure——focal 系统 OpenSSL 1.1.1f 不满足 heyaki 的
-`find_package(OpenSSL 3.0 REQUIRED)`（focal 源、gcc-12 PPA、Kitware
-cmake 4.4 均工作正常）。处置（DEC-017 增补「OpenSSL 3 随包分发」条
+`find_package(OpenSSL 3.0 REQUIRED)`（focal 源、gcc-12 PPA、PyPI
+cmake wheel 均工作正常）。处置（DEC-017 增补「OpenSSL 3 随包分发」条
 款）：容器内源码构建 OpenSSL 3.5.4（tarball SHA-256
 `967311f8…def355e99` 固定校验）shared 至 /usr/local；新增
 `AKI_BUNDLE_OPENSSL_LINUX` 显式开关（默认 OFF，本地验证流程不变），

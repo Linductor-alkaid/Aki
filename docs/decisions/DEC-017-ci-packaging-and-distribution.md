@@ -43,7 +43,10 @@ M0~M5 的 CI 门禁（`.github/workflows/ci.yml` 五档矩阵）只产出测试�
   vc_redist 安装器、不要求用户先装运行时。
 - **Linux 构建基线（最低适配 Ubuntu 20.04）**：CI `package-linux` job
   在 `container: ubuntu:20.04` 内构建——glibc 2.31 即 20.04 原生基线。
-  工具链：cmake 经 Kitware APT 源（≥3.25），GCC 12 经
+  工具链：cmake 3.x 线经 PyPI 官方 wheel（`>=3.25,<4`；4.x 在非 IDE
+  生成器上对 INTERFACE_SYSTEM_INCLUDE_DIRECTORIES 源目录前缀路径转为
+  硬错误，run 36415785709 实测，pinned 消费侧 SYSTEM 标注在 4.x 不可
+  用），GCC 12 经
   `ubuntu-toolchain-r/test` PPA（EUI-NEO 硬性要求 GCC≥12）。**产物
   静态链接 libstdc++/libgcc**（`-static-libstdc++ -static-libgcc`），
   不要求用户侧 GLIBCXX ≥ 3.4.30；glibc 保持动态（2.31 为下限，不做
@@ -111,7 +114,8 @@ M0~M5 的 CI 门禁（`.github/workflows/ci.yml` 五档矩阵）只产出测试�
 
 - CI 增加两个 job：PR 与 master push 时长增加（容器内全量 release
   构建 + 测试 + 打包）；产物随 artifacts 保留（默认 90 天）。
-- 供应链新增面：`apt.kitware.com`（CMake 官方分发渠道）、
+- 供应链新增面：PyPI `cmake` wheel（CMake 官方二进制 repackage，
+  版本约束 `>=3.25,<4`）、
   `ppa:ubuntu-toolchain-r/test`（GCC 12）与 OpenSSL 3.5.4 源码 tarball
   （GitHub release，SHA-256
   `967311f84955316969bdb1d8d4b983718ef42338639c621ec4c34fddef355e99`

@@ -119,7 +119,9 @@ jobs:
   # 已退役，改用 ubuntu:20.04 容器构建——glibc 2.31 即 20.04 原生基线；
   # EUI-NEO 硬性要求 GCC>=12（focal 官方仓库最高 gcc-10），经
   # ubuntu-toolchain-r/test PPA 装 gcc-12；focal 自带 cmake 3.16 < 3.25
-  #（工程规范），经 Kitware APT 源补齐；产物静态链接 libstdc++/libgcc
+  #（工程规范），经 PyPI cmake wheel 固定 3.x 线（>=3.25,<4；4.x 与
+  # pinned 消费侧 SYSTEM 标注不兼容，见 job 内注释与 DEC-017）；产物
+  # 静态链接 libstdc++/libgcc
   #（不要求用户侧 GLIBCXX 新版本，glibc 保持 2.31 动态基线）；Depends 由
   # dpkg-shlibdeps 扫描安装树生成（容器即 20.04 库版本，基线随之锁定）。
   # setup.exe（package-windows）：NSIS（runner 预装）打包 Release 构建
@@ -131,20 +133,20 @@ jobs:
     env:
       DEBIAN_FRONTEND: noninteractive
     steps:
-      - name: System dependencies (cmake >= 3.25 via Kitware, GCC 12 via PPA, EUI-NEO backend set, dpkg tooling)
+      - name: System dependencies (cmake 3.x via PyPI wheel, GCC 12 via PPA, EUI-NEO backend set, dpkg tooling)
+        # cmake 版本约束 >=3.25,<4（工程规范下限；4.x 线在非 IDE 生成器上
+        # 对 INTERFACE_SYSTEM_INCLUDE_DIRECTORIES 的源目录前缀路径转为硬
+        # 错误，run 36415785709 实测——pinned 消费侧 SYSTEM 标注在 4.x 不
+        # 可用，工具链统一为 3.x）。PyPI cmake wheel 为 CMake 官方二进制
+        # repackage（DEC-017 供应链登记），替代 focal 自带的 3.16。
         run: |
           apt-get update
           apt-get install -y \
-            ca-certificates curl gnupg git software-properties-common \
-            dpkg-dev file
-          curl -fsSL https://apt.kitware.com/keys/kitware-archive-latest.asc \
-            | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg
-          echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' \
-            > /etc/apt/sources.list.d/kitware.list
+            ca-certificates curl git python3-pip software-properties-common \
+            make dpkg-dev file
           add-apt-repository -y ppa:ubuntu-toolchain-r/test
           apt-get update
           apt-get install -y \
-            cmake \
             gcc-12 \
             g++-12 \
             libssl-dev \
@@ -161,6 +163,8 @@ jobs:
             wayland-protocols \
             libxkbcommon-dev \
             libglib2.0-dev
+          pip3 install "cmake>=3.25,<4"
+          cmake --version
       - name: Build OpenSSL 3.5 LTS (focal ships 1.1; heyaki freezes the OpenSSL 3.x ABI)
         # focal 系统 OpenSSL 为 1.1.1f，pinned heyaki 要求 >=3.0 且 <4.0
         #（third_party/heyaki/CMakeLists.txt:116）——源码构建 shared 到

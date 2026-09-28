@@ -11,7 +11,7 @@
 - 2026-09-28：`M6-01`/`M6-02` 完成，M6 启动（In Progress）：CI 打包与
   分发基线——[DEC-017](../decisions/DEC-017-ci-packaging-and-distribution.md)
   冻结（CPack NSIS/DEB、自包含安装布局 /opt/aki 与 Program Files、
-  Ubuntu 20.04 基线经 ubuntu:20.04 容器构建 + Kitware cmake + gcc-12 PPA、
+  Ubuntu 20.04 基线经 ubuntu:20.04 容器构建 + PyPI cmake 3.x wheel + gcc-12 PPA、
   静态 libstdc++/libgcc、deb 依赖 shlibdeps + GLFW dlopen 集合并、
   MSVC release CRT app-local、heyaki 开发产物安装树裁剪）；打包配置
   `cmake/Packaging.cmake` + `cmake/Packaging-prebuild.cmake` +
