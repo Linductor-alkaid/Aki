@@ -52,6 +52,10 @@ Linductor；真机验收条件为 Windows 与本机处于可入站 LAN、两端�
   成功；两档 `ctest --test-dir build/<debug|release> --output-on-failure -j4`
   均 43/43 通过、0 失败。`git diff --check` 通过；UI 文件执行
   `impeccable detect --json` 返回 `[]`。CI 门禁及 PR 证据待回填。
+- PR #56 首轮 CI 六档通过，但 Windows Debug 的 `ctest` 步骤超过半小时仍
+  无结论，GitHub 未提供运行中用例日志；同分支新增 Windows 逐测试 180 秒
+  超时以使卡住的用例可定位，重跑 CI 后按实际结果继续修复。该档未通过前
+  不合并，不计入已完成验证。
 - **待验收**：本次未对用户正在运行的旧版 Aki 数据目录启动另一实例，避免
   与活动节点争用端口和 profile；未执行新增界面的 GUI 实拍。也未在本机
   与 Windows 双端安装同一新版本并验证正确/错误口令的真实 LAN 配对；本机
