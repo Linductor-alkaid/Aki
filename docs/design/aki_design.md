@@ -646,9 +646,22 @@ LAN 广播/监听随 Node 常驻）。因此 `start_discovery` / `stop_discovery
   `begin_pairing`（UI Connect，仅对 presence Online 的非本机行渲染）经
   `connect_lan` 建链、会话进入 `pairing_restricted` → `on_pairing_ready` →
   `Unknown -> Pending`；被动入站连接同样受限会话驱动 `Pending` 行（无需先
-  扫描）。确认弹窗收集对端本机口令 → `confirm_pairing` → `pair_peer` →
-  配对一次性结果 `on_pairing_completed` → `Pending -> Trusted`（错误口令保
-  持 `Pending` 可重试）。
+  扫描）。认证有两种等价方式（DEC-018；heyaki 语义：口令由口令持有方输入、
+  由对端以其 verifier 校验并签发 grant，会话在两侧同时授权——一次输入即
+  双向可用）：
+  - 方式一「输入对端口令」：本机在确认弹窗输入对方设备口令 →
+    `confirm_pairing` → `pair_peer` → 对端校验并签发 grant → 本机行经
+    `on_pairing_completed` → `Trusted`；
+  - 方式二「对方确认连接请求」：对方在其设备行点击确认并输入本机口令 →
+    同一 wire 机制反向完成；
+  - 两侧统一推进点：会话授权（`on_device_connected`）对 `Pending` 行是
+    「对端已通过本机口令校验」的 wire 证据，DM 自动推进
+    `Pending -> Trusted`（`advance_pending_trust`）——口令由任一侧输入
+    一次即可，另一侧设备行随之就绪，无需第二台设备重复输入。`Unknown`
+    行不自动推进（入口归 `PairingReadyWork`），终态行由 owner 状态机拒绝；
+    错误口令会话被拒（`pairing_denied`），不会进入授权态。grant 单侧持有
+    时重连由持有方发起（断线双方各自的重连循环竞争，持有方建链成功后对端
+    会话随之授权）。
 - 邀请链接与手动输入：M3 分期（范围与补做条件见里程碑范围条款）；接入时经
   同一 `on_device_discovered` 入口以对应 `DiscoveryMethod` 合成，触发语义与
   本节一致。

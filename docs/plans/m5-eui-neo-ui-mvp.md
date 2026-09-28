@@ -112,6 +112,35 @@ Linductor；真机验收条件为 Windows 与本机处于可入站 LAN、两端�
   13m11s、Windows setup.exe 19m29s、Ubuntu 20.04 deb 15m03s。双端真机
   配对验收待回填（条件沿用本记录上方待验收条款）。
 
+2026-09-29（`M5-11` 双认证方式：一次输入、两侧就绪，负责人 Linductor）：
+
+用户对认证交互提出两种方式需求：输入对方设备口令，或由对方确认本机发出的
+连接请求。协议事实（pinned heyaki 源）：口令由持有方输入、对端以其
+verifier 校验并签发 grant；`handle_pairing_request` 响应侧即升级会话授权、
+发起侧收到结果同此升级——**一次输入即双向可用**；pairing observer 仅在
+发起方触发，此前响应侧行只能靠反向重复输口令推进，导致两侧都要输入。
+
+- 修复：DM `DeviceConnectedWork` 对 Pending 行自动推进 Trusted
+  （`advance_pending_trust`，只走合法边；Unknown 归 PairingReadyWork、
+  终态由 owner 拒绝；错误口令会话 `pairing_denied` 不会进入授权态）。
+  两种方式就此等价：本机输对端口令（方式一）或对方点确认输本机口令
+  （方式二），任一侧一次输入、两侧设备行就绪。确认弹窗对两种角色通用，
+  UI 无结构变更。
+- 已知边界：grant 单侧持有时重连由持有方发起（双方重连循环竞争，持有方
+  建链成功后对端会话随之授权）——登记于设计 §8.1。
+- 测试：委派 Independent-Verification-Agent 执行（DM 自动推进单测：
+  Pending 推进/Unknown 不动/Trusted 幂等/快照滞后无害；回环用例补单向
+  `pair_peer` 两侧会话授权断言），证据随 MR 回填。
+- 附带发现（登记备查）：pinned heyaki `Node::pair_peer` 为 strand 异步
+  投递，返回值只反映受理（恒 true）——已授权会话上的重复提交在 strand
+  侧被拒后结果被丢弃，公开面无可观测返回值或事件（RULE-09 在 heyaki
+  边界的可见性缺口，Aki 不可观测；若需重复提交反馈应向 heyaki 上游
+  反馈，不在本仓库修改 third_party）。旧「双端各自 pair_peer」流程实为
+  协议性交叉配对（每侧先以 responder 升级、随后两侧
+  `handle_pairing_result` 均报 `pairing_result_outside_restricted`）——
+  单侧提交才是正确用法，回环测试已改为单侧流程后在本机首次真实跑通
+  配对→信任→撤销→错误口令全链（不再 `[skip]` 降级）。
+
 ## 范围与非目标
 
 ### 范围
