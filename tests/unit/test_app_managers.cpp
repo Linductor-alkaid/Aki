@@ -200,7 +200,8 @@ struct StubAdapter final : HeyakiAdapter {
     void set_sink(HeyakiAdapterSink*) noexcept {}
 
     // M5-04 SPI 信任操作面：Stub 记录提交（本文件用例不消费 wire 结果）。
-    bool confirm_pairing(const DeviceId& peer) override {
+    bool begin_pairing(const DeviceId& peer) override { return !peer.empty(); }
+    bool confirm_pairing(const DeviceId& peer, std::string) override {
         pairing_submits.push_back(peer);
         return true;
     }

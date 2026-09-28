@@ -28,6 +28,7 @@ aki::heyaki::NodeSession::PeerSessionView make_view(
     view.data_path = data_path;
     view.signaling_route = signaling_route;
     view.authenticated = (state == 4);  // NodePeerSessionState::authenticated
+    view.pairing_restricted = (state == 3);
     view.closed = (state == 5);
     return view;
 }
@@ -111,6 +112,25 @@ TEST_CASE("Peer session diff synthesizes connected/disconnected transitions",
     curr = {make_view("peer-a", 5, 1, 0)};  // closed
     aki::heyaki::diff_peer_sessions(prev, curr, events);
     REQUIRE(disconnected.size() == 2);
+}
+
+TEST_CASE("Peer session diff reports a newly restricted pairing session once",
+    "[unit][peer_sessions][dec018]") {
+    using aki::heyaki::NodeSession;
+    std::vector<aki::device::DeviceId> ready;
+    aki::heyaki::PeerSessionEvents events;
+    events.on_pairing_ready = [&](const aki::device::DeviceId& id) {
+        ready.push_back(id);
+    };
+    auto authenticating = std::vector<NodeSession::PeerSessionView>{
+        make_view("peer-a", 2, 1, 0)};
+    auto restricted = std::vector<NodeSession::PeerSessionView>{
+        make_view("peer-a", 3, 1, 0)};
+    aki::heyaki::diff_peer_sessions(authenticating, restricted, events);
+    REQUIRE(ready.size() == 1);
+    CHECK(ready.front().value == "peer-a");
+    aki::heyaki::diff_peer_sessions(restricted, restricted, events);
+    CHECK(ready.size() == 1);
 }
 
 TEST_CASE("Peer session diff ignores non-authenticated churn",

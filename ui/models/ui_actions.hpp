@@ -19,9 +19,8 @@
 //     stored_sha256 完成后经 TM 泵延续发出；source_path 为文件对话框选取的
 //     本地路径）。返回值为闸门第 1 步 admission。
 //
-// EUI-NEO 无关（RULE-10，纯 std/aki 类型）；信任判定操作（Pending 确认/
-// 拒绝/Revoked 撤销）随 M5-04 落地（DEC-006 映射 3；口令处理在
-// heyaki/adapter→DeviceManager 内部，DEC-016，不进本接口签名）。
+// EUI-NEO 无关（RULE-10，纯 std/aki 类型）；设备认证从 Unknown 主动建链，
+// Pending 输入目标端口令确认，经 Manager/Adapter 传递（DEC-018）。
 #pragma once
 
 #include "app/application/conversation_manager.hpp"
@@ -66,7 +65,9 @@ struct UiActions {
     // 判定无 wire 面，confirm/revoke 经 SPI，结果经配对事件异步落地）。
     std::function<bool(aki::device::DiscoveryMethod)> start_discovery;
     std::function<bool()> stop_discovery;
-    std::function<bool(aki::device::DeviceId)> confirm_pairing;
+    std::function<bool(aki::device::DeviceId)> begin_pairing;
+    std::function<bool(aki::device::DeviceId, std::string)> confirm_pairing;
+    std::function<bool(std::string, std::string&)> set_local_pairing_password;
     std::function<bool(aki::device::DeviceId)> reject_device;
     std::function<bool(aki::device::DeviceId)> revoke_device;
 

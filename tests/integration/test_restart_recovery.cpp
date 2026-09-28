@@ -482,7 +482,7 @@ TEST_CASE("Local identity provisions once and lands in the device store",
 
     // 恢复段内主线程同步供给身份（§11.1 ② 模式）：首次创建。
     const aki::heyaki::LocalIdentity identity =
-        aki::heyaki::provision_local_identity(root);
+        aki::heyaki::provision_local_identity(root, "test-local-password");
     REQUIRE(identity.created);
     REQUIRE(identity.public_key.bytes.size() == 32);
 
@@ -517,7 +517,7 @@ TEST_CASE("Local identity provisions once and lands in the device store",
     REQUIRE(reopened.state.devices[0].presence == PresenceState::Offline);
 
     const aki::heyaki::LocalIdentity loaded =
-        aki::heyaki::provision_local_identity(root);
+        aki::heyaki::provision_local_identity(root, "test-local-password");
     REQUIRE_FALSE(loaded.created);
     REQUIRE(loaded.id == identity.id);
     REQUIRE(loaded.public_key == identity.public_key);

@@ -1,11 +1,13 @@
 # DEC-016：配对口令常量与本地 verifier 真实化
 
-> 状态：Accepted
+> 状态：Superseded（2026-09-28 被 [DEC-018](DEC-018-user-pairing-password.md) 替代）
 > 日期：2026-09-27
 > 负责人：Linductor
 > 冻结里程碑：M5-04（Devices 页信任操作面；真实口令流程随 M5-07 设置面）
 > 替代/被替代：取代 M3-03 的占位 verifier（heyaki 自身测试同型的假编码串，
 > local_identity.hpp 头注自认「DEC-006 未冻结口令处理」）
+
+本记录保留 M5-04 的历史决策与验证证据；当前行为以 DEC-018 为准。
 
 ## 背景与问题
 

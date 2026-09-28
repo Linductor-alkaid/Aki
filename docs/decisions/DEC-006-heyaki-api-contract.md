@@ -61,7 +61,8 @@ M3 要以 pinned `third_party/heyaki` 替换 `FakeHeyakiAdapter`（[DEC-002](DEC
      TrustGrant/端点记录启动恢复，触发语义由 M3-02 细化设计第 8.1 节。
   3. 信任/配对：`Unknown→Pending` ← `peer_sessions().state==pairing_restricted`；
      `Pending→Trusted` ← `pair_peer` + `set_pairing_observer` 一次性结果；
-     配对失败映射 `Rejected`；`revoke_trust_grant` 映射 `Revoked`；指纹确认
+     配对失败映射 `Rejected`（此处由 [DEC-018](DEC-018-user-pairing-password.md)
+     修订为保持 `Pending`、提示重试）；`revoke_trust_grant` 映射 `Revoked`；指纹确认
      数据 = `LanEndpointSnapshot.identity_public_key`（Ed25519 32B）。配对申请
      scope：`message.send`（前缀通配语义，api.md scope 节）；M4-05 起文件
      推送需独立 scope `file.push:<root>`（heyaki `file_push_scope`）——配对
@@ -70,9 +71,8 @@ M3 要以 pinned `third_party/heyaki` 替换 `FakeHeyakiAdapter`（[DEC-002](DEC
      同批）：指纹确认数据（identity_public_key 32B）的公钥指纹展示 = 其
      SHA-256 摘要的规范编码，即 DeviceId 规范串（`hy1_` + base32）——确认
      弹窗中 Device ID 与公钥指纹同值合并展示（mono），不引入第二种编码；
-     `pair_peer` 的 password 提交值为冻结常量 `kAkiPairingPassword`
-     （[DEC-016](DEC-016-pairing-password-verifier.md)，verifier 同批真实化），
-     不进 SPI/UiActions 签名。
+     原 `pair_peer` 固定口令（DEC-016）已由 DEC-018 替代：确认弹窗收集对端
+     本机口令，经 UiActions/SPI 显式传递；本机 verifier 来自用户设置。
   4. 文本消息：`send_text_message` → `send_message(peer, MessageEnvelope{
      message_id=aki MessageId 16B 双射（规范字符串形式：`to_string` /
      `parse_message_id`，`hym1_` 前缀编码——M3-05 实测澄清，非裸 hex）,

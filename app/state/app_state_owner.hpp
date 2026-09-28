@@ -461,6 +461,29 @@ private:
         return false;
     }
 
+    bool apply_impl(const SetPairingFailure& update) {
+        for (const auto& device : current_.devices.devices) {
+            if (device.id != update.device) continue;
+            if (update.failed
+                && device.trust_state != aki::device::TrustState::Pending) {
+                return false;
+            }
+            auto& entries = current_.devices.pairing_failures;
+            for (auto& entry : entries) {
+                if (entry.device != update.device) continue;
+                if (entry.failed == update.failed) return true;
+                entry.failed = update.failed;
+                snapshot_dirty_ = true;
+                return true;
+            }
+            entries.push_back(DevicePairingFailureEntry{update.device,
+                update.failed});
+            snapshot_dirty_ = true;
+            return true;
+        }
+        return false;
+    }
+
     // 逐设备连接路径（M5-04，DEC-015）：未知 id 拒绝（RULE-09 可观测）；
     // 已知 id 按设备键 upsert 条目并发布快照。同值幂等 no-op（不重复发布）。
     bool apply_impl(const SetDeviceConnectionPath& set_path) {

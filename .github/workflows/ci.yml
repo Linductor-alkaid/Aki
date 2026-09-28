@@ -111,7 +111,8 @@ jobs:
       - name: Build
         run: cmake --build --preset debug --config Debug --parallel
       - name: Test
-        run: ctest --preset debug -C Debug --output-on-failure
+        # 单测超时保留失败用例名，避免 Windows debug 运行期卡住时门禁无限等待。
+        run: ctest --preset debug -C Debug --output-on-failure --timeout 180
 
   # M6-02（DEC-017）：CI 打包——release 产物经 CPack 生成安装包并作为
   # workflow artifacts 交付（PR 与 master push 均产出）。

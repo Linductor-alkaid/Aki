@@ -8,6 +8,11 @@
 
 ## 当前状态
 
+- 2026-09-28：`M5-11` 本机配对口令与主动设备认证进入 In Progress：
+  [DEC-018](../decisions/DEC-018-user-pairing-password.md) 替代旧固定口令决策；
+  首次启动/旧 profile 迁移设置、Unknown 设备主动建链和对端口令确认正在验证。
+  Linux/Windows 双端真机验收仍待两端运行新版本，工作项保持未完成。
+
 - 2026-09-28：`M6-01`/`M6-02` 完成，M6 启动（In Progress）：CI 打包与
   分发基线——[DEC-017](../decisions/DEC-017-ci-packaging-and-distribution.md)
   冻结（CPack NSIS/DEB、自包含安装布局 /opt/aki 与 Program Files、

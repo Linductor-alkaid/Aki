@@ -12,7 +12,7 @@
 > 真实 Adapter、NodeSession、发现/消息/图片/传输/presence/重连管道与恢复
 > 语义均已就绪
 > 建议发布点：v0.5.0（MVP）
-> 更新日期：2026-09-28（M5-10 导航与视觉修整）
+> 更新日期：2026-09-28（M5-11 本机口令与设备认证）
 
 ## 目标
 
@@ -27,7 +27,49 @@ UI 只消费 Application State（`RULE-02`/`EXEC-03`：DoubleBuffer 一致快照
 executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::network`/
 `audio`；`ExecutorOwner` 关闭编入 `DslAppConfig::onShutdown`，保持
 `EXEC-01` 唯一 owner）。本里程碑不改变 M3/M4 已交付的网络、持久化与传输
-语义，只接 UI 面。
+语义，只接 UI 面；新增的 `M5-11` 维护项按 DEC-018 单独修正配对契约。
+
+## M5-11：本机口令与设备认证（维护项）
+
+> 状态：In Progress；设计依据：[DEC-018](../decisions/DEC-018-user-pairing-password.md)。
+
+- [ ] `M5-11` 首次启动设置本机口令、现有 profile 可更换口令、已发现设备可主动
+  建链并输入对端口令完成认证。验收：单测覆盖 verifier 与状态路径，双端 Linux/
+  Windows 真机完成正确/错误口令配对，GUI 截图及日志归档。
+
+2026-09-28：用户在本机运行时发现首次设置和设备认证入口缺失，立项。负责人
+Linductor；真机验收条件为 Windows 与本机处于可入站 LAN、两端运行本变更版本。
+
+2026-09-28（`M5-11` 实施与阶段验证，负责人 Linductor）：
+
+- 首启及旧固定口令 profile 在 Node 启动前要求设置本机口令；仅保存 Heyaki
+  Argon2id verifier。Settings 可更换口令并保持设备身份。Unknown 行增加
+  Connect，受限会话驱动 Pending；确认弹窗展示公钥指纹并收集对端口令，失败
+  保持 Pending 供重试。被动连接也可建立 Pending 行。
+- 网络无关单测覆盖首次创建/持久化/旧 profile 迁移、更换口令、错误口令
+  后重试、Unknown→Pending→Trusted、被动连接无扫描、受限会话边沿事件。
+  `cmake --build --preset debug -j4` 与 `cmake --build --preset release -j4`
+  成功；两档 `ctest --test-dir build/<debug|release> --output-on-failure -j4`
+  均 43/43 通过、0 失败。`git diff --check` 通过；UI 文件执行
+  `impeccable detect --json` 返回 `[]`。CI 门禁及 PR 证据待回填。
+- PR #56 首轮 CI 六档通过，但 Windows Debug 的 `ctest` 步骤超过半小时仍
+  无结论，GitHub 未提供运行中用例日志；同分支新增 Windows 逐测试 180 秒
+  超时以使卡住的用例可定位，重跑 CI 后按实际结果继续修复。该档未通过前
+  不合并，不计入已完成验证。
+- 2026-09-29 回填（负责人 Linductor）：重跑 CI run 36446106732 七档全绿
+  ——Windows / debug (MSVC) 12m58s，`skeleton.app_runs` 1.07s 通过，
+  43/43 0 失败；首轮 run 36440407557 经查为 Windows Debug 间歇性挂起后
+  由 concurrency cancel-in-progress 随新 push 取消（annotation
+  "higher priority waiting request"），非新增失败。门禁解除，合并闭环
+  按标准流程执行；挂起根因未定位，再次出现时以 `--timeout 180` 的
+  `***Timeout` 输出定位。
+- **待验收**：本次未对用户正在运行的旧版 Aki 数据目录启动另一实例，避免
+  与活动节点争用端口和 profile；未执行新增界面的 GUI 实拍。也未在本机
+  与 Windows 双端安装同一新版本并验证正确/错误口令的真实 LAN 配对；本机
+  loopback 用例受入站 TCP 防火墙影响可走 `[skip]` 分支，不能代替该验收。
+  负责人 Linductor；补跑条件为两端安装此变更构建、关闭旧实例、放行入站
+  LAN/TCP，在双端执行首次设置、主动及被动配对、错误口令重试并保存 GUI
+  截图和运行日志。完成前本工作项保持 `[ ]` / In Progress。
 
 ## 范围与非目标
 

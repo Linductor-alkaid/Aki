@@ -78,7 +78,7 @@ bool wait_until(const std::function<bool()>& predicate,
 // 节点域（per-node 测试 executor 形态，M3-04 偏差 ① 既定）。
 struct NodeDomain {
     explicit NodeDomain(const std::string& root)
-        : profile(LocalProfile::open(root)),
+        : profile(LocalProfile::open(root, "test-local-password")),
           executor_options([] {
               aki::app::ExecutorOwnerOptions options;
               options.executor_config.min_threads = 2;
@@ -164,8 +164,8 @@ TEST_CASE("Disconnect recovery: reconnect loop restores the session (SCOPE-11)",
         [&](const DeviceId&, bool ok, const std::string&) {
             if (ok) paired.store(true);
         });
-    REQUIRE(side_a.pair_peer(identity_b.id, aki::heyaki::kAkiPairingPassword));
-    REQUIRE(side_b.pair_peer(identity_a.id, aki::heyaki::kAkiPairingPassword));
+    REQUIRE(side_a.pair_peer(identity_b.id, "test-local-password"));
+    REQUIRE(side_b.pair_peer(identity_a.id, "test-local-password"));
     if (!wait_until([&] { return paired.load(); }, 20s)) {
         // 环境受限降级（沿 M3-04/05/06 纪律，不冒充已验证）：会话已到
         // pairing_restricted 但握手未在预算内完成（CI 偶发停滞，run

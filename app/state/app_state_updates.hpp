@@ -48,6 +48,11 @@ struct SetDeviceConnectionPath {
     aki::device::ConnectionPath path = aki::device::ConnectionPath::Unknown;
 };
 
+struct SetPairingFailure {
+    aki::device::DeviceId device;
+    bool failed = false;
+};
+
 // 设备在线状态部分更新（设计第 8.3 节，DeviceManager 依据 connected/disconnected
 // 事件维护）：仅改 presence 字段，不触发信任状态机；未知 id 拒绝并可观测。
 struct SetPresence {
@@ -76,6 +81,7 @@ using AppStateUpdate = std::variant<UpsertDevice,
     UpsertTransfer,
     UpdateTransferProgress,
     SetDeviceConnectionPath,
+    SetPairingFailure,
     SetPresence,
     SetDeliveryState,
     CompleteTransfer>;

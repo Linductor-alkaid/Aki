@@ -5,7 +5,8 @@
 // Unknown，经 AppStateOwner 汇聚，RULE-02/EXEC-03）；发现启停与信任三操作
 // （confirm/reject/revoke，DEC-006 映射 3）是本域出站操作（→ HeyakiAdapter /
 // 本地状态机）。配对一次性结果（on_pairing_completed）→ PairingCompletedWork
-// → UpsertDevice 信任转移（Pending→Trusted/Rejected，状态经 Store 快照可见，
+// → UpsertDevice 信任转移（成功 Pending→Trusted、失败保留 Pending 可重试，
+// 状态经 Store 快照可见，
 // 不新增 AppEvent 主路径类型）。事件与命令经单飞有界排空泵串行处理
 // （EXEC-02：业务不在 Adapter 回调线程），9 类事件中的 DeviceConnected /
 // DeviceDisconnected 由本 Manager 发布主路径事件（设计第 8.3 节路由表）。
@@ -55,10 +56,20 @@ struct StartDiscoveryWork {
 
 struct StopDiscoveryWork {};
 
+struct BeginPairingWork {
+    aki::device::DeviceId device;
+};
+
+struct PairingReadyWork {
+    aki::device::DeviceId device;
+    aki::device::PublicKey public_key;
+};
+
 // 信任三操作（M5-04，DEC-006 映射 3；转移合法性由 owner 信任状态机校验，
 // 非法转移拒绝可见 RULE-08/09）。reject 为纯本地判定（无 wire 面）。
 struct ConfirmPairingWork {
     aki::device::DeviceId device;
+    std::string password;
 };
 
 struct RejectDeviceWork {
@@ -70,7 +81,7 @@ struct RevokeDeviceWork {
 };
 
 // 配对一次性结果（M5-04，on_pairing_completed 路由）：success →
-// UpsertDevice(→ Trusted)、失败 → UpsertDevice(→ Rejected)；未知设备行
+// UpsertDevice(→ Trusted)、失败 → 易失失败标志；未知设备行
 // 或非法转移由 owner 拒绝可观测。
 struct PairingCompletedWork {
     aki::device::DeviceId device;
@@ -84,6 +95,8 @@ using DeviceManagerWork = std::variant<DeviceDiscoveredWork,
     ConnectionPathChangedWork,
     StartDiscoveryWork,
     StopDiscoveryWork,
+    BeginPairingWork,
+    PairingReadyWork,
     ConfirmPairingWork,
     RejectDeviceWork,
     RevokeDeviceWork,
@@ -129,6 +142,12 @@ public:
             std::move(detail)});
     }
 
+    [[nodiscard]] bool enqueue_pairing_ready(aki::device::DeviceId device,
+        aki::device::PublicKey public_key = {}) {
+        return pump_.enqueue(PairingReadyWork{std::move(device),
+            std::move(public_key)});
+    }
+
     // ---- 本域出站操作（→ Adapter / 本地状态机，业务在 Manager 上下文执行）----
 
     [[nodiscard]] bool start_discovery(aki::device::DiscoveryMethod method) {
@@ -140,8 +159,14 @@ public:
     // 信任三操作（M5-04）：confirm → SPI confirm_pairing（wire 面）；
     // revoke → SPI revoke_trust（wire 面）；reject → 纯本地判定
     //（Pending → Rejected，无 wire 面）。
-    [[nodiscard]] bool confirm_pairing(aki::device::DeviceId device) {
-        return pump_.enqueue(ConfirmPairingWork{std::move(device)});
+    [[nodiscard]] bool begin_pairing(aki::device::DeviceId device) {
+        return pump_.enqueue(BeginPairingWork{std::move(device)});
+    }
+
+    [[nodiscard]] bool confirm_pairing(aki::device::DeviceId device,
+        std::string password) {
+        return pump_.enqueue(ConfirmPairingWork{std::move(device),
+            std::move(password)});
     }
 
     [[nodiscard]] bool reject_device(aki::device::DeviceId device) {
@@ -222,6 +247,50 @@ private:
         return true;
     }
 
+    bool handle(BeginPairingWork& work) {
+        return !work.device.empty() && adapter_.begin_pairing(work.device);
+    }
+
+    bool handle(PairingReadyWork& work) {
+        if (work.device.empty()) return false;
+        executor::comm::Snapshot<AppState> snapshot;
+        int attempts = 0;
+        while (!state_owner_.try_load_snapshot(snapshot) && attempts < 64) {
+            ++attempts;
+        }
+        if (attempts >= 64) return false;
+        for (const auto& existing : snapshot.value.devices.devices) {
+            if (existing.id != work.device) continue;
+            if (existing.trust_state == aki::device::TrustState::Pending) {
+                return true;
+            }
+            if (existing.trust_state != aki::device::TrustState::Unknown) {
+                return false;
+            }
+            aki::device::DeviceIdentity updated = existing;
+            updated.trust_state = aki::device::TrustState::Pending;
+            return state_owner_.submit_update(UpsertDevice{std::move(updated)});
+        }
+        // 对端先发起连接而本机尚未点击扫描：会话进入 restricted 时的 LAN
+        // endpoint 携带已验证公钥，按 Unknown→Pending 两条更新有序入队。
+        if (work.public_key.bytes.size() != 32) return false;
+        aki::device::DeviceIdentity discovered;
+        discovered.id = work.device;
+        discovered.public_key = std::move(work.public_key);
+        discovered.display_name = work.device.value.substr(0, 16);
+        discovered.trust_state = aki::device::TrustState::Unknown;
+        aki::device::DiscoveredDevice notice;
+        notice.identity = discovered;
+        notice.method = aki::device::DiscoveryMethod::LanDiscovery;
+        const bool posted = post_event(DeviceDiscoveredEvent{notice});
+        const bool inserted = state_owner_.submit_update(
+            UpsertDevice{discovered});
+        discovered.trust_state = aki::device::TrustState::Pending;
+        const bool pending = state_owner_.submit_update(
+            UpsertDevice{std::move(discovered)});
+        return posted && inserted && pending;
+    }
+
     // 信任操作的行改写需要当前行（UpsertDevice 为整行替换语义）：从最近
     // 已发布快照读取该设备行、替换信任状态后整体 upsert——owner 信任状态机
     // 校验转移合法性（Pending→Trusted/Rejected、Trusted→Revoked 合法；
@@ -255,12 +324,19 @@ private:
         // wire 面先行（pair_peer 提交 admission）；信任状态推进经配对结果
         // 事件（on_pairing_completed → PairingCompletedWork）异步落地——
         // 不得在提交时乐观改状态（DEC-006 映射 3 冻结顺序）。
-        return adapter_.confirm_pairing(work.device);
+        if (work.password.empty()
+            || !adapter_.confirm_pairing(work.device,
+                std::move(work.password))) {
+            return false;
+        }
+        return state_owner_.submit_update(SetPairingFailure{work.device, false});
     }
 
     bool handle(RejectDeviceWork& work) {
         // 纯本地判定：Pending → Rejected（无 wire 面，DEC-006 映射 3）。
-        return apply_trust_transition(work.device,
+        const bool cleared = state_owner_.submit_update(
+            SetPairingFailure{work.device, false});
+        return cleared && apply_trust_transition(work.device,
             aki::device::TrustState::Rejected);
     }
 
@@ -278,9 +354,15 @@ private:
         if (work.device.empty()) {
             return false;  // 有界校验（EXEC-02 延续到 Manager 入口）。
         }
-        return apply_trust_transition(work.device,
-            work.success ? aki::device::TrustState::Trusted
-                         : aki::device::TrustState::Rejected);
+        if (!work.success) {
+            // 错误口令保持 Pending，用户可重试；Rejected 只对应用户明确拒绝。
+            return state_owner_.submit_update(
+                SetPairingFailure{work.device, true});
+        }
+        const bool cleared = state_owner_.submit_update(
+            SetPairingFailure{work.device, false});
+        return cleared && apply_trust_transition(work.device,
+            aki::device::TrustState::Trusted);
     }
 
     template <typename Payload>

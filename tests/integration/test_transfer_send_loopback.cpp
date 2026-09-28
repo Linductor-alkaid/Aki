@@ -89,7 +89,7 @@ bool wait_until(const std::function<bool()>& predicate,
 struct NodeDomain {
     explicit NodeDomain(const std::string& root,
         bool with_receive_root = false)
-        : profile(LocalProfile::open(root)),
+        : profile(LocalProfile::open(root, "test-local-password")),
           executor_options([] {
               aki::app::ExecutorOwnerOptions options;
               options.executor_config.min_threads = 2;
@@ -172,8 +172,8 @@ TEST_CASE("Two-node send-side transfer chain over the borrowed runtime",
         [&](const DeviceId& peer, bool ok, const std::string&) {
             if (ok && peer == identity_a.id) paired_b.store(true);
         });
-    REQUIRE(side_a.pair_peer(identity_b.id, aki::heyaki::kAkiPairingPassword));
-    REQUIRE(side_b.pair_peer(identity_a.id, aki::heyaki::kAkiPairingPassword));
+    REQUIRE(side_a.pair_peer(identity_b.id, "test-local-password"));
+    REQUIRE(side_b.pair_peer(identity_a.id, "test-local-password"));
     if (!wait_until([&] { return paired_a.load() && paired_b.load(); }, 20s)) {
         std::printf("[skip] pairing handshake did not complete after "
                     "submission: send-side transfer loopback not verified; "

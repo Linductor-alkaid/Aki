@@ -127,6 +127,12 @@ Trusted -> Revoked
 
 转移规则固定为：`Unknown -> Pending`（进入信任确认）、`Pending -> Trusted`（确认）、
 `Pending -> Rejected`（拒绝）、`Trusted -> Revoked`（撤销已建立的信任）。
+`Unknown -> Pending` 由用户在发现设备行点击连接后、Heyaki 会话进入
+`pairing_restricted` 时触发；确认时输入对端设备的本机配对口令并核对指纹。
+本机首次启动先设置口令，只持久化 Heyaki verifier；现有 profile 可在 Settings
+轮换 verifier 与 `password_generation`，身份不重建（DEC-018）。
+配对结果失败时保持 `Pending`，通过 DeviceStore 易失的失败标志提示重试；
+`Pending -> Rejected` 只由用户明确拒绝动作触发，避免错误口令让设备永久不可认证。
 `Revoked` 表示对既有信任的收回，只能从 `Trusted` 进入；`Rejected` 与 `Revoked`
 是终态。新增状态或转移必须先更新本节，不允许代码私有状态。
 
@@ -569,15 +575,17 @@ message)`——出站文本的投递回报终态失败面（DEC-006 映射 4 的
 第 12 个方法 `on_pairing_completed(device, success, detail)`（M5-04，
 [DEC-006](../decisions/DEC-006-heyaki-api-contract.md) 映射 3 落地面）——
 配对一次性结果投递面（Node 上下文回调 → Adapter 有界校验 + 投递，
-`EXEC-02`）：`success` 映射 `UpsertDevice(→ Trusted)`、失败映射
-`UpsertDevice(→ Rejected)`（`detail` 供诊断日志，不进 Store）；不新增
+`EXEC-02`）：`success` 映射 `UpsertDevice(→ Trusted)`、失败在 Pending 态
+写入易失配对失败标志以供 UI 提示重试（`detail` 不进 Store）；不新增
 AppEvent 主路径类型（状态经 Store 快照可见，同 `on_transfer_paused`
-先例）。口令处理：`pair_peer` 提交值为组合根配置的冻结常量
-（[DEC-016](../decisions/DEC-016-pairing-password-verifier.md)），在
-Adapter/Manager 内部传递，不进 SPI/UiActions 签名（M5-07 设置面收敛）。
+先例）。口令处理：`pair_peer` 提交值来自用户输入的目标端口令，经 UiActions、
+Manager 和 Adapter 显式传递，不进入快照、日志或业务数据库（DEC-018）。
 
 出站增补（M5-04，[DEC-006](../decisions/DEC-006-heyaki-api-contract.md)
-映射 3 落地面）：`confirm_pairing(device)`——指纹确认后发起配对（→
+映射 3 落地面，DEC-018 修订）：`begin_pairing(device)` 对发现设备主动
+`connect_lan`；受限会话观察推进 `Unknown → Pending`，入站会话即使本机未开启
+扫描也从已验证 LAN endpoint 建立可确认设备行。`confirm_pairing(device, password)`
+——指纹确认并输入目标端口令后发起配对（→
 `pair_peer`，scope 冻结 `{message.send, file.push:inbox}`；提交被拒
 = 会话缺失/非 pairing_restricted/重复 pending，admission false 可见）；
 `revoke_trust(device)`——撤销既有信任（→ `revoke_trust_grants`，无有效
@@ -990,7 +998,8 @@ Manager → owner 的状态更新为类型化指令（`AppStateUpdate`，与 9 �
 （整体 upsert）、`UpdateTransferProgress`（进度部分更新）、`SetPresence`（设备在线
 状态，仅 presence 字段，不触发信任状态机）、`SetDeliveryState`（送达回报部分更新）、
 `CompleteTransfer`（传输终态宣告，`final_state` 仅取 `Completed` / `Failed` /
-`Cancelled`）与 `SetDeviceConnectionPath`（M5-04 起，[DEC-015](../decisions/DEC-015-per-device-connection-path.md)：
+`Cancelled`）、`SetPairingFailure`（DEC-018：逐设备易失失败标志，供 UI
+提示重试，不持久化）与 `SetDeviceConnectionPath`（M5-04 起，[DEC-015](../decisions/DEC-015-per-device-connection-path.md)：
 逐设备连接路径部分更新——DeviceStore 级易失集合按设备键 upsert，未知 id
 拒绝；取代退役的全局 `SetConnectionPath`/LatestMailbox 单值摘要）。owner
 逐条校验：目标与当前一致为幂等 no-op；非法转移、终态复活与未知 id 一律拒绝并经
@@ -1095,9 +1104,9 @@ POSIX 相对路径，`hash` 为终态流式 SHA-256，`size_bytes` / `mime_type`
 （不新建行）；`CompleteTransfer` → TRANSFER 终态更新；`SetDeliveryState` →
 MESSAGE 送达状态列更新（不新建行）——送达回报是消息历史的组成部分，持久化
 保证重启恢复后已发消息不丢失送达终态（`M2` 计划退出-1「消息历史逐域一致」）。
-`SetPresence` 与 `SetDeviceConnectionPath` 不持久化：presence 是易失在线状态（恢复后
+`SetPresence`、`SetDeviceConnectionPath` 与 `SetPairingFailure` 不持久化：presence 是易失在线状态（恢复后
 默认 `Offline`，由连接事件重建），连接路径是 DeviceStore 级易失集合（恢复后默认
-无条目即 `Unknown`，由连接事件重建，[DEC-015](../decisions/DEC-015-per-device-connection-path.md)）。写入时机（M3-02 正式落点，[DEC-009](../decisions/DEC-009-appstate-write-path.md)）：
+无条目即 `Unknown`，由连接事件重建，[DEC-015](../decisions/DEC-015-per-device-connection-path.md)）；配对失败标志在重启后清空。写入时机（M3-02 正式落点，[DEC-009](../decisions/DEC-009-appstate-write-path.md)）：
 更新被状态 owner 接受（计入 `updates_applied`）后，owner 在 `drain_updates` 内调用
 其构造注入的接受后处理器（第 10.1 节；对齐 `ManagerPump` Handler 先例，`DEC-008`），
 处理器于 owner 单写者上下文按接受顺序同步入队对应 DB 作业——入队不新增执行上下文

@@ -44,6 +44,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -235,6 +236,7 @@ public:
         int data_path = 0;        // NodeDataPathKind 数值
         int signaling_route = 0;  // SignalingRouteKind 数值
         bool authenticated = false;
+        bool pairing_restricted = false;
         bool closed = false;
         // DEC-006 映射 6：同 SessionId、epoch+1 的重建可观测性。
         std::string session_id;   // heyaki::to_string(SessionId) 规范形式
@@ -253,6 +255,8 @@ public:
             view.signaling_route = static_cast<int>(session.signaling_route);
             view.authenticated =
                 session.state == ::heyaki::NodePeerSessionState::authenticated;
+            view.pairing_restricted =
+                session.state == ::heyaki::NodePeerSessionState::pairing_restricted;
             view.closed =
                 session.state == ::heyaki::NodePeerSessionState::closed;
             view.session_id = ::heyaki::to_string(session.session_id);
@@ -357,6 +361,21 @@ public:
         }
         auto submitted = node_.pair_peer(*key, password, std::move(scopes));
         return submitted.has_value();
+    }
+
+    [[nodiscard]] bool rotate_local_password(std::string_view password,
+        std::string& error) {
+        if (password == kLegacyPairingPassword) {
+            error = "Choose a different pairing password";
+            return false;
+        }
+        auto rotated = node_.rotate_authorization_password(password);
+        if (!rotated) {
+            error = std::string(rotated.error_if()->safe_detail());
+            return false;
+        }
+        error.clear();
+        return true;
     }
 
     // DEC-006 映射 3：revoke_trust_grant → Revoked（撤销该 peer 全部有效

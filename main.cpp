@@ -21,6 +21,9 @@
 // 日志内，复现命令见 M5-02 验证记录。
 #include "app/lifecycle/host_runtime.hpp"
 #include "app/lifecycle/system_theme.hpp"
+#include "heyaki/adapter/local_identity.hpp"
+#include "persistence/storage/data_root.hpp"
+#include "ui/components/secure_input.hpp"
 #include "ui/models/ui_actions.hpp"
 #include "ui/models/ui_state_consumer.hpp"
 #include "ui/pages/main_window.hpp"
@@ -197,11 +200,27 @@ const app::DslAppConfig& app::dslAppConfig() {
 
 void app::compose(eui::Ui& ui, const eui::Screen& screen) {
     static int frames = 0;
+    static bool setup_checked = false;
+    static bool assembly_started = false;
     ++frames;
     auto& model = main_window_model();
     auto& host = aki::app::HostRuntime::instance();
 
-    if (frames == 1) {
+    if (!setup_checked) {
+        setup_checked = true;
+        model.data_directory = aki::persistence::resolve_data_root();
+        try {
+            model.needs_password_setup =
+                aki::heyaki::LocalProfile::requires_password_setup(
+                    model.data_directory);
+        } catch (...) {
+            // HostRuntime will report the profile failure through startup_error.
+            model.needs_password_setup = false;
+        }
+    }
+
+    if (!assembly_started && !model.needs_password_setup) {
+        assembly_started = true;
         // §9.1 首帧装配例外（唯一）：主线程、主循环首帧同步装配组合根；
         // 装配期间事件源尚未接通，无唤醒先于装配的竞态。窗口以 clearColor
         // 底色等待首帧（耗时登记见 aki-run.log）。
@@ -211,14 +230,15 @@ void app::compose(eui::Ui& ui, const eui::Screen& screen) {
         // M5-03 跨线程唤醒接线（设计 §9.1）：executor 侧快照发布后调用
         // app::requestUpdate() 唤醒主循环重组（原子标志 + postEmptyEvent，
         // 线程安全）。首次触发留一条日志（RULE-11 证据面）。
-        const auto& assembly = host.ensure_assembled({}, [] {
+        const auto& assembly = host.ensure_assembled(model.data_directory, [] {
             static const bool first = [] {
                 log_line("wake: on_publish fired -> app::requestUpdate()");
                 return true;
             }();
             (void)first;
             app::requestUpdate();
-        });
+        }, std::move(model.initial_password));
+        aki::ui::clear_secret(model.initial_password);
         log_assembly(assembly,
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - started));
@@ -251,6 +271,11 @@ void app::compose(eui::Ui& ui, const eui::Screen& screen) {
                 aki::ui::models::make_ui_actions(host.device_manager(),
                     host.conversation_manager(), host.message_manager(),
                     host.transfer_manager()));
+            ui_actions()->set_local_pairing_password = [&host](
+                std::string password, std::string& error) {
+                return host.set_local_pairing_password(
+                    std::move(password), error);
+            };
             model.actions = ui_actions();
         }
         log_theme_override();
