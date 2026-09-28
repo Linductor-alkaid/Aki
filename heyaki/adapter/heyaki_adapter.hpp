@@ -63,6 +63,12 @@ public:
     // detail 不进 Store；不新增 AppEvent 主路径类型。
     virtual bool on_pairing_completed(aki::device::DeviceId device,
         bool success, std::string_view detail) = 0;
+    // 发现存活回落面（M5-11，设计 §8.1 第 13 方法）：LAN 发现观察管道 diff
+    // 出上一 tick 仍在广播、本 tick 消失的设备（LanPresence 租约过期/对端
+    // 退出）→ SetPresence(Offline)。在线方向不经本方法（发现合成事件自带
+    // presence = Online）；会话级 presence 仍由 connected/disconnected 承载。
+    virtual bool on_device_presence(aki::device::DeviceId device,
+        aki::device::PresenceState presence) = 0;
 
 protected:
     HeyakiAdapterSink() = default;

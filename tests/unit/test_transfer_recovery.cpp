@@ -280,6 +280,12 @@ TEST_CASE("Seeded Paused rows resume via wire progress and cancel terminates "
             override {
             return true;
         }
+        // 发现存活回落面（M5-11 第 13 方法）：本栈不装配 DeviceManager，
+        // 存活回落恒接受（与 device 面同型 no-op）。
+        bool on_device_presence(DeviceId,
+            aki::device::PresenceState) override {
+            return true;
+        }
     } sink;
     sink.transfers = &transfers;
     adapter.set_sink(&sink);
@@ -494,6 +500,12 @@ TEST_CASE("Full-chain combo: archive, image message, receive merge, "
         }
         bool on_pairing_completed(DeviceId, bool, std::string_view)
             override {
+            return true;
+        }
+        // 发现存活回落面（M5-11 第 13 方法）：本栈不装配 DeviceManager，
+        // 存活回落恒接受（与 device 面同型 no-op）。
+        bool on_device_presence(DeviceId,
+            aki::device::PresenceState) override {
             return true;
         }
     } sink;

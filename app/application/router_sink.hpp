@@ -36,6 +36,12 @@ public:
         return devices_.enqueue_discovered(std::move(device));
     }
 
+    // 发现存活回落（M5-11，sink 第 13 方法）：广播消失 → DM SetPresence。
+    bool on_device_presence(aki::device::DeviceId device,
+        aki::device::PresenceState presence) override {
+        return devices_.enqueue_presence(std::move(device), presence);
+    }
+
     bool on_pairing_ready(aki::device::DeviceId device,
         aki::device::PublicKey public_key = {}) {
         return devices_.enqueue_pairing_ready(std::move(device),

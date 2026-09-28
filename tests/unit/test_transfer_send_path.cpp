@@ -187,6 +187,11 @@ struct TransferOnlySink final : aki::heyaki::HeyakiAdapterSink {
     bool on_pairing_completed(DeviceId, bool, std::string_view) override {
         return true;
     }
+    // 发现存活回落面（M5-11 第 13 方法）：本栈不装配 DeviceManager，
+    // 存活回落恒接受（与 device 面同型 no-op）。
+    bool on_device_presence(DeviceId, aki::device::PresenceState) override {
+        return true;
+    }
 };
 
 // 发送路径组合（网络无关）：ExecutorOwner + AppStateOwner（预置会话 conv-beta）

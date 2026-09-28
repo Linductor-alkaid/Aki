@@ -700,6 +700,83 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
     REQUIRE(report.fully_stopped());
 }
 
+// ---- 用例 1.5：发现存活回落路由（M5-11，sink 第 13 方法 → DM SetPresence）----
+
+TEST_CASE("Device presence fallback routes to a volatile SetPresence without a main-path event",
+    "[unit][managers][m5_11]") {
+    AppStack stack;
+    auto& owner = stack.state_owner;
+    const auto settle = [&] {
+        quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+            *stack.transfers);
+    };
+
+    // 设备行先行（SetPresence 是部分更新：未知 id 由 owner 拒绝可见）。
+    REQUIRE(stack.devices->enqueue_discovered(make_discovered("dev-a")));
+    settle();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.devices.devices.size() == 1);
+        REQUIRE(snapshot.value.devices.devices.front().presence
+            == PresenceState::Online);
+    }
+    const auto rejected_before = owner.stats().updates_rejected;
+    const auto dm_handler_rejections_before =
+        stack.devices->stats().handler_rejections;
+
+    // RouterSink 第 13 方法：广播消失 → DM → SetPresence(Offline)。易失
+    // 部分更新：无主路径事件（状态经 Store 快照可见，§8.1/§11.1 ①）。
+    REQUIRE(stack.router->on_device_presence(
+        DeviceId{"dev-a"}, PresenceState::Offline));
+    settle();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.devices.devices.size() == 1);
+        REQUIRE(snapshot.value.devices.devices.front().presence
+            == PresenceState::Offline);
+    }
+    REQUIRE(owner.stats().updates_rejected == rejected_before);
+
+    // Online 方向（目录重现的存活事实）：部分更新无转移约束，仅改字段。
+    REQUIRE(stack.router->on_device_presence(
+        DeviceId{"dev-a"}, PresenceState::Online));
+    settle();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.devices.devices.front().presence
+            == PresenceState::Online);
+    }
+
+    // 未知设备 id：sink/收件箱 admission 成功（异步路由面），owner 应用层
+    // 拒绝可见（updates_rejected 增量，RULE-09）；快照不新增设备行。
+    REQUIRE(stack.router->on_device_presence(
+        DeviceId{"ghost"}, PresenceState::Offline));
+    settle();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.devices.devices.size() == 1);
+    }
+    REQUIRE(owner.stats().updates_rejected == rejected_before + 1);
+    REQUIRE(stack.devices->stats().handler_rejections
+        == dm_handler_rejections_before);
+
+    // 空 id：enqueue 仍受理（有界校验在 handler，EXEC-02），handler 拒绝
+    // 可见（handler_rejections 增量），不触及 owner。
+    REQUIRE(stack.devices->enqueue_presence(DeviceId{}, PresenceState::Offline));
+    settle();
+    REQUIRE(stack.devices->stats().handler_rejections
+        == dm_handler_rejections_before + 1);
+    REQUIRE(owner.stats().updates_rejected == rejected_before + 1);
+
+    // EXEC-01：干净关闭。
+    const auto report = stack.host.executor_owner.shutdown();
+    REQUIRE(report.fully_stopped());
+}
+
 // ---- 用例 2：并发入队不丢（单飞泵丢失唤醒防护；DOD-02 正常完成·并发面）----
 
 TEST_CASE("Concurrent senders never lose a work item (single-flight pump)",

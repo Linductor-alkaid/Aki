@@ -8,12 +8,18 @@
 //     authenticated 缺失/closed → disconnected；两侧 authenticated 且
 //     data_path/signaling_route 变化 → connection_path_changed（RULE-06：
 //     仅路径摘要，无会话记录语义）。
+// M5-11（设计 §8.1 触发语义修订）：LAN 发现单 tick 纯函数 diff
+// `diff_lan_discovery`（peer_sessions 同型：trusted/非 Aki 广播跳过、
+// seen 去重、live 集回落 went_offline、合成设备 presence = Online）。
 // 管道层（EXEC-04 timer / start-stop / DOD-02 六项）沿 M3-04 periodic 路径
 // 六项模式（test_discovery_pairing），本二进制不依赖网络与 Node 实例。
+#include "heyaki/adapter/lan_discovery.hpp"
 #include "heyaki/adapter/peer_sessions_pipeline.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -157,4 +163,165 @@ TEST_CASE("Peer session diff ignores non-authenticated churn",
         prev = curr;
     }
     CHECK(events_fired == 0);
+}
+
+// ---- M5-11：LAN 发现单 tick 纯函数 diff（网络无关；lan_discovery.hpp）----
+
+namespace {
+
+aki::heyaki::EndpointView make_entry(std::string id, bool trusted = false,
+    std::size_t key_bytes = 32) {
+    aki::heyaki::EndpointView entry;
+    entry.device_id = aki::device::DeviceId{std::move(id)};
+    entry.public_key.bytes.assign(key_bytes, std::uint8_t{0xAB});
+    entry.endpoint_id = "hye1_" + entry.device_id.value;
+    entry.trusted = trusted;
+    return entry;
+}
+
+}  // namespace
+
+TEST_CASE("LAN discovery diff synthesizes untrusted 32-byte-key entries as online devices",
+    "[unit][lan_discovery][m5_11]") {
+    aki::heyaki::LanDiscoveryState state;
+    auto tick = aki::heyaki::diff_lan_discovery(
+        std::vector<aki::heyaki::EndpointView>{make_entry("dev-1")}, state);
+
+    REQUIRE(tick.discovered.size() == 1);
+    REQUIRE(tick.went_offline.empty());
+    const auto& device = tick.discovered.front();
+    REQUIRE(device.identity.id == aki::device::DeviceId{"dev-1"});
+    REQUIRE(device.identity.public_key.bytes.size() == 32);
+    REQUIRE(device.identity.trust_state == aki::device::TrustState::Unknown);
+    // 目录条目 = 对端正在广播的存活证明：合成设备 presence = Online。
+    REQUIRE(device.identity.presence == aki::device::PresenceState::Online);
+    REQUIRE(device.method == aki::device::DiscoveryMethod::LanDiscovery);
+    REQUIRE(device.endpoint.description == "lan:hye1_dev-1");
+    // state 推进：本 tick 的设备进入 seen 与 live。
+    REQUIRE(state.seen.count("dev-1") == 1);
+    REQUIRE(state.live.count("dev-1") == 1);
+}
+
+TEST_CASE("LAN discovery diff skips trusted entries entirely",
+    "[unit][lan_discovery][m5_11]") {
+    aki::heyaki::LanDiscoveryState state;
+    auto tick = aki::heyaki::diff_lan_discovery(
+        std::vector<aki::heyaki::EndpointView>{make_entry("trusted-1", true)},
+        state);
+
+    // 已知设备记录不重放 discovered（§8.1）；也不进入 live 集——其 presence
+    // 由 peer_sessions 会话事件承载，目录消失不产 went_offline。
+    REQUIRE(tick.discovered.empty());
+    REQUIRE(tick.went_offline.empty());
+    REQUIRE(state.seen.empty());
+    REQUIRE(state.live.empty());
+
+    auto vanished = aki::heyaki::diff_lan_discovery({}, state);
+    REQUIRE(vanished.discovered.empty());
+    REQUIRE(vanished.went_offline.empty());
+}
+
+TEST_CASE("LAN discovery diff skips entries without a 32-byte identity key",
+    "[unit][lan_discovery][m5_11]") {
+    aki::heyaki::LanDiscoveryState state;
+    // 非真实 Aki 身份广播（缺 identity_public_key / 长度不符）不可确认指纹，
+    // 跳过且不入 live。
+    auto tick = aki::heyaki::diff_lan_discovery(
+        std::vector<aki::heyaki::EndpointView>{
+            make_entry("short-key", false, 31),
+            make_entry("long-key", false, 33)},
+        state);
+    REQUIRE(tick.discovered.empty());
+    REQUIRE(tick.went_offline.empty());
+    REQUIRE(state.seen.empty());
+    REQUIRE(state.live.empty());
+}
+
+TEST_CASE("LAN discovery diff deduplicates repeated ids within and across ticks",
+    "[unit][lan_discovery][m5_11]") {
+    aki::heyaki::LanDiscoveryState state;
+    // 同一 tick 内重复出现：幂等 no-op（seen 集吸收）。
+    auto tick = aki::heyaki::diff_lan_discovery(
+        std::vector<aki::heyaki::EndpointView>{
+            make_entry("dev-1"), make_entry("dev-1")},
+        state);
+    REQUIRE(tick.discovered.size() == 1);
+    REQUIRE(tick.went_offline.empty());
+
+    // 跨 tick 仍在广播：不重复合成，也不产 went_offline。
+    auto next = aki::heyaki::diff_lan_discovery(
+        std::vector<aki::heyaki::EndpointView>{make_entry("dev-1")}, state);
+    REQUIRE(next.discovered.empty());
+    REQUIRE(next.went_offline.empty());
+    REQUIRE(state.live.count("dev-1") == 1);
+}
+
+TEST_CASE("LAN discovery diff reports vanished live ids as went_offline",
+    "[unit][lan_discovery][m5_11]") {
+    aki::heyaki::LanDiscoveryState state;
+    auto tick = aki::heyaki::diff_lan_discovery(
+        std::vector<aki::heyaki::EndpointView>{
+            make_entry("dev-1"), make_entry("dev-2")},
+        state);
+    REQUIRE(tick.discovered.size() == 2);
+
+    // dev-1 从目录消失（租约过期/对端退出）、dev-2 仍在：回落面只报 dev-1。
+    auto next = aki::heyaki::diff_lan_discovery(
+        std::vector<aki::heyaki::EndpointView>{make_entry("dev-2")}, state);
+    REQUIRE(next.discovered.empty());
+    REQUIRE(next.went_offline.size() == 1);
+    REQUIRE(next.went_offline.front() == aki::device::DeviceId{"dev-1"});
+    REQUIRE(state.live.count("dev-1") == 0);
+    REQUIRE(state.live.count("dev-2") == 1);
+}
+
+TEST_CASE("LAN discovery diff does not re-synthesize a reappearing device",
+    "[unit][lan_discovery][m5_11]") {
+    aki::heyaki::LanDiscoveryState state;
+    auto tick = aki::heyaki::diff_lan_discovery(
+        std::vector<aki::heyaki::EndpointView>{make_entry("dev-1")}, state);
+    REQUIRE(tick.discovered.size() == 1);
+
+    // 消失：went_offline。
+    auto vanished = aki::heyaki::diff_lan_discovery({}, state);
+    REQUIRE(vanished.went_offline.size() == 1);
+
+    // 重现：重新进入 live 集（存活事实恢复），但不再次合成 discovered——
+    // seen 集幂等（历史 Unknown 行/已知外形不重复上报，§8.1）。
+    auto back = aki::heyaki::diff_lan_discovery(
+        std::vector<aki::heyaki::EndpointView>{make_entry("dev-1")}, state);
+    REQUIRE(back.discovered.empty());
+    REQUIRE(back.went_offline.empty());
+    REQUIRE(state.seen.count("dev-1") == 1);
+    REQUIRE(state.live.count("dev-1") == 1);
+}
+
+TEST_CASE("LAN discovery diff graduates a live id to trusted without went_offline",
+    "[unit][lan_discovery][m5_11]") {
+    aki::heyaki::LanDiscoveryState state;
+
+    // tick1：未信任 + 32 字节身份公钥 → 合成 discovered，进入 live 集。
+    auto tick1 = aki::heyaki::diff_lan_discovery(
+        std::vector<aki::heyaki::EndpointView>{make_entry("dev-1")}, state);
+    REQUIRE(tick1.discovered.size() == 1);
+    REQUIRE(tick1.went_offline.empty());
+    REQUIRE(state.live.count("dev-1") == 1);
+
+    // tick2：同一 id 毕业为信任（配对完成瞬间，§8.1）——不重放 discovered，
+    // 也**不**合成 went_offline（信任转移不是离线，presence 归会话事件承载）；
+    // 仅从 live 集移除，避免下轮对账误报。
+    auto tick2 = aki::heyaki::diff_lan_discovery(
+        std::vector<aki::heyaki::EndpointView>{make_entry("dev-1", true)},
+        state);
+    REQUIRE(tick2.discovered.empty());
+    REQUIRE(tick2.went_offline.empty());
+    REQUIRE(state.live.count("dev-1") == 0);
+    REQUIRE(state.seen.count("dev-1") == 1);  // seen 去重语义不变。
+
+    // tick3：条目整体消失（租约过期/对端退出）——live 集已在 tick2 移除该
+    // id，对账不再补发 went_offline（无二次离线事件）。
+    auto tick3 = aki::heyaki::diff_lan_discovery({}, state);
+    REQUIRE(tick3.discovered.empty());
+    REQUIRE(tick3.went_offline.empty());
+    REQUIRE(state.live.empty());
 }
