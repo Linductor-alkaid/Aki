@@ -777,6 +777,137 @@ TEST_CASE("Device presence fallback routes to a volatile SetPresence without a m
     REQUIRE(report.fully_stopped());
 }
 
+// ---- M5-11 双认证：会话授权（connected）推进 Pending 行 → Trusted，口令
+// ---- 由任一侧输入一次即可；Unknown/终态/缺失行不动作，拒绝面可观测。
+
+TEST_CASE("Session authorization advances a Pending row to Trusted without a second password entry",
+    "[unit][managers][m5_11]") {
+    AppStack stack;
+    auto& owner = stack.state_owner;
+    const auto settle = [&] {
+        quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+            *stack.transfers);
+    };
+
+    // ① 造 Pending 行（沿真实路径：发现 Unknown 行 → pairing_ready 的
+    //    Unknown→Pending 两条更新，不直改 owner 状态）。
+    REQUIRE(stack.devices->enqueue_discovered(make_discovered("dev-peer")));
+    settle();
+    REQUIRE(stack.devices->enqueue_pairing_ready(DeviceId{"dev-peer"}));
+    settle();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.devices.devices.size() == 1);
+        REQUIRE(snapshot.value.devices.devices.front().trust_state
+            == TrustState::Pending);
+    }
+    const auto rejected_before = owner.stats().updates_rejected;
+    const auto dm_handler_rejections_before =
+        stack.devices->stats().handler_rejections;
+
+    // ② connected：Pending → Trusted（会话授权 = 对端已通过本机口令校验的
+    //    wire 证据，M5-11 修订）；presence Online、路径条目 Lan，主路径事件
+    //    恰好一次，owner 零拒绝（推进走合法边 Pending→Trusted）。
+    REQUIRE(stack.devices->enqueue_connected(DeviceId{"dev-peer"},
+        ConnectionPath::Lan));
+    settle();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.devices.devices.size() == 1);
+        REQUIRE(snapshot.value.devices.devices.front().trust_state
+            == TrustState::Trusted);
+        REQUIRE(snapshot.value.devices.devices.front().presence
+            == PresenceState::Online);
+        bool path_seen = false;
+        for (const auto& entry : snapshot.value.devices.connection_paths) {
+            if (entry.device == DeviceId{"dev-peer"}) {
+                path_seen = entry.path == ConnectionPath::Lan;
+            }
+        }
+        REQUIRE(path_seen);
+    }
+    {
+        int connected_events = 0;
+        AppEvent event;
+        while (owner.try_receive_event(event)) {
+            if (std::holds_alternative<DeviceConnectedEvent>(event.payload)) {
+                ++connected_events;
+                const auto& connected =
+                    std::get<DeviceConnectedEvent>(event.payload);
+                REQUIRE(connected.device == DeviceId{"dev-peer"});
+                REQUIRE(connected.path == ConnectionPath::Lan);
+            }
+        }
+        REQUIRE(connected_events == 1);
+    }
+    REQUIRE(owner.stats().updates_rejected == rejected_before);
+
+    // ③ 已 Trusted 行再次 connected：推进静默不触发（Trusted 非 Pending），
+    //    易失更新照常受理，owner 拒绝计数不变。
+    REQUIRE(stack.devices->enqueue_connected(DeviceId{"dev-peer"},
+        ConnectionPath::Lan));
+    settle();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.devices.devices.front().trust_state
+            == TrustState::Trusted);
+        REQUIRE(snapshot.value.devices.devices.front().presence
+            == PresenceState::Online);
+    }
+    REQUIRE(owner.stats().updates_rejected == rejected_before);
+
+    // ④ Unknown 行 + connected：不得出现 Unknown→Trusted 非法边（推进只在
+    //    Pending 触发；owner 拒绝计数不变 = 推进未尝试），presence 照常
+    //    Online。
+    REQUIRE(stack.devices->enqueue_discovered(make_discovered("dev-new")));
+    settle();
+    REQUIRE(stack.devices->enqueue_connected(DeviceId{"dev-new"},
+        ConnectionPath::Lan));
+    settle();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        bool seen = false;
+        for (const auto& device : snapshot.value.devices.devices) {
+            if (device.id == DeviceId{"dev-new"}) {
+                seen = true;
+                REQUIRE(device.trust_state == TrustState::Unknown);
+                REQUIRE(device.presence == PresenceState::Online);
+            }
+        }
+        REQUIRE(seen);
+    }
+    REQUIRE(owner.stats().updates_rejected == rejected_before);
+    REQUIRE(stack.devices->stats().handler_rejections
+        == dm_handler_rejections_before);
+
+    // ⑤ 未知设备 connected：SetPresence 与 SetDeviceConnectionPath 双双被
+    //    owner 拒绝（updates_rejected +2，RULE-09 可观测——submit_update 是
+    //    通道 admission，拒绝在 drain 的 apply() 计数），不出现新行；
+    //    handler 返回 true（admission 语义），handler_rejections 不变。
+    REQUIRE(stack.devices->enqueue_connected(DeviceId{"ghost"},
+        ConnectionPath::Lan));
+    settle();
+    {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.devices.devices.size() == 2);
+        for (const auto& device : snapshot.value.devices.devices) {
+            REQUIRE(device.id != DeviceId{"ghost"});
+        }
+    }
+    REQUIRE(owner.stats().updates_rejected == rejected_before + 2);
+    REQUIRE(stack.devices->stats().handler_rejections
+        == dm_handler_rejections_before);
+
+    // EXEC-01：干净关闭。
+    const auto report = stack.host.executor_owner.shutdown();
+    REQUIRE(report.fully_stopped());
+}
+
 // ---- 用例 2：并发入队不丢（单飞泵丢失唤醒防护；DOD-02 正常完成·并发面）----
 
 TEST_CASE("Concurrent senders never lose a work item (single-flight pump)",
