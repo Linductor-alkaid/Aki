@@ -207,9 +207,11 @@ jobs:
         working-directory: build/release
         run: cpack -G DEB
       - name: Package sanity (dpkg metadata + layout)
+        # 产物名 CPACK_PACKAGE_FILE_NAME 默认为 aki-<ver>-<system>（连
+        # 字符），glob 用 *.deb。
         run: |
-          dpkg-deb -I build/release/aki_*.deb
-          dpkg-deb -c build/release/aki_*.deb | head -40
+          dpkg-deb -I build/release/*.deb
+          dpkg-deb -c build/release/*.deb | head -40
       - name: Upload deb artifact
         uses: actions/upload-artifact@v4
         with:
@@ -241,6 +243,11 @@ jobs:
         run: cmake --build --preset release --config Release --parallel
       - name: Test
         run: ctest --preset release -C Release --output-on-failure
+      - name: Install NSIS
+        # runner 镜像不预装 NSIS（run 36418888842 package-windows 实测
+        # "Cannot find NSIS compiler makensis"）——Chocolatey 安装（shim
+        # 落入系统 PATH）。
+        run: choco install nsis -y --no-progress
       - name: Package (NSIS setup.exe)
         working-directory: build/release
         run: cpack -C Release -G NSIS
