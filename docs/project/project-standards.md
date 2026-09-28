@@ -502,7 +502,10 @@ git diff --cached
 - **标准 MR 闭环**（2026-09-22 固化，Agent 在闭环内默认授权执行，见 AGENTS.md）：特性
   分支收尾 → push → 建 PR → CI 全绿 → Squash and Merge 合入 `master` → 删除远程与本地
   工作分支 → 本地 `master` fast-forward 同步。CI 门禁定义于 `.github/workflows/ci.yml`
-  （Linux debug/asan/ubsan + Windows debug），PR 与 `master` push 均触发，全绿是合并
+  （Linux debug/asan/ubsan/tsan + Windows debug；M6-02 起另含 package-linux /
+  package-windows 打包 job，见
+  [DEC-017](../decisions/DEC-017-ci-packaging-and-distribution.md)），
+  PR 与 `master` push 均触发，全绿是合并
   前置条件。
 
 ### 10.5 版本与发布

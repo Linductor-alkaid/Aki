@@ -5,8 +5,16 @@
 # third_party/dependencies.lock.json 校验（漂移即 FATAL_ERROR）。
 enable_language(C)
 
+# SQLITE_THREADSAFE=1（默认）的 pthread 符号必须显式落链：glibc >=2.34 起
+# libpthread 并入 libc，直链可省；基线平台 Ubuntu 20.04（glibc 2.31）上
+# 缺 -lpthread 即链接失败（M6-02 CI package-linux run 36416729582 实测，
+# test_sqlite_sourceid 直链 sqlite3 静态库暴露）。PUBLIC 传播给全部消费者
+#（直链用例与 aki_persistence 链）。
+find_package(Threads REQUIRED)
+
 add_library(sqlite3 STATIC sqlite3.c)
 target_include_directories(sqlite3 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(sqlite3 PRIVATE
     SQLITE_DQS=0
     SQLITE_OMIT_LOAD_EXTENSION=1)
+target_link_libraries(sqlite3 PUBLIC Threads::Threads)

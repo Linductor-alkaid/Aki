@@ -8,6 +8,32 @@
 
 ## 当前状态
 
+- 2026-09-28：`M6-01`/`M6-02` 完成，M6 启动（In Progress）：CI 打包与
+  分发基线——[DEC-017](../decisions/DEC-017-ci-packaging-and-distribution.md)
+  冻结（CPack NSIS/DEB、自包含安装布局 /opt/aki 与 Program Files、
+  Ubuntu 20.04 基线经 ubuntu:20.04 容器构建 + PyPI cmake 3.x wheel + gcc-12 PPA、
+  静态 libstdc++/libgcc、deb 依赖 shlibdeps + GLFW dlopen 集合并、
+  MSVC release CRT app-local、heyaki 开发产物安装树裁剪）；打包配置
+  `cmake/Packaging.cmake` + `cmake/Packaging-prebuild.cmake` +
+  `packaging/linux/aki.desktop`；CI 新增 `package-linux` /
+  `package-windows` job（release + 全量 ctest + cpack + artifacts）。
+  **同批修复既有构建集成缺陷**（M6-01 IVA 实测，release 此前从未进入
+  任何门禁）：`eui_neo_configure_app` 注入的上游 demo release 旗标
+  破坏异常语义（GNU/Clang `-fno-exceptions` 致 GCC release 无法编译）
+  与分发安全基线（MSVC `/GS- /sdl-`），消费侧后置旗标覆盖恢复
+  `-fexceptions -frtti -O2` / `/O2 /GS /sdl`（DEC-017）。验证：Linux
+  本地四轮 IVA——release 构建 + ctest 43/43、deb 控制字段/布局/Depends
+  合并/开发产物裁净（Installed-Size 45498→20021 KB）/strip/静态链接
+  全部达标；CI 经四轮迭代修复（focal 无 OpenSSL 3 → 源码构建 + 随包
+  分发；cmake 4.4 与 SYSTEM 标注不兼容 → PyPI wheel 钉 3.x；glibc 2.31
+  暴露 vendored sqlite3 缺 Threads 链接；NSIS 未预装 → Chocolatey），
+  终轮 run 36421170332 全绿 7/7，产物 `aki-ubuntu20.04-amd64-deb` /
+  `aki-windows-setup` 经 artifacts 交付（`M6-03` 完成）。**跨版本单包
+  兼容目标经用户确认（「兼容 20.04 以及后续系统」）落档 DEC-017**：
+  focal 构建 + OpenSSL 3 随包 + focal 依赖名（t64 Provides 实测）=
+  20.04~24.04 单包（CI Depends 实测 `libc6 (>= 2.30), libcurl4, …`）；
+  22.04/24.04/20.04 真机安装启动为退出-4 验证面（M6 保持 In Progress）。
+  详见 [M6 里程碑文档](m6-ci-packaging.md)。
 - 2026-09-28：`M5-10` 导航与视觉修整本机验收完成：四个左栏选项接入
   已登记的捆绑 FA7 Solid 图标并保留文字标签；本机 2× 缩放实拍发现的
   三栏拥挤、控件/文案截断与深色 primary 白底白字已修复；Debug 完整
@@ -664,6 +690,7 @@
 | M3 | Heyaki 真实接入与文本消息 | In Progress | M1、M2、DEC-006 | v0.3.0 | [m3-heyaki-integration.md](m3-heyaki-integration.md) |
 | M4 | 图片消息与文件传输 | In Progress | M3 | v0.4.0 | [m4-image-file-transfer.md](m4-image-file-transfer.md) |
 | M5 | EUI-NEO UI 与 MVP 验收 | In Progress | M2、M3、M4、DEC-005 | v0.5.0（MVP） | [m5-eui-neo-ui-mvp.md](m5-eui-neo-ui-mvp.md) |
+| M6 | CI 打包与分发基线 | In Progress | M0、M5-02、DEC-017 | 无（工程基础设施） | [m6-ci-packaging.md](m6-ci-packaging.md) |
 
 依赖说明：M1 先以契约与假实现交付可运行的领域骨架（先契约后实现、先假实现后真实依赖）；
 M3 引入真实 Heyaki；M5 整合 UI 并按设计第 15 节逐项验收 MVP。每个里程碑必须产生可独立

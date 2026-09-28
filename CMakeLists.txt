@@ -137,15 +137,10 @@ function(aki_apply_warnings target scope)
     endif()
 endfunction()
 
-# M3-01：Windows 运行期 OpenSSL DLL 部署（DEC-006 影响节：MSVC 链接系统 OpenSSL 3，
-# 测试可执行需 libssl-3-x64.dll / libcrypto-3-x64.dll 就位）。仅在显式依赖
-# heyaki::client 的目标上调用（当前为 test_heyaki_client_surface；Aki 产品目标
-# M3-03 起才链真实 heyaki）。根目录候选：CMake/OpenSSL 变量与 OPENSSL_ROOT_DIR
-# 环境变量（CI 注入），DLL 位于根或 bin/ 子目录。
-function(aki_deploy_openssl_dlls target)
-    if(NOT WIN32)
-        return()
-    endif()
+# OpenSSL 运行期库定位候选根（M6-01 起由 POST_BUILD 部署与 CPack install
+# 共用）：CMake/OpenSSL 变量与 OPENSSL_ROOT_DIR 环境变量（CI 注入），
+# OPENSSL_INCLUDE_DIR 推导根殿后；后命中者优先。
+function(aki_openssl_root_candidates out_var)
     set(_roots "")
     if(DEFINED OPENSSL_ROOT_DIR AND OPENSSL_ROOT_DIR)
         list(APPEND _roots "${OPENSSL_ROOT_DIR}")
@@ -159,15 +154,50 @@ function(aki_deploy_openssl_dlls target)
         list(APPEND _roots "${_openssl_root}")
     endif()
     list(REMOVE_DUPLICATES _roots)
-    foreach(_dll IN ITEMS libssl-3-x64.dll libcrypto-3-x64.dll)
-        set(_dll_found "")
-        foreach(_root IN LISTS _roots)
-            foreach(_sub IN ITEMS "" bin)
-                if(EXISTS "${_root}/${_sub}/${_dll}")
-                    set(_dll_found "${_root}/${_sub}/${_dll}")
-                endif()
-            endforeach()
+    set(${out_var} "${_roots}" PARENT_SCOPE)
+endfunction()
+
+# OpenSSL 3 运行期 DLL 定位（Windows；DLL 位于候选根或 bin/ 子目录，
+# 未命中输出空串）。
+function(aki_locate_openssl_dll dll out_var)
+    aki_openssl_root_candidates(_roots)
+    set(_dll_found "")
+    foreach(_root IN LISTS _roots)
+        foreach(_sub IN ITEMS "" bin)
+            if(EXISTS "${_root}/${_sub}/${dll}")
+                set(_dll_found "${_root}/${_sub}/${dll}")
+            endif()
         endforeach()
+    endforeach()
+    set(${out_var} "${_dll_found}" PARENT_SCOPE)
+endfunction()
+
+# OpenSSL 3 运行期共享库定位（Linux，M6-02；.so SONAME 位于候选根或
+# lib/lib64 子目录，未命中输出空串。install(FILES) 跟随 symlink 拷贝
+# 真实文件，随包形态为无符号链接的同名库）。
+function(aki_locate_openssl_shared_lib so out_var)
+    aki_openssl_root_candidates(_roots)
+    set(_so_found "")
+    foreach(_root IN LISTS _roots)
+        foreach(_sub IN ITEMS lib lib64)
+            if(EXISTS "${_root}/${_sub}/${so}")
+                set(_so_found "${_root}/${_sub}/${so}")
+            endif()
+        endforeach()
+    endforeach()
+    set(${out_var} "${_so_found}" PARENT_SCOPE)
+endfunction()
+
+# M3-01：Windows 运行期 OpenSSL DLL 部署（DEC-006 影响节：MSVC 链接系统 OpenSSL 3，
+# 测试可执行需 libssl-3-x64.dll / libcrypto-3-x64.dll 就位）。仅在显式依赖
+# heyaki::client 的目标上调用（当前为 test_heyaki_client_surface；Aki 产品目标
+# M3-03 起才链真实 heyaki）。
+function(aki_deploy_openssl_dlls target)
+    if(NOT WIN32)
+        return()
+    endif()
+    foreach(_dll IN ITEMS libssl-3-x64.dll libcrypto-3-x64.dll)
+        aki_locate_openssl_dll("${_dll}" _dll_found)
         if(_dll_found STREQUAL "")
             message(WARNING
                 "OpenSSL runtime DLL '${_dll}' not found under OPENSSL_ROOT_DIR; "
@@ -223,6 +253,23 @@ add_custom_command(TARGET aki POST_BUILD
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/aki-icon.ico"
         "$<TARGET_FILE_DIR:aki>/assets/icons"
     VERBATIM)
+# M6-01（DEC-017）：分发构建旗标基线覆盖。eui_neo_configure_app 经
+# eui_apply_compile_options 对非 Debug 配置注入上游 demo 策略旗标——
+# GNU/Clang：-Os -fno-exceptions -fno-rtti（-fno-exceptions 破坏
+# executor/heyaki 的异常语义，GCC release 构建无法编译：M6-01 IVA 实测；
+# CI 门禁此前仅覆盖 Debug，release 首次由打包链路触发）；MSVC：/O1
+# /GS- /sdl-（关闭栈保护与安全检查，不满足分发基线）。pinned 依赖不可
+# 改动（仓库纪律），在消费侧以同一 target 的后置 target_compile_options
+# 覆盖（按调用序拼接，后写者在 GCC/MSVC 命令行中生效）：GNU/Clang 恢复
+# -fexceptions -frtti -O2，MSVC 恢复 /O2 /GS /sdl。生成器表达式限定非
+# Debug，与上游注入条件对齐，debug 构建不受影响。
+if(NOT MSVC)
+    target_compile_options(aki PRIVATE
+        "$<$<NOT:$<CONFIG:Debug>>:-fexceptions;-frtti;-O2>")
+else()
+    target_compile_options(aki PRIVATE
+        "$<$<NOT:$<CONFIG:Debug>>:/O2;/GS;/sdl>")
+endif()
 # 框架注入源（glfw_app_main.cpp）不继承第一方 /W4 /WX——上游源码告警
 #（如 runtime_render.h C4100）不进第一方门禁（DEC-005「第三方不继承告警
 # 级别」；MSVC 无 /external:I 落点，以源级降档实现，最后一档生效）。
@@ -234,6 +281,12 @@ else()
     set_source_files_properties("${AKI_EUI_APP_MAIN_SOURCE}"
         PROPERTIES COMPILE_OPTIONS "-w")
 endif()
+
+# M6-01（DEC-017）：CPack 打包基线——Windows NSIS setup.exe 与 Linux DEB
+#（最低适配 Ubuntu 20.04）。install 布局与生成器配置见 cmake/Packaging.cmake；
+# 目标平台构建基线（glibc 2.31、GCC 12、静态 libstdc++/libgcc）由 CI
+# package job 的 ubuntu:20.04 容器保证。须在 aki target 定义之后引入。
+include(cmake/Packaging.cmake)
 
 if(AKI_BUILD_TESTS)
     enable_testing()

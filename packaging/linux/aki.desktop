@@ -1,0 +1,12 @@
+# Linux 桌面入口（M6-01，DEC-017）。Exec 指向 /opt/aki 自包含安装目录
+#（CPACK_PACKAGING_INSTALL_PREFIX；assets 与可执行文件同级，见
+# cmake/Packaging.cmake 布局说明）。图标经 hicolor 主题解析（deb 内
+# /usr/share/icons/hicolor/256x256/apps/aki.png）。
+[Desktop Entry]
+Type=Application
+Name=Aki
+Comment=Cross-device instant messaging client
+Exec=/opt/aki/aki
+Icon=aki
+Terminal=false
+Categories=Network;InstantMessaging;

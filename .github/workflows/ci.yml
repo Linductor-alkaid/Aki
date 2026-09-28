@@ -13,6 +13,11 @@
 # 插桩，ctest 执行面为 console 测试（不链 eui），渲染/UI 运行期证据走本机
 # 归档（RULE-11），不得宣称「UI/渲染经 TSAN 验证」。Windows 零新增依赖
 #（CURL QUIET 可选、tray 走 WINAPI）。
+# M6-02（DEC-017）：新增 package-linux / package-windows 打包 job——
+# Ubuntu 20.04 容器 release 构建 + CPack DEB（/opt/aki 布局，静态
+# libstdc++），Windows release + CPack NSIS setup.exe；产物随 workflow
+# artifacts 交付。门禁五档矩阵（debug/asan/ubsan/tsan + Windows debug）
+# 语义不变。
 name: CI
 
 on:
@@ -107,3 +112,151 @@ jobs:
         run: cmake --build --preset debug --config Debug --parallel
       - name: Test
         run: ctest --preset debug -C Debug --output-on-failure
+
+  # M6-02（DEC-017）：CI 打包——release 产物经 CPack 生成安装包并作为
+  # workflow artifacts 交付（PR 与 master push 均产出）。
+  # deb（package-linux）：最低适配 Ubuntu 20.04，GitHub ubuntu-20.04 runner
+  # 已退役，改用 ubuntu:20.04 容器构建——glibc 2.31 即 20.04 原生基线；
+  # EUI-NEO 硬性要求 GCC>=12（focal 官方仓库最高 gcc-10），经
+  # ubuntu-toolchain-r/test PPA 装 gcc-12；focal 自带 cmake 3.16 < 3.25
+  #（工程规范），经 PyPI cmake wheel 固定 3.x 线（>=3.25,<4；4.x 与
+  # pinned 消费侧 SYSTEM 标注不兼容，见 job 内注释与 DEC-017）；产物
+  # 静态链接 libstdc++/libgcc
+  #（不要求用户侧 GLIBCXX 新版本，glibc 保持 2.31 动态基线）；Depends 由
+  # dpkg-shlibdeps 扫描安装树生成（容器即 20.04 库版本，基线随之锁定）。
+  # setup.exe（package-windows）：NSIS（runner 预装）打包 Release 构建
+  #（MSVC Debug CRT 不可再分发，打包一律 Release——DEC-017）。
+  package-linux:
+    name: Linux / package deb (Ubuntu 20.04)
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: System dependencies (cmake 3.x via PyPI wheel, GCC 12 via PPA, EUI-NEO backend set, dpkg tooling)
+        # cmake 版本约束 >=3.25,<4（工程规范下限；4.x 线在非 IDE 生成器上
+        # 对 INTERFACE_SYSTEM_INCLUDE_DIRECTORIES 的源目录前缀路径转为硬
+        # 错误，run 36415785709 实测——pinned 消费侧 SYSTEM 标注在 4.x 不
+        # 可用，工具链统一为 3.x）。PyPI cmake wheel 为 CMake 官方二进制
+        # repackage（DEC-017 供应链登记），替代 focal 自带的 3.16。
+        run: |
+          apt-get update
+          apt-get install -y \
+            ca-certificates curl git python3-pip software-properties-common \
+            make dpkg-dev file
+          add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          apt-get update
+          apt-get install -y \
+            gcc-12 \
+            g++-12 \
+            libssl-dev \
+            libcurl4-openssl-dev \
+            libgl1-mesa-dev \
+            libegl1-mesa-dev \
+            libx11-dev \
+            libxext-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libwayland-dev \
+            wayland-protocols \
+            libxkbcommon-dev \
+            libglib2.0-dev
+          pip3 install "cmake>=3.25,<4"
+          cmake --version
+      - name: Build OpenSSL 3.5 LTS (focal ships 1.1; heyaki freezes the OpenSSL 3.x ABI)
+        # focal 系统 OpenSSL 为 1.1.1f，pinned heyaki 要求 >=3.0 且 <4.0
+        #（third_party/heyaki/CMakeLists.txt:116）——源码构建 shared 到
+        # /usr/local 供构建图链接；运行期由 AKI_BUNDLE_OPENSSL_LINUX 随包
+        # 分发 libssl.so.3/libcrypto.so.3（DEC-017）。tarball SHA-256 固定
+        # 校验（3.5 LTS，2026-09-28 取自 GitHub release）。
+        run: |
+          curl -fsSLO https://github.com/openssl/openssl/releases/download/openssl-3.5.4/openssl-3.5.4.tar.gz
+          echo "967311f84955316969bdb1d8d4b983718ef42338639c621ec4c34fddef355e99  openssl-3.5.4.tar.gz" | sha256sum -c -
+          tar -xzf openssl-3.5.4.tar.gz
+          cd openssl-3.5.4
+          ./Configure linux-x86_64 shared no-tests --prefix=/usr/local --libdir=lib
+          make -j"$(nproc)"
+          make install_sw
+          ldconfig
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Heyaki pinned dependencies
+        uses: actions/cache@v4
+        with:
+          path: third_party/heyaki/third_party
+          key: heyaki-deps-linux-${{ hashFiles('third_party/heyaki/third_party/dependencies.lock') }}
+      - name: Fetch heyaki dependencies (ref+commit verified)
+        # --all：与门禁 Linux job 同因（heyaki 许可证清单无条件全组校验）。
+        run: bash third_party/heyaki/scripts/fetch_third_party.sh --all
+      - name: Configure (release)
+        run: >
+          cmake --preset release
+          -D CMAKE_C_COMPILER=gcc-12
+          -D CMAKE_CXX_COMPILER=g++-12
+          -D CMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+          -D OPENSSL_ROOT_DIR=/usr/local
+          -D AKI_BUNDLE_OPENSSL_LINUX=ON
+      - name: Build
+        run: cmake --build --preset release --parallel
+      - name: Test
+        run: ctest --preset release --output-on-failure
+      - name: Package (DEB)
+        working-directory: build/release
+        run: cpack -G DEB
+      - name: Package sanity (dpkg metadata + layout)
+        # 产物名 CPACK_PACKAGE_FILE_NAME 默认为 aki-<ver>-<system>（连
+        # 字符），glob 用 *.deb。
+        run: |
+          dpkg-deb -I build/release/*.deb
+          dpkg-deb -c build/release/*.deb | head -40
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aki-ubuntu20.04-amd64-deb
+          path: build/release/*.deb
+          if-no-files-found: error
+
+  package-windows:
+    name: Windows / package setup.exe (MSVC)
+    runs-on: windows-latest
+    env:
+      OPENSSL_ROOT_DIR: C:\Program Files\OpenSSL
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Heyaki pinned dependencies
+        uses: actions/cache@v4
+        with:
+          path: third_party/heyaki/third_party
+          key: heyaki-deps-windows-${{ hashFiles('third_party/heyaki/third_party/dependencies.lock') }}
+      - name: Fetch heyaki dependencies (ref+commit verified)
+        # --all：与门禁 Windows job 同因（heyaki 许可证清单无条件全组校验）。
+        run: bash third_party/heyaki/scripts/fetch_third_party.sh --all
+        shell: bash
+      - name: Configure
+        run: cmake --preset release
+      - name: Build
+        run: cmake --build --preset release --config Release --parallel
+      - name: Test
+        run: ctest --preset release -C Release --output-on-failure
+      - name: Install NSIS
+        # runner 镜像不预装 NSIS（run 36418888842 package-windows 实测
+        # "Cannot find NSIS compiler makensis"）——Chocolatey 安装（shim
+        # 落入系统 PATH）。
+        run: choco install nsis -y --no-progress
+      - name: Package (NSIS setup.exe)
+        working-directory: build/release
+        run: cpack -C Release -G NSIS
+      - name: Package sanity (installer artifact present)
+        shell: bash
+        run: ls -l build/release/aki-*-setup.exe
+      - name: Upload setup.exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aki-windows-setup
+          path: build/release/aki-*-setup.exe
+          if-no-files-found: error
