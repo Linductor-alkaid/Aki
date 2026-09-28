@@ -56,6 +56,13 @@ Linductor；真机验收条件为 Windows 与本机处于可入站 LAN、两端�
   无结论，GitHub 未提供运行中用例日志；同分支新增 Windows 逐测试 180 秒
   超时以使卡住的用例可定位，重跑 CI 后按实际结果继续修复。该档未通过前
   不合并，不计入已完成验证。
+- 2026-09-29 回填（负责人 Linductor）：重跑 CI run 36446106732 七档全绿
+  ——Windows / debug (MSVC) 12m58s，`skeleton.app_runs` 1.07s 通过，
+  43/43 0 失败；首轮 run 36440407557 经查为 Windows Debug 间歇性挂起后
+  由 concurrency cancel-in-progress 随新 push 取消（annotation
+  "higher priority waiting request"），非新增失败。门禁解除，合并闭环
+  按标准流程执行；挂起根因未定位，再次出现时以 `--timeout 180` 的
+  `***Timeout` 输出定位。
 - **待验收**：本次未对用户正在运行的旧版 Aki 数据目录启动另一实例，避免
   与活动节点争用端口和 profile；未执行新增界面的 GUI 实拍。也未在本机
   与 Windows 双端安装同一新版本并验证正确/错误口令的真实 LAN 配对；本机
