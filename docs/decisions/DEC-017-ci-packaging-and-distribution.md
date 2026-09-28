@@ -94,8 +94,18 @@ M0~M5 的 CI 门禁（`.github/workflows/ci.yml` 五档矩阵）只产出测试�
   `actions/upload-artifact` 交付。release/tag 发布流程不在本决策范围
   （届时另行立项）。
 - **不做**：不引入 snap/flatpak/AppImage；不做 Windows MSI（WiX）；
-  不交叉编译（MinGW 受限已有 M3-01 记录）；不为 20.04 之外的发行版
-  声明兼容（22.04+ 的 libssl1.1 缺失属预期，下游按需重建）。
+  不交叉编译（MinGW 受限已有 M3-01 记录）。
+- **单包跨版本兼容（2026-09-28 用户确认目标：「兼容 20.04 以及后续
+  系统」）**：focal 基线构建天然向上兼容——glibc 向后兼容（绑定 ≤2.31
+  符号，22.04=2.35 / 24.04=2.39 均满足）；OpenSSL 3 随包使包不依赖目
+  标机的 OpenSSL 版本（规避 focal libssl1.1 ↔ 22.04+ libssl3 的
+  soname 分岐，该分岐因此不再构成本包的兼容边界）；Depends 使用 focal
+  包名（libcurl4/libglib2.0-0/libx11-6 等），22.04 原生同名，24.04 经
+  t64 包的 `Provides: <旧名>` 解析（2026-09-28 于 24.04 实测：
+  libcurl4t64/libglib2.0-0t64/libssl3t64 均 Provide 旧名）。反例锚定：
+  24.04 本机构建的包依赖基线即 24.04（glibc 2.38 + t64 名），不可装
+  入 22.04（2026-09-28 用户 22.04 实测复现）——跨版本兼容的前提就是
+  focal 容器构建，CI 产物为准。
 
 ## 备选方案
 
@@ -121,9 +131,10 @@ M0~M5 的 CI 门禁（`.github/workflows/ci.yml` 五档矩阵）只产出测试�
   `967311f84955316969bdb1d8d4b983718ef42338639c621ec4c34fddef355e99`
   固定校验）。渠道均为业界标准来源，已在本决策登记；若后续引入
   软件源级 pin/校验需求，按 `docs/supply-chain/` 纪律另行登记。
-- 已知边界（如实声明，RULE-11）：deb 在标准桌面环境的 Ubuntu 20.04+
-  可安装运行；22.04+ 发行版因 libssl1.1 → libssl3 的 soname 演进不在
-  本包兼容声明内；最小化/无桌面系统由显式 dlopen 集依赖保证可启动。
+- 已知边界（如实声明，RULE-11）：deb 目标为 Ubuntu 20.04~24.04 单包
+  （机制见「单包跨版本兼容」条；22.04/24.04 真机安装与 20.04 真机
+  安装启动属退出验证面，本机 24.04 自建产物不可作跨版本证据）；
+  最小化/无桌面系统由显式 dlopen 集依赖保证可启动。
   focal deb 内随包 OpenSSL 3 与系统 libcurl（1.1 ABI 编译）共存于同
   一进程：ELF 全局符号解析下 libcurl 的 `SSL_*` 符号解析到先加载的
   随包 libssl.so.3（OpenSSL 3 兼容层覆盖 focal libcurl 7.68 所用

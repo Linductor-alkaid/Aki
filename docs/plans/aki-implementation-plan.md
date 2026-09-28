@@ -24,7 +24,15 @@
   `-fexceptions -frtti -O2` / `/O2 /GS /sdl`（DEC-017）。验证：Linux
   本地四轮 IVA——release 构建 + ctest 43/43、deb 控制字段/布局/Depends
   合并/开发产物裁净（Installed-Size 45498→20021 KB）/strip/静态链接
-  全部达标；Windows NSIS 与 CI 双端 job 首轮实测随 `M6-03` 归集。
+  全部达标；CI 经四轮迭代修复（focal 无 OpenSSL 3 → 源码构建 + 随包
+  分发；cmake 4.4 与 SYSTEM 标注不兼容 → PyPI wheel 钉 3.x；glibc 2.31
+  暴露 vendored sqlite3 缺 Threads 链接；NSIS 未预装 → Chocolatey），
+  终轮 run 36421170332 全绿 7/7，产物 `aki-ubuntu20.04-amd64-deb` /
+  `aki-windows-setup` 经 artifacts 交付（`M6-03` 完成）。**跨版本单包
+  兼容目标经用户确认（「兼容 20.04 以及后续系统」）落档 DEC-017**：
+  focal 构建 + OpenSSL 3 随包 + focal 依赖名（t64 Provides 实测）=
+  20.04~24.04 单包（CI Depends 实测 `libc6 (>= 2.30), libcurl4, …`）；
+  22.04/24.04/20.04 真机安装启动为退出-4 验证面（M6 保持 In Progress）。
   详见 [M6 里程碑文档](m6-ci-packaging.md)。
 - 2026-09-28：`M5-10` 导航与视觉修整本机验收完成：四个左栏选项接入
   已登记的捆绑 FA7 Solid 图标并保留文字标签；本机 2× 缩放实拍发现的

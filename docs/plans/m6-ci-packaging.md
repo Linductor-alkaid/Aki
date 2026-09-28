@@ -34,8 +34,9 @@ release CRT app-local）与分发旗标基线经决策冻结为
 ### 非目标
 
 - release/tag 发布流程、签名与校验和发布面（另行立项）。
-- snap/flatpak/AppImage、MSI、跨发行版兼容声明（22.04+ 不在 deb 兼容
-  声明内，DEC-017「不做」）。
+- snap/flatpak/AppImage、MSI。跨版本单包兼容（Ubuntu 20.04~24.04，
+  2026-09-28 用户确认）在范围内，机制与边界见 DEC-017「单包跨版本兼
+  容」条。
 - 安装包运行期端到端安装验证（CI 无 GUI 环境；deb 布局经解包校验 +
   后续真机补跑条件见退出-4）。
 
@@ -63,6 +64,13 @@ release CRT app-local）与分发旗标基线经决策冻结为
   `package-windows`（release + ctest + cpack NSIS + artifacts）。
 - [ ] `M6-03` 收口：双端 CI 打包 job 全绿证据归集（含 Windows NSIS
   首轮实测）、本验证记录回填、总计划状态同步。
+  （2026-09-28 完成：PR #55 终轮 run 36421170332 全绿 7/7，产物
+  `aki-ubuntu20.04-amd64-deb` 13.5MB / `aki-windows-setup` 10.4MB 经
+  artifacts 交付；deb 控制字段 CI 实测 `Depends: libc6 (>= 2.30),
+  libcurl4, libglib2.0-0, libx11-6, …`——focal 名、无 libssl 依赖
+  （OpenSSL 3 随包），glibc 2.30 下限即 20.04~24.04 单包兼容机制实证；
+  四轮 CI 迭代修复链（OpenSSL 3 随包 / cmake 3.x 钉线 / sqlite
+  Threads / NSIS 安装+glob）与本验证记录归集。）
 
 ## 风险与阻塞
 
@@ -71,12 +79,12 @@ release CRT app-local）与分发旗标基线经决策冻结为
   package-linux 日志），风险解除；保留观察（focal 退役推进）。
 - ~~**gcc-12 PPA 包可用性**~~：同轮实测——
   `ppa:ubuntu-toolchain-r/test` gcc-12.5 正常安装，风险解除。
-- **MSVC `/O2 /GS /sdl` 覆盖组合**：此前从未进入任何门禁（历史 release
-  证据在上游 `/O1 /GS- /sdl-` 旗标下），Windows 打包 job 首轮存在暴露
-  新告警/行为的可能；按 MR 闭环迭代处理。
-- **GCC 12 vs 13 告警面差异**：release preset 携带
-  `AKI_WARNINGS_AS_ERRORS=ON`，GCC 12 下可能出现 13 未见的诊断；同上
-  迭代处理（保留诊断不升错的既有纪律可依例）。
+- ~~**MSVC `/O2 /GS /sdl` 覆盖组合**~~：2026-09-28 CI 实测解除——
+  run 36418888842 起 Windows release 构建 + 全量 ctest 通过，终轮
+  run 36421170332 打包全绿。
+- ~~**GCC 12 vs 13 告警面差异**~~：2026-09-28 CI 实测解除——focal
+  容器 gcc-12 + `AKI_WARNINGS_AS_ERRORS=ON` 构建零错误（仅既登记的
+  第三方 -Wmissing-field-initializers 诊断，已降级不升错）。
 - **focal 无系统 OpenSSL 3**（首轮 CI 实测发现）：pinned heyaki 冻结
   OpenSSL 3.x ABI（≥3.0、<4.0），focal 系统库 1.1.1f 无法满足——已按
   DEC-017 处置：容器内源码构建 OpenSSL 3.5.4（SHA-256 固定校验）至
@@ -93,9 +101,13 @@ release CRT app-local）与分发旗标基线经决策冻结为
   + 手动 dlopen 集合并）、布局（/opt/aki 自包含 + desktop + hicolor）、
   开发产物裁净（lib/include/share-heyaki 三目录反证）、许可文本保留、
   strip 生效。
-- [ ] 退出-3：CI 双端打包 job 全绿（PR 门禁；产物 artifacts 可下载）。
-- [ ] 退出-4：deb 在 Ubuntu 20.04 真机安装 + 启动验证（补跑条件：20.04
-  环境/虚拟机；CI 容器仅证明构建基线，安装运行属 RULE-11 本机验证面）。
+- [x] 退出-3：CI 双端打包 job 全绿（PR #55 终轮 run 36421170332，
+  7/7；产物 artifacts 可下载，见 M6-03）。
+- [ ] 退出-4：deb 真机安装 + 启动验证（单包跨版本目标的实证面）：
+  20.04 安装启动、22.04 安装启动（2026-09-28 用户环境已备）、24.04
+  安装启动（本机）。补跑条件：CI 产物（focal 构建）下载后逐版执行；
+  CI 容器仅证明构建基线，安装运行属 RULE-11 本机验证面；注意本机
+  24.04 自建产物不可作跨版本证据（依赖基线即 24.04）。
 
 ## 验证记录
 
@@ -148,3 +160,35 @@ cmake wheel 均工作正常）。处置（DEC-017 增补「OpenSSL 3 随包分�
 随包分发 `libssl.so.3`/`libcrypto.so.3` 至 /opt/aki + `$ORIGIN`
 rpath + dpkg-shlibdeps 私有库目录排除（`-l opt/aki`）。修复 commit
 重推后按 MR 闭环重新等待 CI。
+
+### 2026-09-28（CI 迭代修复链与终轮全绿，PR #55）
+
+门禁五档（debug/asan/ubsan/tsan + Windows MSVC debug）自首轮起持续
+全绿；打包 job 经四轮迭代修复后终轮 run 36421170332 全绿（7/7）：
+
+- 轮 1（run 36414428524）：focal 系统 OpenSSL 1.1.1f 不满足 heyaki
+  `find_package(OpenSSL 3.0 REQUIRED)`——focal 无 OpenSSL 3 系统包，
+  按 DEC-017 增补源码构建 + 随包分发（AKI_BUNDLE_OPENSSL_LINUX）。
+- 轮 2（run 36415785709）：Kitware 源 cmake 4.4 在非 IDE 生成器上对
+  消费侧 INTERFACE_SYSTEM_INCLUDE_DIRECTORIES 源目录前缀路径报
+  generate 硬错误（4.x 行为变更）——PyPI wheel 钉 3.x 线替代。
+- 轮 3（run 36416729582）：test_sqlite_sourceid 链接失败——glibc 2.34
+  起 pthread 并入 libc 掩盖了 vendored sqlite3 的缺链，focal 2.31
+  暴露；sqlite3 target PUBLIC 链 Threads::Threads。
+- 轮 4（run 36418888842）：Windows「Cannot find NSIS compiler
+  makensis」（预装假设证伪）→ Chocolatey 安装；deb sanity glob 笔误
+  修正（产物为连字符命名）。本轮 MSVC `/O2 /GS /sdl` release 构建 +
+  全量 ctest 首次实测通过。
+- 终轮（run 36421170332，全绿 7/7）：package-linux 16m44s（focal 容
+  器 OpenSSL 3.5.4 构建 + release + ctest + cpack DEB + dpkg 校验）、
+  package-windows 19m48s（NSIS 安装 + release + ctest + cpack + 产
+  物检查）；artifacts：`aki-ubuntu20.04-amd64-deb`（13.5MB）、
+  `aki-windows-setup`（10.4MB）。deb Depends CI 实测：`libc6 (>= 2.30),
+  libcurl4 (>= 7.16.2), libglib2.0-0 (>= 2.26.0)` + X11/Wayland/GL
+  dlopen 集——focal 名、无 libssl（随包 OpenSSL 3），单包跨 20.04~
+  24.04 机制实证（t64 Provides 于 24.04 本机核验）。
+
+跨版本兼容决策修订（2026-09-28 用户确认「兼容 20.04 以及后续系统」）：
+DEC-017「单包跨版本兼容」条落档；本机 24.04 自建产物不可装 22.04
+（用户实测复现，依赖基线即 24.04）——跨版本兼容以 focal 容器 CI 产物
+为准；22.04/24.04 真机安装启动转退出-4 验证面。
