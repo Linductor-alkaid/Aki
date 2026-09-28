@@ -1681,5 +1681,15 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   - **限制与后续**：本项未新增并发、网络或持久化路径。M5 退出-1 的
     LAN 双端真机链路仍未补跑，原因、负责人 Linductor 与防火墙放行入站
     TCP 后补跑条件沿 M5-08/M5-09 原记录维持；本轮不据本机 GUI/测试
-    将 M5 改为 Completed。PR 档 CI 结果待本项 MR 流程回填，不写作本机
-    通过。同步 `aki_ui_design` §2.4/§4/§5、总计划当前状态与本工作项。
+    将 M5 改为 Completed。初次记录时 PR 档 CI 待回填；本机测试与
+    CI 证据分开登记（见下条）。同步 `aki_ui_design` §2.4/§4/§5、
+    总计划当前状态与本工作项。
+  - **PR/CI 证据回填（2026-09-28）**：PR #53
+    `fix(ui): improve navigation and narrow-window readability` 指向
+    `master`，run `36401990518` 五档全绿（`gh pr checks 53`：Linux
+    debug 9m19s、asan 10m39s、ubsan 11m45s、tsan 11m40s、Windows
+    MSVC debug 11m26s；全部 pass）；Squash 合入 commit
+    `ca1b5618300d84b31d1c38c3ff977480322ca5e6`（GitHub REST
+    `pulls/53` 的 `merged=true`、`merged_at=2026-09-28T09:29:56Z`），
+    远程与本地特性分支已删除，本地 `master` fast-forward 同步且工作树
+    干净。该 CI 证据只证明 PR 门禁，不替代 M5 退出-1 双端补跑。
