@@ -89,6 +89,12 @@ public:
             *options_.session,
             [this](const aki::device::DiscoveredDevice& device) {
                 deliver_discovered(device);
+            },
+            // 存活回落（M5-11）：广播消失的设备 → sink on_device_presence
+            //（EXEC-02 有界校验 + 投递）。
+            [this](const aki::device::DeviceId& device) {
+                deliver_presence(device,
+                    aki::device::PresenceState::Offline);
             });
         if (options_.peer_observation) {
             peer_pipeline_ = std::make_unique<PeerSessionPipeline>(executor,
@@ -167,6 +173,14 @@ public:
     void deliver_discovered(const aki::device::DiscoveredDevice& device) {
         if (sink_ != nullptr) {
             (void)sink_->on_device_discovered(device);
+        }
+    }
+
+    // 发现存活回落投递（M5-11；有界校验 + sink 投递，EXEC-02）。
+    void deliver_presence(const aki::device::DeviceId& device,
+        aki::device::PresenceState presence) {
+        if (sink_ != nullptr) {
+            (void)sink_->on_device_presence(device, presence);
         }
     }
 

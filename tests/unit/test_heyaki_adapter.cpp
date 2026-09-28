@@ -209,6 +209,14 @@ public:
         return true;
     }
 
+    // 发现存活回落面（M5-11，sink 第 13 方法）：设备域易失部分更新——
+    // 映射 SetPresence（无主路径事件，同 DeviceManager 路由语义）；未知
+    // 设备 id 由 owner 拒绝并可观测（updates_rejected，RULE-09）。
+    bool on_device_presence(DeviceId device, PresenceState presence) override {
+        return owner_.submit_update(
+            aki::app::SetPresence{std::move(device), presence});
+    }
+
     struct PairingResult {
         DeviceId device;
         bool success = false;

@@ -35,6 +35,13 @@ struct DeviceDiscoveredWork {
     aki::device::DiscoveredDevice device;
 };
 
+// 发现存活回落（M5-11）：LAN 目录租约过期/对端退出 → SetPresence（易失，
+// 无主路径事件；在线方向由发现合成事件与 connected 承载）。
+struct DevicePresenceWork {
+    aki::device::DeviceId device;
+    aki::device::PresenceState presence = aki::device::PresenceState::Offline;
+};
+
 struct DeviceConnectedWork {
     aki::device::DeviceId device;
     aki::device::ConnectionPath path = aki::device::ConnectionPath::Unknown;
@@ -90,6 +97,7 @@ struct PairingCompletedWork {
 };
 
 using DeviceManagerWork = std::variant<DeviceDiscoveredWork,
+    DevicePresenceWork,
     DeviceConnectedWork,
     DeviceDisconnectedWork,
     ConnectionPathChangedWork,
@@ -118,6 +126,13 @@ public:
 
     [[nodiscard]] bool enqueue_discovered(aki::device::DiscoveredDevice device) {
         return pump_.enqueue(DeviceDiscoveredWork{std::move(device)});
+    }
+
+    // 发现存活回落入口（M5-11；RouterSink 第 13 方法路由）。
+    [[nodiscard]] bool enqueue_presence(aki::device::DeviceId device,
+        aki::device::PresenceState presence) {
+        return pump_.enqueue(
+            DevicePresenceWork{std::move(device), presence});
     }
 
     [[nodiscard]] bool enqueue_connected(
@@ -199,6 +214,15 @@ private:
         const bool posted = post_event(DeviceDiscoveredEvent{work.device});
         const bool applied = state_owner_.submit_update(UpsertDevice{work.device.identity});
         return posted && applied;
+    }
+
+    bool handle(DevicePresenceWork& work) {
+        if (work.device.empty()) {
+            return false;
+        }
+        // 只写易失 presence（未知 id 由 owner 拒绝可见）。
+        return state_owner_.submit_update(SetPresence{work.device,
+            work.presence});
     }
 
     bool handle(DeviceConnectedWork& work) {

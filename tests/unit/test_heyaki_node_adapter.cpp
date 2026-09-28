@@ -81,7 +81,7 @@ struct NodeDomain {
     std::optional<NodeSession> session;
 };
 
-// 录制 sink：SPI 分发面断言载体（全部 10 方法）。
+// 录制 sink：SPI 分发面断言载体（全部 13 方法）。
 struct RecordingSink final : aki::heyaki::HeyakiAdapterSink {
     std::vector<aki::device::DiscoveredDevice> discovered;
     std::vector<std::pair<DeviceId, ConnectionPath>> connected;
@@ -92,6 +92,8 @@ struct RecordingSink final : aki::heyaki::HeyakiAdapterSink {
     std::vector<std::tuple<DeviceId, ConnectionPath, ConnectionPath>>
         path_changed;
     std::vector<aki::transfer::TransferId> paused;  // M4-05 第 11 方法
+    // 发现存活回落记录（M5-11 第 13 方法断言载体）。
+    std::vector<std::pair<DeviceId, aki::device::PresenceState>> presence;
     // 传输面记录（M4-05 八相位路由断言载体）。
     std::vector<aki::transfer::Transfer> started;
     std::vector<std::tuple<aki::transfer::TransferId, std::uint64_t,
@@ -155,6 +157,12 @@ struct RecordingSink final : aki::heyaki::HeyakiAdapterSink {
         std::string_view detail) override {
         pairing_results.emplace_back(PairingResult{
             std::move(device), success, std::string(detail)});
+        return true;
+    }
+    // 发现存活回落面（M5-11 第 13 方法）：录制到达供分发断言。
+    bool on_device_presence(DeviceId device,
+        aki::device::PresenceState presence_state) override {
+        presence.emplace_back(std::move(device), presence_state);
         return true;
     }
 

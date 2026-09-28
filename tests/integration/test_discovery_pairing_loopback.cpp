@@ -224,6 +224,8 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
                 REQUIRE(device.method == aki::device::DiscoveryMethod::LanDiscovery);
                 REQUIRE(device.identity.public_key == identity_b.public_key);
                 REQUIRE(device.identity.trust_state == TrustState::Unknown);
+                // M5-11 合成契约：目录条目即存活事实——presence = Online。
+                REQUIRE(device.identity.presence == PresenceState::Online);
             }
             REQUIRE(state_owner.submit_update(UpsertDevice{device.identity}));
             discovered_events.fetch_add(1, std::memory_order_relaxed);
@@ -248,6 +250,8 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
     REQUIRE(discovered_b != nullptr);
     REQUIRE(discovered_b->trust_state == TrustState::Unknown);
     REQUIRE(discovered_b->public_key == identity_b.public_key);
+    // M5-11：配对前快照里的发现行即在线存活（目录条目 = 正在广播）。
+    REQUIRE(discovered_b->presence == PresenceState::Online);
 
     // DEC-006 映射 3：pairing_restricted 会话出现 → Unknown→Pending。
     REQUIRE(side_a.connect_lan(identity_b.id));

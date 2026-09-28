@@ -348,10 +348,16 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
             const float action_y = height - metrics.control.field
                 - metrics.spacing.section * 2.0f;
             for (const models::DeviceView& device : model.state_view.devices) {
+                // Connect 门控（M5-11）：仅对**当前在广播**（presence Online，
+                // LAN 目录租约内存活 = 正在运行 Aki）的非本机行可发起——离线
+                // 行 connect_lan 无目录端点必然被拒，不渲染无效按钮。
+                const bool connectable = device.can_begin()
+                    && device.presence == aki::device::PresenceState::Online
+                    && device.id != model.state_view.local_device;
                 const std::string row_id =
                     "aki.devices.row." + device.id.value;
                 const float row_height = compact_rows
-                    ? ((device.can_begin() || device.can_confirm()
+                    ? ((connectable || device.can_confirm()
                             || device.can_reject()
                             || device.can_revoke()) ? 112.0f : 80.0f)
                     : kDeviceRowHeight;
@@ -441,7 +447,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                         compact_rows ? row_y + row_height
                                 - metrics.spacing.compact
                                 - metrics.typography.hint
-                                - (device.can_begin() || device.can_confirm()
+                                - (connectable || device.can_confirm()
                                     || device.can_reject()
                                     || device.can_revoke()
                                        ? metrics.control.menuItem
@@ -472,7 +478,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                     ? row_y + row_height - metrics.control.menuItem
                         - metrics.spacing.compact
                     : row_y + (row_height - metrics.control.menuItem) * 0.5f;
-                if (device.can_begin() && model.actions) {
+                if (connectable && model.actions) {
                     components::button(ui, row_id + ".begin")
                         .position(button_x, button_y)
                         .size(action_button_width, metrics.control.menuItem)
