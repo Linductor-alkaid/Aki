@@ -226,17 +226,32 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
 
     // 发现观察管道（A 侧）：diff 合成 B 的 discovered 事件（EXEC-04 timer）。
     std::atomic<std::uint64_t> discovered_events{0};
+    // sink 在 executor timer 上下文回调（EXEC-02）：不得执行 Catch2 断言
+    //（与主线程断言构成 RunContext 数据竞争，TSAN CI 实测）——校验结果
+    // 记录进原子，主线程在 discovered 等待收敛后断言。
+    std::atomic<bool> sink_identity_ok{true};
+    std::atomic<bool> sink_submit_admitted{true};
     LanDiscoveryPipeline pipeline(owner.executor(), side_a,
         [&](const aki::device::DiscoveredDevice& device) {
             // EXEC-02：有界校验 + 投递（线程安全 submit）。
             if (device.identity.id == identity_b.id) {
-                REQUIRE(device.method == aki::device::DiscoveryMethod::LanDiscovery);
-                REQUIRE(device.identity.public_key == identity_b.public_key);
-                REQUIRE(device.identity.trust_state == TrustState::Unknown);
-                // M5-11 合成契约：目录条目即存活事实——presence = Online。
-                REQUIRE(device.identity.presence == PresenceState::Online);
+                const bool ok =
+                    device.method
+                        == aki::device::DiscoveryMethod::LanDiscovery
+                    && device.identity.public_key == identity_b.public_key
+                    && device.identity.trust_state == TrustState::Unknown
+                    // M5-11 合成契约：目录条目即存活事实——presence =
+                    // Online。
+                    && device.identity.presence == PresenceState::Online;
+                if (!ok) {
+                    sink_identity_ok.store(false,
+                        std::memory_order_relaxed);
+                }
             }
-            REQUIRE(state_owner.submit_update(UpsertDevice{device.identity}));
+            if (!state_owner.submit_update(UpsertDevice{device.identity})) {
+                sink_submit_admitted.store(false,
+                    std::memory_order_relaxed);
+            }
             discovered_events.fetch_add(1, std::memory_order_relaxed);
         });
     REQUIRE(pipeline.start(200ms));
@@ -244,6 +259,9 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
         state_owner.drain();
         return discovered_events.load() > 0;
     }, 15s));  // 验收 ①：A 发现 B（事件携带公钥指纹/端点/来源）
+    // 主线程断言 timer 回调记录面（合成契约 + 投递受理，RULE-09 可见）。
+    REQUIRE(sink_identity_ok.load());
+    REQUIRE(sink_submit_admitted.load());
 
     // 事件计数达标与 drain 之间仍有入队窗口（回调先 submit 后自增）——
     // 谓词内 drain+load+查找按截止时间收敛，而非单次快照。
