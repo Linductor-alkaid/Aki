@@ -57,8 +57,12 @@ UiActions make_ui_actions(aki::app::DeviceManager& devices,
         };
     actions.stop_discovery = [&devices] { return devices.stop_discovery(); };
     // 信任三操作（M5-04，DEC-006 映射 3）。
-    actions.confirm_pairing = [&devices](aki::device::DeviceId device) {
-        return devices.confirm_pairing(std::move(device));
+    actions.begin_pairing = [&devices](aki::device::DeviceId device) {
+        return devices.begin_pairing(std::move(device));
+    };
+    actions.confirm_pairing = [&devices](aki::device::DeviceId device,
+        std::string password) {
+        return devices.confirm_pairing(std::move(device), std::move(password));
     };
     actions.reject_device = [&devices](aki::device::DeviceId device) {
         return devices.reject_device(std::move(device));

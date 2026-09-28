@@ -5,6 +5,7 @@
 
 #include "heyaki/adapter/heyaki_adapter.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -117,14 +118,24 @@ public:
     // 信任操作出站（M5-04，DEC-006 映射 3）：记录调用（含配对提交确认）；
     // 成功语义可由测试经 queue_pairing_result 预设一次性结果（与真实
     // NodeSession::pair_peer + set_pairing_observer 的异步形态对齐）。
-    bool confirm_pairing(const aki::device::DeviceId& peer) override {
+    bool begin_pairing(const aki::device::DeviceId& peer) override {
+        if (peer.empty()) return false;
+        pairing_begins_.push_back(peer);
+        return true;
+    }
+
+    bool confirm_pairing(const aki::device::DeviceId& peer,
+        std::string password) override {
         if (peer.empty()) {
             return false;
         }
         pairing_submits_.push_back(peer);
         const bool success = pairing_result_override_.has_value()
             ? *pairing_result_override_
-            : true;
+            : !expected_pairing_password_.has_value()
+                || password == *expected_pairing_password_;
+        std::fill(password.begin(), password.end(), '\0');
+        password.clear();
         if (sink_ != nullptr) {
             (void)sink_->on_pairing_completed(peer, success, {});
         }
@@ -240,6 +251,9 @@ public:
     void queue_pairing_result(bool success) {
         pairing_result_override_ = success;
     }
+    void set_expected_pairing_password(std::string password) {
+        expected_pairing_password_ = std::move(password);
+    }
     // 设定是否持有有效 trust grant（默认 true；false 时 revoke_trust
     // 返回 false——「无操作可见」语义）。
     void set_has_valid_grant(bool has) noexcept { has_valid_grant_ = has; }
@@ -268,6 +282,10 @@ public:
         const noexcept {
         return pairing_submits_;
     }
+    [[nodiscard]] const std::vector<aki::device::DeviceId>& pairing_begins()
+        const noexcept {
+        return pairing_begins_;
+    }
     [[nodiscard]] const std::vector<aki::device::DeviceId>& revoked_peers()
         const noexcept {
         return revoked_peers_;
@@ -295,8 +313,10 @@ private:
     std::vector<TransferCommand> transfer_commands_;
     std::set<std::string> transfer_sessions_;
     std::vector<aki::device::DeviceId> pairing_submits_;
+    std::vector<aki::device::DeviceId> pairing_begins_;
     std::vector<aki::device::DeviceId> revoked_peers_;
     std::optional<bool> pairing_result_override_;
+    std::optional<std::string> expected_pairing_password_;
     bool has_valid_grant_ = true;
 };
 

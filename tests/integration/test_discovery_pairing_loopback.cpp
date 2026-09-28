@@ -123,7 +123,7 @@ const DeviceIdentity* find_device(
 // create_owned / runtime=nullptr），宿主即测试自身的显式 owner。
 struct NodeDomain {
     explicit NodeDomain(const std::string& root)
-        : profile(LocalProfile::open(root)),
+        : profile(LocalProfile::open(root, "test-local-password")),
           executor_options([] {
               aki::app::ExecutorOwnerOptions options;
               options.executor_config.min_threads = 2;
@@ -305,8 +305,8 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
                 pairing_failure_b = detail;
             }
         });
-    REQUIRE(side_a.pair_peer(identity_b.id, aki::heyaki::kAkiPairingPassword));
-    REQUIRE(side_b.pair_peer(identity_a.id, aki::heyaki::kAkiPairingPassword));
+    REQUIRE(side_a.pair_peer(identity_b.id, "test-local-password"));
+    REQUIRE(side_b.pair_peer(identity_a.id, "test-local-password"));
     if (!wait_until([&] { return paired_a.load() && paired_b.load(); }, 20s)) {
         // 环境受限降级（不冒充已验证）：M3-04 验证记录如实声明——配对→信任
         // 全链路在本机被防火墙拦截至端 TLS 入站；CI 侧在 UB 修复
@@ -371,7 +371,7 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
         == rejected_before_revive_b + 1);
 
     // 重复配对不重复：pair_peer 在已认证会话上被拒（非 pairing_restricted）。
-    REQUIRE_FALSE(side_a.pair_peer(identity_b.id, aki::heyaki::kAkiPairingPassword));
+    REQUIRE_FALSE(side_a.pair_peer(identity_b.id, "test-local-password"));
 
     // 验收 ④：stop（TimerHandle 取消）后不再产生 discovered 事件。
     const auto events_before_stop = discovered_events.load();
@@ -402,7 +402,7 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
                 domain_d.profile.identity().id);
         },
         15s));
-    // DEC-016：目标端 verifier 只接受 kAkiPairingPassword——本用例两侧均
+    // DEC-018：目标端 verifier 只接受测试设置的本机口令——本用例两侧均
     // 提交非匹配值验证失败面（历史 right/wrong-password 命名在假 verifier
     // 下无区分度，已随真实验证器退役；成功面提交常量见上方主流程）。
     REQUIRE(node_c.pair_peer(domain_d.profile.identity().id, "aki-invalid-pw-c"));

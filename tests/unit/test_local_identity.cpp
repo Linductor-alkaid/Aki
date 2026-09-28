@@ -30,7 +30,7 @@ TEST_CASE("Local identity provisioning is stable per data root and unique across
     const std::string root_a = unique_root();
     const std::string root_b = unique_root();
 
-    const aki::heyaki::LocalIdentity first = aki::heyaki::provision_local_identity(root_a);
+    const aki::heyaki::LocalIdentity first = aki::heyaki::provision_local_identity(root_a, "test-local-password");
     REQUIRE(first.created);
     // 规范字符串形式由 heyaki::to_string 定义（带 kind 前缀的编码，非裸 hex，
     // 长度随编码实现）；M3-03 不锁定编码细节，只断言非空且稳定（下方一致断言）。
@@ -40,7 +40,7 @@ TEST_CASE("Local identity provisioning is stable per data root and unique across
 
     // 二次供给：加载同一身份，逐字节一致，非新建。
     const aki::heyaki::LocalIdentity again =
-        aki::heyaki::provision_local_identity(root_a);
+        aki::heyaki::provision_local_identity(root_a, "test-local-password");
     REQUIRE_FALSE(again.created);
     REQUIRE(again.id == first.id);
     REQUIRE(again.public_key == first.public_key);
@@ -48,41 +48,36 @@ TEST_CASE("Local identity provisioning is stable per data root and unique across
 
     // 不同数据根 → 不同身份（独立 Ed25519 生成）。
     const aki::heyaki::LocalIdentity other =
-        aki::heyaki::provision_local_identity(root_b);
+        aki::heyaki::provision_local_identity(root_b, "test-local-password");
     REQUIRE(other.created);
     REQUIRE(other.id != first.id);
 
     // DeviceId ↔ 公钥恒等绑定（identity.hpp derive 契约的独立复算）。
-    CHECK(aki::heyaki::provision_local_identity(root_a).id == first.id);
+    CHECK(aki::heyaki::provision_local_identity(root_a, "test-local-password").id == first.id);
 }
 
 TEST_CASE("Endpoint id for the frozen application id is deterministic",
     "[unit][local_identity]") {
     const std::string root = unique_root();
     const aki::heyaki::LocalIdentity identity =
-        aki::heyaki::provision_local_identity(root);
+        aki::heyaki::provision_local_identity(root, "test-local-password");
     CHECK(identity.endpoint_id
-        == aki::heyaki::provision_local_identity(root).endpoint_id);
+        == aki::heyaki::provision_local_identity(root, "test-local-password").endpoint_id);
 }
 
-// M5-04（DEC-016）：配对口令常量 ↔ 真实 verifier 往返锁定。M3-03 的占位
-// verifier 为假编码（对任何口令 crypto_pwhash_str_verify 均拒绝——冻结调研
-// 探针实测），Pending→Trusted 永久不可达；本用例锁定 kAkiPairingPassword
-// 经 create_password_verifier 生成的 verifier 可验证正确口令、拒绝他串，
-// 并锁定策略下限（<8 Unicode 标量的口令生成被拒）。网络无关（纯 crypto 面；
-// 双端 Pending→Trusted 全链路归 M5-08/M3-09 补跑）。
-TEST_CASE("kAkiPairingPassword round-trips through create/verify password",
-    "[unit][local_identity][dec016]") {
+// 用户口令与 Heyaki verifier 的往返验证；双端 wire 仍需真机验收。
+TEST_CASE("User pairing password round-trips through create/verify password",
+    "[unit][local_identity][dec018]") {
     namespace hh = ::heyaki;
 
     const auto verifier_result = hh::create_password_verifier(
-        aki::heyaki::kAkiPairingPassword, hh::PasswordHashParameters{});
+        "test-local-password", hh::PasswordHashParameters{});
     REQUIRE(verifier_result.has_value());
     const hh::PasswordVerifier verifier = *verifier_result.value_if();
 
     // 正确口令 MATCH；他串拒绝（含前缀/大小写扰动）。
     const auto matched = hh::verify_password(
-        aki::heyaki::kAkiPairingPassword, verifier);
+        "test-local-password", verifier);
     REQUIRE(matched.has_value());
     REQUIRE(matched.value_if() != nullptr);
     REQUIRE(*matched.value_if());
@@ -99,4 +94,66 @@ TEST_CASE("kAkiPairingPassword round-trips through create/verify password",
     const auto too_short = hh::create_password_verifier(
         "aki-mvp", hh::PasswordHashParameters{});
     REQUIRE_FALSE(too_short.has_value());
+}
+
+TEST_CASE("First launch requires a password and rotation preserves identity",
+    "[unit][local_identity][dec018]") {
+    namespace hh = ::heyaki;
+    const std::string root = unique_root();
+    REQUIRE(aki::heyaki::LocalProfile::requires_password_setup(root));
+    REQUIRE_THROWS(aki::heyaki::LocalProfile::open(root));
+    REQUIRE_FALSE(std::filesystem::exists(
+        std::filesystem::path{root} / "db" / "profile.sqlite"));
+
+    auto profile = aki::heyaki::LocalProfile::open(root, "first-password");
+    REQUIRE_FALSE(aki::heyaki::LocalProfile::requires_password_setup(root));
+    const auto id = profile.identity().id;
+    const auto first = profile.store().password_verifier();
+    REQUIRE(first.has_value());
+    REQUIRE(first.value_if()->has_value());
+    const auto first_match = hh::verify_password(
+        "first-password", **first.value_if());
+    REQUIRE(first_match.has_value());
+    REQUIRE(*first_match.value_if());
+
+    profile.set_pairing_password("second-password");
+    const auto generation = profile.store().password_generation();
+    REQUIRE(generation.has_value());
+    REQUIRE(*generation.value_if() == 2U);
+    const auto second = profile.store().password_verifier();
+    REQUIRE(second.has_value());
+    REQUIRE(second.value_if()->has_value());
+    const auto second_match = hh::verify_password(
+        "second-password", **second.value_if());
+    REQUIRE(second_match.has_value());
+    REQUIRE(*second_match.value_if());
+    const auto old_match = hh::verify_password(
+        "first-password", **second.value_if());
+    REQUIRE(old_match.has_value());
+    REQUIRE_FALSE(*old_match.value_if());
+
+    auto reopened = aki::heyaki::LocalProfile::open(root);
+    REQUIRE(reopened.identity().id == id);
+    REQUIRE_FALSE(reopened.identity().created);
+}
+
+TEST_CASE("Legacy shared password profile requires migration without losing identity",
+    "[unit][local_identity][dec018]") {
+    namespace hh = ::heyaki;
+    const std::string root = unique_root();
+    auto profile = aki::heyaki::LocalProfile::open(root, "initial-password");
+    const auto original_id = profile.identity().id;
+    auto legacy = hh::create_password_verifier(
+        aki::heyaki::kLegacyPairingPassword, hh::PasswordHashParameters{});
+    REQUIRE(legacy.has_value());
+    REQUIRE(profile.store().set_password_verifier(*legacy.value_if(), 2U)
+        .has_value());
+    REQUIRE(aki::heyaki::LocalProfile::requires_password_setup(root));
+    REQUIRE_THROWS(aki::heyaki::LocalProfile::open(root));
+    auto upgraded = aki::heyaki::LocalProfile::open(root, "private-password");
+    REQUIRE(upgraded.identity().id == original_id);
+    REQUIRE_FALSE(aki::heyaki::LocalProfile::requires_password_setup(root));
+    const auto generation = upgraded.store().password_generation();
+    REQUIRE(generation.has_value());
+    REQUIRE(*generation.value_if() == 3U);
 }

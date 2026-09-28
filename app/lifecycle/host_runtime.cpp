@@ -20,6 +20,7 @@
 #include "transfer/transfer/transfer_types.hpp"
 
 #include <chrono>
+#include <algorithm>
 #include <exception>
 #include <filesystem>
 #include <functional>
@@ -260,7 +261,7 @@ HostRuntime& HostRuntime::instance() {
 }
 
 const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
-    std::function<void()> wake) {
+    std::function<void()> wake, std::string initial_password) {
     Impl& impl = *impl_;
     if (impl.assembled || impl.assembly_failed || impl.assembly_report.attempted) {
         return impl.assembly_report;  // 幂等：返回首次结果。
@@ -300,8 +301,13 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
     //    身份供给（SCOPE-01，同一恢复段；profile 常驻供 Node 装配，M3-04）。
     try {
         impl.recovery.emplace(aki::persistence::perform_startup_recovery(run_root));
-        impl.profile.emplace(aki::heyaki::LocalProfile::open(run_root));
+        impl.profile.emplace(aki::heyaki::LocalProfile::open(
+            run_root, initial_password));
+        std::fill(initial_password.begin(), initial_password.end(), '\0');
+        initial_password.clear();
     } catch (const std::exception& error) {
+        std::fill(initial_password.begin(), initial_password.end(), '\0');
+        initial_password.clear();
         return fail(std::string("startup recovery failed: ") + error.what());
     }
     const aki::heyaki::LocalIdentity identity = impl.profile->identity();
@@ -503,6 +509,19 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
                         ConnectionPath path) {
                         (void)router_for_hooks->on_connection_path_changed(
                             peer, ConnectionPath::Unknown, path);
+                    },
+                .on_pairing_ready =
+                    [router_for_hooks, node_for_reconnect](const DeviceId& peer) {
+                        aki::device::PublicKey key;
+                        for (const auto& endpoint :
+                            node_for_reconnect->endpoints()) {
+                            if (endpoint.device_id == peer) {
+                                key = endpoint.public_key;
+                                break;
+                            }
+                        }
+                        (void)router_for_hooks->on_pairing_ready(peer,
+                            std::move(key));
                     }});
 
     // 首帧播种快照即刻可读（装配完成即恢复结果可见，§11.1 ② 播种断言先例
@@ -515,6 +534,28 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
     impl.assembled = true;
     impl.assembly_report.ok = true;
     return impl.assembly_report;
+}
+
+bool HostRuntime::set_local_pairing_password(std::string password,
+    std::string& error) {
+    if (!impl_->assembled || !impl_->node_session) {
+        std::fill(password.begin(), password.end(), '\0');
+        password.clear();
+        error = "Local identity is unavailable";
+        return false;
+    }
+    try {
+        const bool rotated = impl_->node_session->rotate_local_password(
+            password, error);
+        std::fill(password.begin(), password.end(), '\0');
+        password.clear();
+        return rotated;
+    } catch (const std::exception& ex) {
+        std::fill(password.begin(), password.end(), '\0');
+        password.clear();
+        error = ex.what();
+        return false;
+    }
 }
 
 bool HostRuntime::assembled() const noexcept {

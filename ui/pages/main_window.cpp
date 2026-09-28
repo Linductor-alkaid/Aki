@@ -10,6 +10,7 @@
 // Pending warning、Trusted success、Rejected/Revoked destructive、路径
 // caption 中性徽标）。
 #include "ui/pages/main_window.hpp"
+#include "ui/components/secure_input.hpp"
 
 #include "components/button.h"
 #include "components/dialog.h"
@@ -140,6 +141,60 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
 
     const float width = std::max(screen.width, 1.0f);
     const float height = std::max(screen.height, 1.0f);
+    if (model.needs_password_setup) {
+        const float panel_w = std::min(500.0f, width - 48.0f);
+        const float panel_x = (width - panel_w) * 0.5f;
+        const float panel_y = std::max(40.0f, (height - 350.0f) * 0.5f);
+        ui.rect("aki.setup.bg").size(width, height)
+            .color(tokens.background).build();
+        components::text(ui, "aki.setup.title")
+            .text("Set a local pairing password")
+            .position(panel_x, panel_y)
+            .fontSize(metrics.typography.title).fontWeight(600)
+            .color(tokens.text).build();
+        components::text(ui, "aki.setup.help")
+            .text("Other devices need this password to pair with this device."
+                  " Use at least 8 characters.")
+            .position(panel_x, panel_y + 42.0f)
+            .fontSize(metrics.typography.body).wrap(true)
+            .maxWidth(panel_w).color(semantic.text_subtle).build();
+        secureInput(ui, "aki.setup.password", model.local_password_draft,
+            tokens, panel_x, panel_y + 115.0f, panel_w,
+            metrics.control.field, "Local pairing password");
+        secureInput(ui, "aki.setup.confirm", model.local_password_confirm,
+            tokens, panel_x, panel_y + 175.0f, panel_w,
+            metrics.control.field, "Confirm password");
+        components::button(ui, "aki.setup.save")
+            .position(panel_x, panel_y + 240.0f)
+            .size(panel_w, metrics.control.field)
+            .text("Save password and start Aki")
+            .theme(tokens, true).textColor(semantic.primary_foreground)
+            .onClick([&model] {
+                if (utf8_scalar_count(model.local_password_draft) < 8) {
+                    model.password_feedback = "Use at least 8 characters.";
+                } else if (model.local_password_draft
+                    == "aki-mvp-pairing-passphrase") {
+                    model.password_feedback =
+                        "Choose a password different from the old default.";
+                } else if (model.local_password_draft
+                    != model.local_password_confirm) {
+                    model.password_feedback = "Passwords do not match.";
+                } else {
+                    model.initial_password = std::move(model.local_password_draft);
+                    clear_secret(model.local_password_confirm);
+                    model.needs_password_setup = false;
+                    model.password_feedback.clear();
+                }
+            }).build();
+        if (!model.password_feedback.empty()) {
+            components::text(ui, "aki.setup.feedback")
+                .text(model.password_feedback)
+                .position(panel_x, panel_y + 300.0f)
+                .fontSize(metrics.typography.caption)
+                .color(semantic.destructive).build();
+        }
+        return;
+    }
     const float list_column_width = std::clamp(width * 0.31f,
         kMinListColumnWidth, kMaxListColumnWidth);
     const float list_x = kNavRailWidth + kColumnGap;
@@ -296,7 +351,9 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 const std::string row_id =
                     "aki.devices.row." + device.id.value;
                 const float row_height = compact_rows
-                    ? ((device.can_confirm() || device.can_revoke()) ? 112.0f : 80.0f)
+                    ? ((device.can_begin() || device.can_confirm()
+                            || device.can_reject()
+                            || device.can_revoke()) ? 112.0f : 80.0f)
                     : kDeviceRowHeight;
                 if (row_y + row_height > action_y
                         - metrics.typography.caption * 3.0f
@@ -354,7 +411,9 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                     .build();
                 // 信任徽标（§3 语义色）。
                 components::text(ui, row_id + ".trust")
-                    .text(trust_label(device.trust_state))
+                    .text(device.pairing_failed && device.can_confirm()
+                        ? "Pairing failed - retry"
+                        : trust_label(device.trust_state))
                     .position(content_x + metrics.spacing.section
                             + metrics.spacing.content * 3.0f,
                         compact_rows
@@ -382,7 +441,9 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                         compact_rows ? row_y + row_height
                                 - metrics.spacing.compact
                                 - metrics.typography.hint
-                                - (device.can_confirm() || device.can_revoke()
+                                - (device.can_begin() || device.can_confirm()
+                                    || device.can_reject()
+                                    || device.can_revoke()
                                        ? metrics.control.menuItem
                                            + metrics.spacing.compact
                                            + metrics.spacing.tiny
@@ -411,6 +472,23 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                     ? row_y + row_height - metrics.control.menuItem
                         - metrics.spacing.compact
                     : row_y + (row_height - metrics.control.menuItem) * 0.5f;
+                if (device.can_begin() && model.actions) {
+                    components::button(ui, row_id + ".begin")
+                        .position(button_x, button_y)
+                        .size(action_button_width, metrics.control.menuItem)
+                        .text("Connect")
+                        .fontSize(metrics.typography.caption)
+                        .theme(tokens, true)
+                        .textColor(semantic.primary_foreground)
+                        .radius(metrics.radius.small)
+                        .onClick([&model, id = device.id.value] {
+                            const bool admitted = model.actions->begin_pairing(
+                                aki::device::DeviceId{id});
+                            model.last_action_feedback = admitted
+                                ? "Connection request submitted for " + id
+                                : "Connection request rejected";
+                        }).build();
+                }
                 if (device.can_confirm() && model.actions) {
                     components::button(ui, row_id + ".confirm")
                         .position(button_x, button_y)
@@ -422,12 +500,17 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                         .radius(metrics.radius.small)
                         .onClick([&model, id = device.id.value] {
                             model.pending_confirm_device = id;
+                            model.peer_password_feedback.clear();
                         })
                         .build();
+                }
+                if (device.can_reject() && model.actions) {
                     components::button(ui, row_id + ".reject")
-                        .position(button_x + action_button_width
-                                + metrics.spacing.compact,
-                            button_y)
+                        .position(button_x
+                                + (device.can_confirm()
+                                    ? action_button_width
+                                        + metrics.spacing.compact
+                                    : 0.0f), button_y)
                         .size(action_button_width, metrics.control.menuItem)
                         .text("Reject")
                         .fontSize(metrics.typography.caption)
@@ -536,7 +619,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
         } else if (model.page == NavPage::Settings) {
             // ---- Settings 页（M5-07，SCOPE-12 主题三选 + 最小设置项）----
             composeSettingsPage(ui, tokens, semantic, content_x, 0.0f,
-                content_width, height, model);
+                content_width, height, width, height, model);
         } else {
             components::text(ui, "aki.content.placeholder")
                 .text(navPageTitle(model.page))
@@ -570,15 +653,15 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 .build();
         }
 
-        // ---- 信任确认弹窗（M5-04；aki_ui_design §3：mono 指纹确认，
-        //      无口令输入框；页面持有 open 态）----
+        // ---- 信任确认弹窗：指纹 + 对端本机口令（DEC-018）----
         const bool dialog_open = !model.pending_confirm_device.empty();
         if (dialog_open && model.actions) {
+            const float dialog_width = std::min(560.0f, width - 32.0f);
             components::dialog(ui, "aki.devices.confirm")
                 .open(true)
                 .theme(tokens)
                 .screen(width, height)
-                .size(560.0f, 260.0f)
+                .size(dialog_width, 330.0f)
                 .content([&] {
                     components::text(ui, "aki.devices.confirm.title")
                         .text("Confirm pairing")
@@ -609,9 +692,26 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                         .fontFamily("Mono")
                         .color(tokens.text)
                         .build();
+                    components::text(ui, "aki.devices.confirm.password.label")
+                        .text("Peer device password")
+                        .position(metrics.spacing.section, 143.0f)
+                        .fontSize(metrics.typography.caption)
+                        .color(tokens.text).build();
+                    secureInput(ui, "aki.devices.confirm.password",
+                        model.peer_password_draft, tokens,
+                        metrics.spacing.section, 166.0f,
+                        dialog_width - metrics.spacing.section * 2.0f,
+                        metrics.control.field, "Password set on the peer");
+                    if (!model.peer_password_feedback.empty()) {
+                        components::text(ui, "aki.devices.confirm.error")
+                            .text(model.peer_password_feedback)
+                            .position(metrics.spacing.section, 222.0f)
+                            .fontSize(metrics.typography.caption)
+                            .color(semantic.destructive).build();
+                    }
                     components::button(ui, "aki.devices.confirm.yes")
                         .position(metrics.spacing.section,
-                            260.0f - metrics.control.field
+                            330.0f - metrics.control.field
                                 - metrics.spacing.section)
                         .size(180.0f, metrics.control.field)
                         .text("Confirm pairing")
@@ -620,20 +720,28 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                         .textColor(semantic.primary_foreground)
                         .radius(metrics.radius.small)
                         .onClick([&model] {
+                            if (model.peer_password_draft.empty()) {
+                                model.peer_password_feedback =
+                                    "Enter the peer device password";
+                                return;
+                            }
                             const bool admitted =
                                 model.actions->confirm_pairing(
                                     aki::device::DeviceId{
-                                        model.pending_confirm_device});
+                                        model.pending_confirm_device},
+                                    std::move(model.peer_password_draft));
                             model.last_action_feedback =
                                 admitted ? "pairing submitted for "
                                        + model.pending_confirm_device
                                          : "pairing submit rejected";
                             model.pending_confirm_device.clear();
+                            model.peer_password_feedback.clear();
+                            clear_secret(model.peer_password_draft);
                         })
                         .build();
                     components::button(ui, "aki.devices.confirm.no")
-                        .position(560.0f - metrics.spacing.section - 140.0f,
-                            260.0f - metrics.control.field
+                        .position(dialog_width - metrics.spacing.section - 140.0f,
+                            330.0f - metrics.control.field
                                 - metrics.spacing.section)
                         .size(140.0f, metrics.control.field)
                         .text("Cancel")
@@ -642,6 +750,8 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                         .radius(metrics.radius.small)
                         .onClick([&model] {
                             model.pending_confirm_device.clear();
+                            model.peer_password_feedback.clear();
+                            clear_secret(model.peer_password_draft);
                         })
                         .build();
                 })
@@ -649,6 +759,8 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 .onOpenChange([&model](bool open) {
                     if (!open) {
                         model.pending_confirm_device.clear();
+                        model.peer_password_feedback.clear();
+                        clear_secret(model.peer_password_draft);
                     }
                 })
                 .build();

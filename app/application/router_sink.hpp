@@ -36,6 +36,12 @@ public:
         return devices_.enqueue_discovered(std::move(device));
     }
 
+    bool on_pairing_ready(aki::device::DeviceId device,
+        aki::device::PublicKey public_key = {}) {
+        return devices_.enqueue_pairing_ready(std::move(device),
+            std::move(public_key));
+    }
+
     bool on_device_connected(aki::device::DeviceId device,
         aki::device::ConnectionPath path) override {
         const bool device_admitted = devices_.enqueue_connected(device, path);

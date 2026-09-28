@@ -67,7 +67,7 @@ TEST_CASE("Device views derive identity, per-device path and trust ops",
     aki::app::DeviceStore store;
     auto alpha = make_device("alpha",
         aki::device::TrustState::Trusted, aki::device::PresenceState::Online);
-    alpha.public_key.bytes = {1, 2, 3};
+    alpha.public_key.bytes.assign(32, 7);
     store.devices.push_back(alpha);
     auto pending = make_device("beta", aki::device::TrustState::Pending);
     store.devices.push_back(pending);  // 公钥为空 → 指纹不可用态。
@@ -94,15 +94,16 @@ TEST_CASE("Device views derive identity, per-device path and trust ops",
     REQUIRE(views[1].connection_path == aki::device::ConnectionPath::Relay);
     REQUIRE(views[1].presence == aki::device::PresenceState::Offline);
 
-    // 指纹可用性：公钥在场 = 可用；缺失 = 显式不可用。
+    // 指纹可用性：完整 32 字节公钥 = 可用；缺失 = 显式不可用。
     REQUIRE(views[0].fingerprint_available);
     REQUIRE_FALSE(views[1].fingerprint_available);
 
-    // 信任操作可用性（§4 转移边）：仅 Pending 可确认/拒绝、仅 Trusted 可撤销。
+    // 信任操作可用性：Pending 且有完整指纹可确认，Pending 可拒绝；
+    // Trusted 可撤销。
     REQUIRE(views[0].can_revoke());
     REQUIRE_FALSE(views[0].can_confirm());
     REQUIRE_FALSE(views[0].can_reject());
-    REQUIRE(views[1].can_confirm());
+    REQUIRE_FALSE(views[1].can_confirm());
     REQUIRE(views[1].can_reject());
     REQUIRE_FALSE(views[1].can_revoke());
 }

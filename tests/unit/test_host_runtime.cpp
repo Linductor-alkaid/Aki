@@ -20,6 +20,7 @@
 // 日志证据归档（aki-run.log；RULE-11 渲染层不进 CI）——本文件锁定其委托的
 // 同一 HostRuntime::shutdown_with_report 编排。
 #include "app/lifecycle/host_runtime.hpp"
+#include "heyaki/adapter/local_identity.hpp"
 
 #include <catch2/catch_session.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -96,13 +97,26 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     const auto& assembly =
         host.ensure_assembled(data_root.string(), [wake_calls] {
             wake_calls->fetch_add(1);  // GUI 侧此处为 app::requestUpdate()。
-        });
+        }, "test-local-password");
     REQUIRE(host.assembled());
     REQUIRE(assembly.ok);
     REQUIRE(assembly.failure_reason.empty());
     REQUIRE(assembly.recovered_devices == 0);
     REQUIRE(assembly.recovered_conversations == 0);
     REQUIRE(assembly.recovered_messages == 0);
+    std::string password_error;
+    REQUIRE(host.set_local_pairing_password("rotated-password",
+        password_error));
+    REQUIRE(password_error.empty());
+    auto profile_after_rotation = aki::heyaki::LocalProfile::open(
+        data_root.string());
+    const auto verifier = profile_after_rotation.store().password_verifier();
+    REQUIRE(verifier.has_value());
+    REQUIRE(verifier.value_if()->has_value());
+    const auto matched = ::heyaki::verify_password(
+        "rotated-password", **verifier.value_if());
+    REQUIRE(matched.has_value());
+    REQUIRE(*matched.value_if());
     REQUIRE(assembly.recovered_transfers == 0);
     // 空根首开：v1 schema 引导迁移恰一步（0→1）；tmp 清扫零孤儿。
     REQUIRE(assembly.migrations_applied == 1);

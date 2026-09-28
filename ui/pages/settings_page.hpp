@@ -29,6 +29,7 @@ struct MainWindowModel;  // settings_page.cpp 消费完整定义（main_window.h
 void composeSettingsPage(eui::Ui& ui,
     const components::theme::ThemeColorTokens& tokens,
     const AkiSemanticPalette& semantic, float x, float y, float width,
-    float height, MainWindowModel& model);
+    float height, float screen_width, float screen_height,
+    MainWindowModel& model);
 
 }  // namespace aki::ui

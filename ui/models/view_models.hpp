@@ -42,12 +42,19 @@ struct DeviceView {
     // 无条目 = Unknown——M5-04 退役全局单值摘要）。
     aki::device::ConnectionPath connection_path = aki::device::ConnectionPath::Unknown;
     // 公钥指纹可用性（指纹=DeviceId 规范串 hy1_…，即 id 字段本身；relay
-    // 等来源可能缺公钥——缺失态显式呈现，不以 DeviceId 冒充已验证指纹）。
+    // 等来源可能缺完整的 32 字节公钥——缺失态显式呈现，不以 DeviceId
+    // 冒充已验证指纹）。
     bool fingerprint_available = false;
+    bool pairing_failed = false;
 
     // 信任操作可用性（§4 固定转移边；M5-04 信任操作面）。
     [[nodiscard]] bool can_confirm() const noexcept {
-        return trust_state == aki::device::TrustState::Pending;
+        return trust_state == aki::device::TrustState::Pending
+            && fingerprint_available;
+    }
+    [[nodiscard]] bool can_begin() const noexcept {
+        return trust_state == aki::device::TrustState::Unknown
+            && fingerprint_available;
     }
     [[nodiscard]] bool can_reject() const noexcept {
         return trust_state == aki::device::TrustState::Pending;

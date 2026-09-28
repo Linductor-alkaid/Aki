@@ -25,11 +25,18 @@ struct DeviceConnectionPathEntry {
         const DeviceConnectionPathEntry&) = default;
 };
 
+struct DevicePairingFailureEntry {
+    aki::device::DeviceId device;
+    bool failed = false;
+};
+
 struct DeviceStore {
     std::vector<aki::device::DeviceIdentity> devices;
     // 逐设备连接路径（DEC-015）：按设备键 upsert；向量形态（设备预算
     // 256，线性查找在预算内，RULE-09）保持 AppState 值语义可比较。
     std::vector<DeviceConnectionPathEntry> connection_paths;
+    // 易失的配对失败提示；每设备最多一条，不持久化、无明文口令。
+    std::vector<DevicePairingFailureEntry> pairing_failures;
 };
 
 struct ConversationStore {

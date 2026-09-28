@@ -72,6 +72,7 @@ struct PeerSessionEvents {
     std::function<void(const aki::device::DeviceId&,
         aki::device::ConnectionPath)>
         on_connection_path_changed;
+    std::function<void(const aki::device::DeviceId&)> on_pairing_ready;
 };
 
 // 纯函数 diff：prev → curr 的 authenticated↔closed 变化与路径变化。
@@ -97,6 +98,12 @@ inline void diff_peer_sessions(
         const auto previous = prev_by_key.find(key);
         const bool was_authenticated =
             previous != prev_by_key.end() && previous->second.authenticated;
+        if (view.pairing_restricted
+            && (previous == prev_by_key.end()
+                || !previous->second.pairing_restricted)
+            && events.on_pairing_ready) {
+            events.on_pairing_ready(view.device_id);
+        }
         if (view.authenticated && !was_authenticated) {
             if (events.on_connected) {
                 events.on_connected(view.device_id,

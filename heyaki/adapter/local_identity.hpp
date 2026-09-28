@@ -15,10 +15,8 @@
 // 宿主配置决定（M3-03，如实记录）：secret_backend.prefer_os_backend = false——
 // 控制台宿主与自动化测试需要确定性（不依赖 OS 钥匙串），走 heyaki 加密文件
 // 回退（allow_encrypted_file_fallback 默认 true）；OS 后端集成属后续设置面
-// 议题（M5）。password_verifier 自 M5-04 起为 kAkiPairingPassword 的真实
-// argon2id verifier（DEC-016——M3-03 占位串为假编码、验不了任何口令，已
-// 退役；存量 profile 处置见 DEC-016「影响与风险」：删除 db/profile.sqlite
-// 重建，不静默迁移）。pairing 默认授予 scope 取 DEC-006 冻结常量
+// 议题（M5）。password_verifier 使用用户设置的本机口令生成（DEC-018）；
+// 不持久化明文。pairing 默认授予 scope 取 DEC-006 冻结常量
 // message.send。
 #pragma once
 
@@ -30,10 +28,13 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -41,13 +42,8 @@ namespace aki::heyaki {
 
 // DEC-006 冻结常量：application_id。
 inline constexpr char kAkiApplicationId[] = "org.aki.app";
-
-// DEC-016 冻结常量：MVP 配对授权口令（≥8 个 Unicode 标量，满足
-// PasswordSecurityPolicy.minimum_unicode_scalars）。目标端以其验证 pair_peer
-// 提交（verifier 同批真实化）；在 heyaki/adapter→DeviceManager 内部传递，
-// 不进 SPI/UiActions 签名。固定口令=公开弱口令（安全语义披露见 DEC-016），
-// 移除条件：M5-07 设置面引入用户口令。
-inline constexpr char kAkiPairingPassword[] = "aki-mvp-pairing-passphrase";
+// DEC-016 旧版公开口令仅用于识别并迁移存量 profile；不得用于新配对。
+inline constexpr char kLegacyPairingPassword[] = "aki-mvp-pairing-passphrase";
 
 // 本地身份（std/aki 类型公开面）。
 struct LocalIdentity {
@@ -63,13 +59,37 @@ struct LocalIdentity {
 // store() 供 heyaki/ 层内接线（heyaki/session）使用；组合根只见 identity()。
 class LocalProfile {
 public:
+    [[nodiscard]] static bool requires_password_setup(
+        const std::string& data_root) {
+        namespace hh = ::heyaki;
+        const auto path = std::filesystem::path{data_root} / "db"
+            / "profile.sqlite";
+        if (!std::filesystem::exists(path)) return true;
+        hh::ProfileOpenOptions options;
+        options.secret_backend.prefer_os_backend = false;
+        auto opened = hh::ProfileStore::open(path, options);
+        if (!opened) {
+            throw std::runtime_error("local identity: profile open failed");
+        }
+        return password_needs_replacement(*opened.value_if());
+    }
+
     // create-or-open + readiness 收敛（语义同 provision_local_identity）。
-    [[nodiscard]] static LocalProfile open(const std::string& data_root) {
+    [[nodiscard]] static LocalProfile open(const std::string& data_root,
+        std::string_view initial_password = {}) {
         namespace hh = ::heyaki;
 
         const auto profile_path =
             std::filesystem::path{data_root} / "db" / "profile.sqlite";
         const bool created = !std::filesystem::exists(profile_path);
+        if (initial_password == kLegacyPairingPassword) {
+            throw std::invalid_argument(
+                "local identity: choose a different pairing password");
+        }
+        if (created && initial_password.empty()) {
+            throw std::invalid_argument(
+                "local identity: first launch requires a pairing password");
+        }
 
         hh::ProfileOpenOptions options;
         options.secret_backend.prefer_os_backend = false;  // 确定性（见头注）
@@ -85,7 +105,14 @@ public:
         }
 
         LocalProfile profile(std::move(*profile_result.value_if()), created);
-        profile.converge_local_initialization();
+        profile.converge_local_initialization(initial_password);
+        if (!created && password_needs_replacement(profile.store_)) {
+            if (initial_password.empty()) {
+                throw std::invalid_argument("local identity: existing profile "
+                    "requires a new pairing password");
+            }
+            profile.set_pairing_password(initial_password);
+        }
         profile.refresh_identity();
         return profile;
     }
@@ -103,13 +130,51 @@ public:
     // （RULE-10：heyaki 类型不出层）。
     [[nodiscard]] ::heyaki::ProfileStore& store() noexcept { return store_; }
 
+    // 既有身份上更换 verifier；generation 单调递增。旧 grant 不自动撤销。
+    void set_pairing_password(std::string_view password) {
+        namespace hh = ::heyaki;
+        if (password == kLegacyPairingPassword) {
+            throw std::invalid_argument(
+                "local identity: choose a different pairing password");
+        }
+        auto verifier = hh::create_password_verifier(
+            password, hh::PasswordHashParameters{});
+        if (!verifier) {
+            throw std::invalid_argument("local identity: pairing password must "
+                "meet Heyaki password policy");
+        }
+        auto generation = store_.password_generation();
+        if (!generation || *generation.value_if()
+                == std::numeric_limits<std::uint64_t>::max()) {
+            throw std::runtime_error("local identity: password generation unavailable");
+        }
+        auto updated = store_.set_password_verifier(*verifier.value_if(),
+            *generation.value_if() + 1U);
+        if (!updated) {
+            throw std::runtime_error("local identity: set_password_verifier failed");
+        }
+    }
+
 private:
+    [[nodiscard]] static bool password_needs_replacement(
+        ::heyaki::ProfileStore& store) {
+        namespace hh = ::heyaki;
+        auto verifier = store.password_verifier();
+        if (!verifier) {
+            throw std::runtime_error("local identity: password verifier unreadable");
+        }
+        if (!verifier.value_if()->has_value()) return true;
+        auto legacy = hh::verify_password(kLegacyPairingPassword,
+            **verifier.value_if());
+        return !legacy || *legacy.value_if();
+    }
+
     LocalProfile(::heyaki::ProfileStore store, bool created)
         : store_(std::move(store)) {
         identity_.created = created;
     }
 
-    void converge_local_initialization() {
+    void converge_local_initialization(std::string_view initial_password) {
         namespace hh = ::heyaki;
         auto readiness = store_.local_readiness(kAkiApplicationId);
         if (!readiness) {
@@ -122,11 +187,12 @@ private:
         if (readiness.value_if()->ready()) {
             return;
         }
-        // DEC-016：真实 argon2id verifier（kAkiPairingPassword 的摘要）——
-        // 仅 created 分支承担创建耗时（m=64MiB/t=2，启动恢复段主线程同步，
-        // §11.1 ②）。存量 profile（占位 verifier）不在此触达：处置见头注。
+        if (initial_password.empty()) {
+            throw std::invalid_argument(
+                "local identity: first launch requires a pairing password");
+        }
         auto verifier = hh::create_password_verifier(
-            kAkiPairingPassword, hh::PasswordHashParameters{});
+            initial_password, hh::PasswordHashParameters{});
         if (!verifier) {
             const auto* error = verifier.error_if();
             throw std::runtime_error(
@@ -188,8 +254,8 @@ private:
 
 // 便捷形态（M3-03）：供给身份后即关闭 profile（无 Node 装配的场景）。
 [[nodiscard]] inline LocalIdentity provision_local_identity(
-    const std::string& data_root) {
-    return LocalProfile::open(data_root).identity();
+    const std::string& data_root, std::string_view initial_password = {}) {
+    return LocalProfile::open(data_root, initial_password).identity();
 }
 
 }  // namespace aki::heyaki

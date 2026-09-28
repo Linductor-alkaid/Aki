@@ -3,6 +3,9 @@
 // FollowSystem 的系统主题查询仅在点击回调上下文（有界注册表读取）执行，
 // compose 只读派生）。
 #include "ui/pages/settings_page.hpp"
+#include "ui/components/secure_input.hpp"
+
+#include "components/dialog.h"
 
 #include "ui/pages/main_window.hpp"
 
@@ -30,7 +33,8 @@ void set_feedback(MainWindowModel& model, std::string text) {
 
 void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
     const AkiSemanticPalette& semantic, float x, float y, float width,
-    float height, MainWindowModel& model) {
+    float height, float screen_width, float screen_height,
+    MainWindowModel& model) {
     (void)height;  // 纵向自然布局，无底部锚定元素（M5-07 形态）。
     const auto& metrics = tokens.metrics;
     const float pad_x = x + metrics.spacing.section;
@@ -152,6 +156,105 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
         .maxWidth(content_width)
         .color(semantic.text_subtle)
         .build();
+
+    row_y += metrics.typography.caption + metrics.spacing.section;
+    if (model.actions && model.actions->set_local_pairing_password) {
+        components::button(ui, "aki.settings.password.open")
+            .position(pad_x, row_y)
+            .size(std::min(260.0f, content_width), metrics.control.field)
+            .text("Change local pairing password")
+            .theme(tokens, false)
+            .onClick([&model] {
+                model.password_feedback.clear();
+                model.password_change_open = true;
+            })
+            .build();
+    }
+
+    if (model.password_change_open && model.actions) {
+        const float dialog_width = std::min(560.0f, screen_width - 32.0f);
+        components::dialog(ui, "aki.settings.password.dialog")
+            .open(true).theme(tokens).screen(screen_width, screen_height)
+            .size(dialog_width, 330.0f)
+            .content([&] {
+                components::text(ui, "aki.settings.password.title")
+                    .text("Change local pairing password")
+                    .position(metrics.spacing.section,
+                        metrics.spacing.section)
+                    .fontSize(metrics.typography.subtitle).fontWeight(600)
+                    .color(tokens.text).build();
+                components::text(ui, "aki.settings.password.help")
+                    .text("Other devices will need the new password when pairing.")
+                    .position(metrics.spacing.section, 63.0f)
+                    .fontSize(metrics.typography.caption)
+                    .color(semantic.text_subtle).build();
+                secureInput(ui, "aki.settings.password.new",
+                    model.local_password_draft, tokens,
+                    metrics.spacing.section, 105.0f,
+                    dialog_width - metrics.spacing.section * 2.0f,
+                    metrics.control.field, "New password (8+ characters)");
+                secureInput(ui, "aki.settings.password.confirm",
+                    model.local_password_confirm, tokens,
+                    metrics.spacing.section, 165.0f,
+                    dialog_width - metrics.spacing.section * 2.0f,
+                    metrics.control.field, "Confirm new password");
+                if (!model.password_feedback.empty()) {
+                    components::text(ui, "aki.settings.password.error")
+                        .text(model.password_feedback)
+                        .position(metrics.spacing.section, 219.0f)
+                        .fontSize(metrics.typography.caption)
+                        .color(semantic.destructive).build();
+                }
+                components::button(ui, "aki.settings.password.save")
+                    .position(metrics.spacing.section, 260.0f)
+                    .size(160.0f, metrics.control.field)
+                    .text("Save password")
+                    .theme(tokens, true)
+                    .textColor(semantic.primary_foreground)
+                    .onClick([&model] {
+                        if (utf8_scalar_count(model.local_password_draft) < 8) {
+                            model.password_feedback =
+                                "Use at least 8 characters";
+                            return;
+                        }
+                        if (model.local_password_draft
+                            != model.local_password_confirm) {
+                            model.password_feedback =
+                                "Passwords do not match";
+                            return;
+                        }
+                        std::string error;
+                        const bool saved =
+                            model.actions->set_local_pairing_password(
+                                std::move(model.local_password_draft), error);
+                        clear_secret(model.local_password_draft);
+                        clear_secret(model.local_password_confirm);
+                        model.password_feedback = saved ? "" : error;
+                        if (saved) model.last_action_feedback =
+                            "Local pairing password updated";
+                        if (saved) model.password_change_open = false;
+                    }).build();
+                components::button(ui, "aki.settings.password.cancel")
+                    .position(dialog_width - metrics.spacing.section - 140.0f,
+                        260.0f)
+                    .size(140.0f, metrics.control.field)
+                    .text("Cancel").theme(tokens, false)
+                    .onClick([&model] {
+                        model.password_change_open = false;
+                        model.password_feedback.clear();
+                        clear_secret(model.local_password_draft);
+                        clear_secret(model.local_password_confirm);
+                    }).build();
+            })
+            .onOpenChange([&model](bool open) {
+                if (!open) {
+                    model.password_change_open = false;
+                    model.password_feedback.clear();
+                    clear_secret(model.local_password_draft);
+                    clear_secret(model.local_password_confirm);
+                }
+            }).build();
+    }
 }
 
 }  // namespace aki::ui

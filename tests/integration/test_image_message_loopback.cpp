@@ -66,7 +66,7 @@ bool wait_until(const std::function<bool()>& predicate,
 // 节点域（同 M3-04/M3-05 测试形态：独立测试 ExecutorOwner + 借用 Runtime）。
 struct NodeDomain {
     explicit NodeDomain(const std::string& root)
-        : profile(LocalProfile::open(root)),
+        : profile(LocalProfile::open(root, "test-local-password")),
           executor_options([] {
               aki::app::ExecutorOwnerOptions options;
               options.executor_config.min_threads = 2;
@@ -161,8 +161,8 @@ TEST_CASE("Two-node image messaging over the borrowed runtime",
         [&](const DeviceId& peer, bool ok, const std::string&) {
             if (ok && peer == identity_a.id) paired_b.store(true);
         });
-    REQUIRE(side_a.pair_peer(identity_b.id, aki::heyaki::kAkiPairingPassword));
-    REQUIRE(side_b.pair_peer(identity_a.id, aki::heyaki::kAkiPairingPassword));
+    REQUIRE(side_a.pair_peer(identity_b.id, "test-local-password"));
+    REQUIRE(side_b.pair_peer(identity_a.id, "test-local-password"));
     if (!wait_until(
             [&] { return (paired_a.load() && paired_b.load()); }, 20s)) {
         // 环境受限降级（沿 M3-04/05/09 纪律，不冒充已验证）。

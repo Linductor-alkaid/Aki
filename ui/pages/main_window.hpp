@@ -46,6 +46,14 @@ struct MainWindowModel {
     // HostRuntime 装配失败降级占位（§9.1 启动↔关闭配对：错误占位 UI + 关窗
     // 仍经 onShutdown 闭合）；空 = 装配成功。
     std::string startup_error;
+    bool needs_password_setup = false;
+    std::string local_password_draft;
+    std::string local_password_confirm;
+    std::string initial_password;
+    std::string password_feedback;
+    bool password_change_open = false;
+    std::string peer_password_draft;
+    std::string peer_password_feedback;
 
     // ---- M5-03 消费面与出站面（宿主装配，页面只读消费）----
     // 快照消费水位与最近派生视图（宿主 compose 前经 consume_ui_state 推进；

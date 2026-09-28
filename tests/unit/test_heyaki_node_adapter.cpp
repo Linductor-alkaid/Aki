@@ -60,7 +60,7 @@ std::string temp_root(const std::string& tag) {
 // 节点域（独立 profile + 独立测试 ExecutorOwner + 借用 Runtime，沿 M3-04 形态）。
 struct NodeDomain {
     explicit NodeDomain(const std::string& root)
-        : profile(LocalProfile::open(root)),
+        : profile(LocalProfile::open(root, "test-local-password")),
           executor_options([] {
               ExecutorOwnerOptions options;
               options.executor_config.min_threads = 2;

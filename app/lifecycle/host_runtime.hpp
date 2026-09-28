@@ -102,7 +102,11 @@ public:
     // assembled()==false 且 failure_reason 非空——调用方以错误占位呈现，
     // 关闭仍经 shutdown_with_report()（幂等）闭合。
     const HostAssemblyReport& ensure_assembled(std::string data_root = {},
-        std::function<void()> wake = {});
+        std::function<void()> wake = {}, std::string initial_password = {});
+
+    // 主线程设置本机配对 verifier；返回 false 时 error 为可展示原因。
+    [[nodiscard]] bool set_local_pairing_password(std::string password,
+        std::string& error);
 
     [[nodiscard]] bool assembled() const noexcept;
     [[nodiscard]] bool assembly_failed() const noexcept;

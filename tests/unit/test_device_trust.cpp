@@ -121,11 +121,22 @@ TEST_CASE("Pairing completion routes to trust transitions (Pending edges)",
     stack.settle();
     REQUIRE(stack.trust_of("alpha") == aki::device::TrustState::Trusted);
 
-    // 配对失败 → Rejected（Pending→Rejected 合法边）。
+    // 配对失败保留 Pending，允许修正口令后重试；失败标志经快照可见。
     REQUIRE(stack.adapter.inject_pairing_completed(
         aki::device::DeviceId{"beta"}, false, "password mismatch"));
     stack.settle();
-    REQUIRE(stack.trust_of("beta") == aki::device::TrustState::Rejected);
+    REQUIRE(stack.trust_of("beta") == aki::device::TrustState::Pending);
+    executor::comm::Snapshot<AppState> snapshot;
+    REQUIRE(stack.state.try_load_snapshot(snapshot));
+    REQUIRE(snapshot.value.devices.pairing_failures.size() == 2);
+    REQUIRE(snapshot.value.devices.pairing_failures.back().device.value
+        == "beta");
+    REQUIRE(snapshot.value.devices.pairing_failures.back().failed);
+
+    REQUIRE(stack.actions.confirm_pairing(
+        aki::device::DeviceId{"beta"}, "corrected-password"));
+    stack.settle();
+    REQUIRE(stack.trust_of("beta") == aki::device::TrustState::Trusted);
 
     // 未知设备的配对结果：入队 admission true（RouterSink 层），业务面拒绝
     // 经 DM handler_rejections 可见（RULE-09：可见性分层——状态不变）。
@@ -165,7 +176,7 @@ TEST_CASE("DeviceManager trust operations respect the fixed transition edges",
     // 非法转移边：对 Rejected 行 confirm——wire 提交 admission 可见，Fake
     // 默认成功结果落地时 owner 状态机拒绝 Rejected→Trusted（状态不变）。
     const auto rejected_before = stack.state.stats().updates_rejected;
-    REQUIRE(stack.devices.confirm_pairing(aki::device::DeviceId{"alpha"}));
+    REQUIRE(stack.devices.confirm_pairing(aki::device::DeviceId{"alpha"}, "test-local-password"));
     stack.settle();
     REQUIRE(stack.trust_of("alpha") == aki::device::TrustState::Rejected);
     REQUIRE(stack.state.stats().updates_rejected == rejected_before + 1);
@@ -191,7 +202,7 @@ TEST_CASE("UiActions trust channel reaches the manager pump and the SPI",
     stack.settle();
 
     // 页面 → UiActions → DM 泵 → Fake SPI（confirm 记录 + 默认成功结果）。
-    REQUIRE(stack.actions.confirm_pairing(aki::device::DeviceId{"alpha"}));
+    REQUIRE(stack.actions.confirm_pairing(aki::device::DeviceId{"alpha"}, "test-local-password"));
     stack.settle();
     REQUIRE(stack.adapter.pairing_submits().size() == 1);
     REQUIRE(stack.adapter.pairing_submits()[0].value == "alpha");
@@ -209,6 +220,50 @@ TEST_CASE("UiActions trust channel reaches the manager pump and the SPI",
     REQUIRE(stack.actions.revoke_device(aki::device::DeviceId{"alpha"}));
     stack.settle();
     REQUIRE(stack.trust_of("alpha") == aki::device::TrustState::Revoked);
+}
+
+TEST_CASE("Discovered device can connect before password confirmation",
+    "[unit][device_trust][dec018]") {
+    TrustStack stack;
+    REQUIRE(stack.state.submit_update(
+        UpsertDevice{make_device("alpha", aki::device::TrustState::Unknown)}));
+    stack.settle();
+    REQUIRE(stack.actions.begin_pairing(aki::device::DeviceId{"alpha"}));
+    stack.settle();
+    REQUIRE(stack.adapter.pairing_begins().size() == 1);
+    REQUIRE(stack.trust_of("alpha") == aki::device::TrustState::Unknown);
+
+    REQUIRE(stack.router.on_pairing_ready(aki::device::DeviceId{"alpha"}));
+    stack.settle();
+    REQUIRE(stack.trust_of("alpha") == aki::device::TrustState::Pending);
+    stack.adapter.set_expected_pairing_password("peer-owned-password");
+    REQUIRE(stack.actions.confirm_pairing(
+        aki::device::DeviceId{"alpha"}, "wrong-password"));
+    stack.settle();
+    REQUIRE(stack.trust_of("alpha") == aki::device::TrustState::Pending);
+    REQUIRE(stack.actions.confirm_pairing(
+        aki::device::DeviceId{"alpha"}, "peer-owned-password"));
+    stack.settle();
+    REQUIRE(stack.trust_of("alpha") == aki::device::TrustState::Trusted);
+}
+
+TEST_CASE("Incoming restricted session is confirmable without starting scan",
+    "[unit][device_trust][dec018]") {
+    TrustStack stack;
+    aki::device::PublicKey key;
+    key.bytes.assign(32, 7);
+    REQUIRE(stack.router.on_pairing_ready(
+        aki::device::DeviceId{"incoming-peer"}, key));
+    stack.settle();
+    REQUIRE(stack.trust_of("incoming-peer")
+        == aki::device::TrustState::Pending);
+    executor::comm::Snapshot<AppState> snapshot;
+    REQUIRE(stack.state.try_load_snapshot(snapshot));
+    const auto views = aki::ui::models::derive_device_views(
+        snapshot.value.devices);
+    REQUIRE(views.size() == 1);
+    REQUIRE(views.front().fingerprint_available);
+    REQUIRE(views.front().can_confirm());
 }
 
 TEST_CASE("Connected carries the mapped path and disconnect resets to Unknown",

@@ -43,6 +43,7 @@
 #include <executor/executor.hpp>
 
 #include <atomic>
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -107,6 +108,7 @@ public:
                             aki::device::ConnectionPath path) {
                             deliver_path_changed(peer, path);
                         },
+                    .on_pairing_ready = {},
                 });
         }
         options_.session->set_message_handlers(
@@ -338,15 +340,23 @@ public:
     }
 
     // ---- 信任操作出站（M5-04，DEC-006 映射 3；设计 §8.1）----
-    // 口令为 DEC-016 冻结常量（本层内传递，不进 SPI 签名）；scope 冻结
+    // 口令由用户输入并经 SPI 传入（DEC-018）；scope 冻结
     // {message.send, file.push:inbox}（NodeSession::pair_peer 缺省即该集）。
     // 结果经 set_pairing_observer（构造时登记）→ on_pairing_completed 投递。
-    [[nodiscard]] bool confirm_pairing(
+    [[nodiscard]] bool begin_pairing(
         const aki::device::DeviceId& peer) override {
+        return !peer.empty() && options_.session->connect_lan(peer);
+    }
+
+    [[nodiscard]] bool confirm_pairing(
+        const aki::device::DeviceId& peer, std::string password) override {
         if (peer.empty()) {
             return false;  // 有界校验（EXEC-02 出站面）。
         }
-        return options_.session->pair_peer(peer, kAkiPairingPassword);
+        const bool submitted = options_.session->pair_peer(peer, password);
+        std::fill(password.begin(), password.end(), '\0');
+        password.clear();
+        return submitted;
     }
 
     [[nodiscard]] bool revoke_trust(

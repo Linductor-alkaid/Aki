@@ -69,7 +69,7 @@ int main(int argc, char** argv) {
     std::printf("devices: this host (real heyaki identity)\n");
     std::printf("data root: %s\n", run_root.c_str());
 
-    const auto& assembly = host.ensure_assembled(run_root);
+    const auto& assembly = host.ensure_assembled(run_root, {}, "test-local-password");
     if (!assembly.ok) {
         // 干净失败（M2-07 验收 ②）：输出原因 + 非零退出，不静默。
         std::printf("[FATAL] startup recovery failed: %s\n",
@@ -169,7 +169,7 @@ int main(int argc, char** argv) {
     aki::heyaki::LocalIdentity reopened_identity;
     try {
         reopened = aki::persistence::perform_startup_recovery(run_root);
-        reopened_identity = aki::heyaki::provision_local_identity(run_root);
+        reopened_identity = aki::heyaki::provision_local_identity(run_root, "test-local-password");
     } catch (const std::exception& error) {
         report(false, std::string("reopen recovery failed: ") + error.what());
     }
