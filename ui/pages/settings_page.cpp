@@ -10,6 +10,7 @@
 #include "components/segmented.h"
 #include "components/text.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 
@@ -34,6 +35,7 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
     const auto& metrics = tokens.metrics;
     const float pad_x = x + metrics.spacing.section;
     const float content_width = width - metrics.spacing.section * 2.0f;
+    const float segmented_width = std::min(420.0f, content_width);
 
     components::text(ui, "aki.settings.title")
         .text("Settings")
@@ -56,10 +58,10 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
     row_y += metrics.typography.body + metrics.spacing.compact;
     ui.stack("aki.settings.theme.segmented.wrap")
         .position(pad_x, row_y)
-        .size(420.0f, metrics.control.field)
+        .size(segmented_width, metrics.control.field)
         .content([&] {
             components::segmented(ui, "aki.settings.theme.segmented")
-                .size(420.0f, metrics.control.field)
+                .size(segmented_width, metrics.control.field)
                 .items({kThemeSegments[0], kThemeSegments[1],
                     kThemeSegments[2]})
                 .selected(static_cast<int>(model.theme_setting))
@@ -100,15 +102,12 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
         .build();
     row_y += metrics.control.field + metrics.spacing.compact;
     components::text(ui, "aki.settings.theme.disclosure")
-        .text("follow system reads the OS app-theme preference"
-              " (Windows); unsupported platforms fall back to Light"
-              " · choice is session-scoped (no settings table in schema"
-              " v1 — persistence is a registered follow-up)")
+        .text("Follow system uses Windows settings.\nOther systems use Light.\nTheme choice lasts this session.")
         .position(pad_x, row_y)
         .fontSize(metrics.typography.caption)
         .wrap(true)
         .maxWidth(content_width)
-        .color(semantic.text_subtlest)
+        .color(tokens.text)
         .build();
 
     // ---- 最小设置项（只读展示）----

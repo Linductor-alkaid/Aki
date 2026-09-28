@@ -65,8 +65,8 @@ struct MainWindowModel {
     ConversationsPageModel conversations;
 };
 
-// 三栏壳装配：导航栏(fixed 64) + 列表栏(fixed 264) + 内容栏(fill)，4px 可调
-// 间隙的简化静态形态（§2.4 workspace layout；frame 不计圆角层级）。
+// 三栏壳装配：导航栏固定 64，列表栏随窗口宽度在 168~264 间调整，
+// 内容栏填满余量；栏间 4px（§2.4 workspace layout）。
 void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
     MainWindowModel& model);
 

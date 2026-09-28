@@ -2,7 +2,7 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-09-27
+> 更新日期：2026-09-28
 > 权威约束：[ZCode Design System](zcode-design-system.md)（直接采用，见下）
 > 上位设计：[Aki 设计方案](aki_design.md)第 9/10 节
 > 实现基线：pinned `third_party/EUI-NEO`
@@ -95,8 +95,9 @@ Tailwind 默认调色板取值（hex→归一化在实现时完成）：
   字段合成，theme.h:126-128/:211-215）。
 - 动效：短促 fade/zoom/slide，主工作区无弹簧动画（上游 "Motion"）。
 - 三栏 workspace 布局（上游 "Workspace layout"：独立 frame、4px 可调间隙、
-  frame 不计圆角层级）对应 Aki 设计第 9 节三栏：导航栏(fixed) + 列表栏
-  (fixed) + 内容栏(fill)，EUI-NEO Row/Column 组合实现。
+  frame 不计圆角层级）对应 Aki 设计第 9 节三栏：导航栏固定 64，列表栏按
+  窗口逻辑宽度在 168~264 内调整，内容栏填满余量。此约束使默认窗口在
+  2× 缩放设备上仍能容纳主面板控件；页内固定宽度控件以内容栏宽度为上限。
 
 ### 2.5 主题模式与无障碍
 
@@ -160,7 +161,7 @@ Transfers / Settings。组件选型（`RISK-2026-002` 的盘点基线，M5 用 p
 
 | Aki 界面元素 | EUI-NEO 组件 | 上游规则约束 |
 | --- | --- | --- |
-| 左侧导航栏 | `navbar` | 选中态用对比而非品牌填充 |
+| 左侧导航栏 | `rect` 点击面 + `text` 图标/标签组合（沿 `navbar` 的导航语义） | 64px 窄栏内图标和标签纵排；选中态用 primary 对比而非品牌填充；四图标按 §2.6 已登记的捆绑字体码点 |
 | 列表栏 | `scrollview` + `virtuallist` | 行高用 `ui-base` 节奏，悬停 `hover`/选中 `selected`（virtuallist 为固定行高模型——`rowHeight` 统一值，M5-01 实测确认；变高气泡列按第 5 节复审结论组合） |
 | 会话头部 | `text` + 徽标 | 元信息 `text-subtle`，路径/指纹 mono |
 | 消息气泡 | `card` + `text` 组合 | 一级容器 `rounded-xl`(12)，己方/对方区分靠 surface 层级 |
@@ -258,6 +259,15 @@ Transfers / Settings。组件选型（`RISK-2026-002` 的盘点基线，M5 用 p
   - 上游 `SegmentedStyle` 深色档选中文字与 indicator 同为 primary（白上
     白不可见，GUI 实测）——选中文字覆写 §2.3 primary-foreground 配对
     （页内 style 覆写，非 ui/theme 档位变更）。
+
+- **M5-10 视觉修整（2026-09-28）**：四个导航项消费 §2.6 已登记的 FA7
+  Solid 码点，保留文字标签；列表栏摘要改为当前页对应计数，移除开发阶段
+  占位语，标题、摘要和分隔线按字号/间距档位重新排布。Devices 操作按钮、
+  Transfers 页说明和 Settings 主题三选在窄窗口内按可用宽度布局，空态与
+  恢复提示可换行；GUI 在 1080×720 与 1600×900 物理窗口（本机 2×
+  缩放）及深浅两档复核。pinned EUI-NEO `ButtonStyle` 深色 primary 按钮
+  默认文字仍用浅色，造成白底白字；Aki 所有 primary 按钮在消费侧显式
+  覆写 `primary-foreground`（图标按钮覆写 iconColor），不改上游。
   - 「跟随系统」= 平台条件编译单元 `app/lifecycle/system_theme`
     （Windows `AppsUseLightTheme` 用户偏好；其余平台/查询失败 Unknown
     回落 Light 并页内披露）；主题选择会话级（不跨启动持久化，登记披露）。

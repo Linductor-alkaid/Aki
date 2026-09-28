@@ -139,6 +139,7 @@ void compose_transfer_row(eui::Ui& ui, const ThemeColorTokens& tokens,
                     .text("Cancel")
                     .fontSize(metrics.typography.caption)
                     .theme(tokens, true)
+                    .textColor(semantic.primary_foreground)
                     .radius(metrics.radius.small)
                     .onClick([&model, tid = transfer.id] {
                         const bool admitted =
@@ -180,22 +181,23 @@ void composeTransfersPage(eui::Ui& ui, const ThemeColorTokens& tokens,
 
     if (model.state_view.transfers.empty()) {
         components::text(ui, "aki.transfers.empty")
-            .text("no transfers yet — files are sent from conversations;"
-                  " transfer rows appear here with progress and controls")
+            .text("No transfers yet. Send a file from a conversation to track it here.")
             .position(x + metrics.spacing.section,
                 y + metrics.spacing.section + metrics.typography.title
                     + metrics.typography.caption + metrics.spacing.content)
             .fontSize(metrics.typography.body)
-            .color(semantic.text_subtlest)
+            .wrap(true)
+            .maxWidth(width - metrics.spacing.section * 2.0f)
+            .color(tokens.text)
             .build();
     } else {
         const float list_y = y + metrics.spacing.section
             + metrics.typography.title + metrics.typography.caption
             + metrics.spacing.content;
-        // 底部预留两行页脚（披露行 + 反馈行，见文件尾披露行位注释）。
+        // 底部预留多行披露与单行操作反馈，窄窗口时不覆盖传输列表。
         const float list_height = std::max(
-            height - list_y - metrics.typography.caption * 2.0f
-                - metrics.spacing.tiny - metrics.spacing.section * 2.0f,
+            height - list_y - metrics.typography.caption * 4.0f
+                - metrics.spacing.content - metrics.spacing.section * 2.0f,
             metrics.control.menuItem);
         components::scrollView(ui, "aki.transfers.list")
             .position(x + metrics.spacing.section, list_y)
@@ -216,21 +218,16 @@ void composeTransfersPage(eui::Ui& ui, const ThemeColorTokens& tokens,
             .build();
     }
 
-    // 登记披露（M4-05/06 移交项 + M5-06 GC 处置；页脚如实呈现，不冒充
-    // 可用动作——M5-04 发现来源分期披露同款形态）。本页经 main_window
-    // 以 y=0 全高调用，披露行原锚点与跨页反馈行（main_window 页尾
-    // height-caption-section）完全重合，操作反馈叠印披露文字（RULE-09
-    // 拒绝可见失效）；改为分行定位——披露行在反馈行上一行（caption 行高
-    // + tiny 间距），反馈行位保持 main_window 既有锚点不动。
+    // 传输恢复限制用用户可操作的说明披露；为窄窗口保留换行空间。
     components::text(ui, "aki.transfers.disclosure")
-        .text("orphan receive rows: re-push trigger is a registered"
-              " follow-up (M4 handover) · receive-root GC: deferred with"
-              " registered trigger conditions (M5-06)")
+        .text("Interrupted incoming files may need resending.\nPartial files may remain in local storage.")
         .position(x + metrics.spacing.section,
-            y + height - metrics.typography.caption * 2.0f
-                - metrics.spacing.tiny - metrics.spacing.section)
+            y + height - metrics.typography.caption * 4.0f
+                - metrics.spacing.content - metrics.spacing.section)
         .fontSize(metrics.typography.caption)
-        .color(semantic.text_subtlest)
+        .wrap(true)
+        .maxWidth(width - metrics.spacing.section * 2.0f)
+        .color(tokens.text)
         .build();
 }
 

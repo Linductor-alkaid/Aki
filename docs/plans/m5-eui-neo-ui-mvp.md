@@ -12,7 +12,7 @@
 > 真实 Adapter、NodeSession、发现/消息/图片/传输/presence/重连管道与恢复
 > 语义均已就绪
 > 建议发布点：v0.5.0（MVP）
-> 更新日期：2026-09-27（M5-09 收口审计同日）
+> 更新日期：2026-09-28（M5-10 导航与视觉修整）
 
 ## 目标
 
@@ -75,6 +75,10 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   验收清单逐项归档；M3 登记的补做条件复核（占位口令 verifier/secret
   backend/DeviceIdentity 元数据——真实口令流程随 M5）。
 - `M5-09` 收口审计与退出证据归集（沿用 M1-08/M2-08/M3-09/M4-07 纪律）。
+- `M5-10` 导航与视觉修整：按 `aki_ui_design` §2.4/§2.6 将已登记的四个
+  Font Awesome 图标用于左栏；在本设备 2× 缩放默认窗口与较宽窗口实拍，
+  修复控件越界、说明叠印和深色主题 primary 按钮不可读。仅改 UI 装配与
+  用户文案，不改变网络、状态机或传输语义。
 
 ### 非目标
 
@@ -252,6 +256,11 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   竞争触发 vendored Catch2 内部状态，非产品竞争，独立 MR 修复）；退出-1
   双端全链路按降级纪律保持未勾选，M5 保持 In Progress。见下方
   2026-09-27（M5-09）验证记录。）
+- [x] `M5-10` 导航与视觉修整（可验收：四项图标/标签在深浅两档完整可见；
+  1080×720 与 1600×900 本机窗口的四页无截断或叠印；深色 primary
+  操作文字和发送图标可读；Debug 构建及全量测试通过，GUI 截图与设计
+  映射同步）。（2026-09-28 本机完成；验证记录见文末。M5 退出-1
+  双端补跑状态不变。）
 
 ## 风险与阻塞
 
@@ -1639,3 +1648,38 @@ executor（`DEC-005` 并发边界：不使用 EUI-NEO `app::async`/`core::networ
   - **同步**：本里程碑（M5-09 记录 ⑧ 闭环注记 + 本记录 + 本回填条）、
     总计划（当前状态条目）。无决策记录（修复为 ⑧ 已登记路径的执行，无新
     取舍）；无设计变更。
+
+- 2026-09-28（`M5-10` 导航与视觉修整；本机 Linux x86_64，GCC 13.3.0，
+  CMake 3.28.3，pinned EUI-NEO `b9032a8a`；工作树特性分支
+  `codex/m5-navigation-visual-polish`；负责人：Linductor）：
+  - **范围与依据**：`aki_ui_design` §2.4/§2.6/§4 与 ZCode 导航、语义色、
+    密度约束；沿用捆绑 Font Awesome 7 Free Solid 的 comments `f086`、
+    network-wired `f6ff`、arrow-right-arrow-left `f0ec`、gear `f013`
+    （四码点此前已由 §2.6 本地 cmap 核实，官方图标页可查）。导航图标与
+    文字纵排，不新增字体、供应商或 `third_party/` 修改。
+  - **实拍定位与修复**：默认 1080×720 物理窗口在本机 2× 缩放后 UI
+    逻辑空间约 540×360；原固定 264 列表栏使 Devices 双操作按钮、
+    Transfers/Settings 文案与主题三选越过右边界，列表统计行与分隔线
+    叠印；非会话页显示 `M5-04` 等内部占位。列表栏现按逻辑宽度在
+    168~264 间调整，页内控件以剩余宽度为上限；四页标题/摘要/空态
+    改为对应页面信息。深色档实拍发现 pinned `ButtonStyle` 的 primary
+    文字默认浅色，在浅色 primary 底上不可读；六个 primary 按钮消费点
+    显式指定 `primary-foreground`（发送图标指定 iconColor）。切页清除
+    上一页的操作反馈，避免 Settings 反馈残留在 Devices。
+  - **构建与测试**：`git submodule update --init --recursive`；
+    `bash third_party/heyaki/scripts/fetch_third_party.sh --all`；
+    `cmake --preset debug -DGLFW_BUILD_WAYLAND=OFF`（本机缺
+    `xkbcommon` 开发包，只构建已存在的 X11 后端，不改项目配置）；
+    `cmake --build --preset debug -j 6` 成功，`aki` GUI 可启动；
+    `ctest --preset debug -j 6` → 43/43 通过、0 失败；
+    `impeccable detect --json` 对五个修改的 UI 文件返回 `[]`。
+  - **渲染验收**：1080×720 窗口四页逐页实拍（浅色），1600×900
+    Settings 与深色 Devices 实拍，图标、标签、空态、操作按钮均在界内且
+    不叠印；深色 Start scan 文字经修复复拍可读。截图归档于本机忽略目录
+    `build/scratch/m5-10/`（默认窗口四页 + 较宽窗口四页 + 深色
+    Devices/Settings，共十张，GUI 不进 CI 的 RULE-11 证据）。
+  - **限制与后续**：本项未新增并发、网络或持久化路径。M5 退出-1 的
+    LAN 双端真机链路仍未补跑，原因、负责人 Linductor 与防火墙放行入站
+    TCP 后补跑条件沿 M5-08/M5-09 原记录维持；本轮不据本机 GUI/测试
+    将 M5 改为 Completed。PR 档 CI 结果待本项 MR 流程回填，不写作本机
+    通过。同步 `aki_ui_design` §2.4/§4/§5、总计划当前状态与本工作项。
