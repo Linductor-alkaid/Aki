@@ -538,6 +538,7 @@ void compose_preview_dialog(eui::Ui& ui, const ThemeColorTokens& tokens,
                 .text("Close")
                 .fontSize(metrics.typography.caption)
                 .theme(tokens, true)
+                .textColor(semantic.primary_foreground)
                 .radius(metrics.radius.small)
                 .onClick(
                     [&model] { model.conversations.preview_message = aki::conversation::MessageId{}; })
@@ -575,13 +576,12 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
 
     if (model.state_view.conversations.empty()) {
         components::text(ui, "aki.convs.empty")
-            .text("no conversations yet — pair a device (Devices page) and"
-                  " use New chat")
+            .text("No chats yet.\nPair a device first.")
             .position(x + metrics.spacing.content, list_y)
             .fontSize(metrics.typography.caption)
             .wrap(true)
             .maxWidth(width - metrics.spacing.content * 2.0f)
-            .color(semantic.text_subtlest)
+            .color(tokens.text)
             .build();
     } else {
         components::scrollView(ui, "aki.convs.list")
@@ -853,10 +853,12 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
 
     if (conversation == nullptr) {
         components::text(ui, "aki.chat.empty")
-            .text("select a conversation to start chatting")
+            .text("Choose a chat from the list to begin.")
             .position(x + metrics.spacing.section, y + height * 0.5f)
             .fontSize(metrics.typography.body)
-            .color(semantic.text_subtlest)
+            .wrap(true)
+            .maxWidth(width - metrics.spacing.section * 2.0f)
+            .color(tokens.text)
             .build();
         return;
     }
@@ -967,6 +969,7 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
             .icon(eui::utf8(0xF1D8))  // §2.6 发送
             .fontSize(metrics.typography.body)
             .theme(tokens, true)
+            .iconColor(semantic.primary_foreground)
             .radius(metrics.radius.small)
             .onClick([&model, to = conversation->remote_device] {
                 send_draft(model, to);
