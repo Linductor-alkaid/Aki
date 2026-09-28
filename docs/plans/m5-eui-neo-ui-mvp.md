@@ -150,7 +150,11 @@ verifier 校验并签发 grant；`handle_pairing_request` 响应侧即升级会�
   本轮产品代码缺陷）——修复为原子记录 + 主线程断言后，合并门禁 run
   36480925888 七档全绿（Linux debug 7m43s / asan 11m22s / ubsan 10m50s /
   tsan 13m07s、Windows debug 12m47s、setup.exe 17m46s、deb 12m35s）。
-  双端真机配对验收待回填（条件沿用本记录上方待验收条款）。
+  记录登记重跑（run 36483070370）：Windows debug 首跑 12 测试同因
+  `transport: lan_no_ready_interface` 失败（runner LAN 接口未就绪的环境
+  抖动，与 #56 时代 Windows Debug 间歇性挂起条款同型登记）——失败档重跑
+  12m50s 通过，其余六档未变动。双端真机配对验收待回填（条件沿用本记录
+  上方待验收条款）。
 
 ## 范围与非目标
 
