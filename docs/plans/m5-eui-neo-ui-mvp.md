@@ -106,8 +106,11 @@ Linductor；真机验收条件为 Windows 与本机处于可入站 LAN、两端�
   `ctest --output-on-failure` 均 **43/43 通过、0 失败**（8 个 LAN 回环
   沿登记的防火墙 `[skip]` 降级通过，非静默）；`git diff --check` 通过。
   本机 tsan/asan 档因缺 wayland/xkbcommon dev 包无法配置（sudo 需密码，
-  环境限制），由 CI 门禁 debug/asan/ubsan/tsan 四 Linux 档覆盖；CI 与
-  双端真机配对验收待回填。
+  环境限制），由 CI 门禁 debug/asan/ubsan/tsan 四 Linux 档覆盖。CI 证据
+  （2026-09-29 回填）：PR #57 run 36460711932 七档全绿——Linux debug
+  9m37s / asan 11m18s / ubsan 13m20s / tsan 13m08s、Windows debug (MSVC)
+  13m11s、Windows setup.exe 19m29s、Ubuntu 20.04 deb 15m03s。双端真机
+  配对验收待回填（条件沿用本记录上方待验收条款）。
 
 ## 范围与非目标
 
