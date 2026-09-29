@@ -61,9 +61,11 @@ using aki::transfer::TransferState;
 
 Database migrated_memory_db() {
     Database db = Database::open(":memory:");
-    REQUIRE(aki::persistence::schema_steps().size() == 2);
+    // DEC-021：迁移第 3 步 device-inbound-trust（ALTER TABLE device ADD
+    // COLUMN inbound_trust）——步数 2→3。
+    REQUIRE(aki::persistence::schema_steps().size() == 3);
     REQUIRE(Migrator(aki::persistence::schema_steps()).bring_up_to_date(db)
-        == 2);
+        == 3);
     return db;
 }
 
@@ -197,6 +199,87 @@ TEST_CASE("Device repository round-trips identity without presence",
 
     REQUIRE(repository.load_all().size() == 6);  // alpha-01 + 5 个 trust-* 行
     REQUIRE_FALSE(repository.find(DeviceId{"missing"}).has_value());
+}
+
+// ---- DEC-021：inbound_trust 列——set_inbound_trust、upsert/find/load_all
+// ---- 往返、旧库幂等追加第 3 步。
+
+TEST_CASE("Device repository persists and round-trips inbound trust (DEC-021)",
+    "[unit][persistence][repository][dec021]") {
+    Database db = migrated_memory_db();
+    aki::persistence::DeviceRepository repository(db);
+
+    // upsert 写列 → find/load_all 往返保留。
+    DeviceIdentity inbound = make_device("alpha-01", TrustState::Trusted);
+    inbound.inbound_trust = true;
+    repository.upsert(inbound);
+    REQUIRE(repository.find(DeviceId{"alpha-01"})->inbound_trust);
+    REQUIRE(repository.load_all().front().inbound_trust);
+
+    // 部分更新：置回 false / 再置 true 均生效。
+    repository.set_inbound_trust(DeviceId{"alpha-01"}, false);
+    REQUIRE_FALSE(repository.find(DeviceId{"alpha-01"})->inbound_trust);
+    repository.set_inbound_trust(DeviceId{"alpha-01"}, true);
+    REQUIRE(repository.find(DeviceId{"alpha-01"})->inbound_trust);
+
+    // 未触碰字段不受部分更新影响。
+    REQUIRE(repository.find(DeviceId{"alpha-01"})->display_name
+        == "device-alpha-01");
+    REQUIRE(repository.find(DeviceId{"alpha-01"})->trust_state
+        == TrustState::Trusted);
+
+    // 默认列值：不设置即 false。
+    repository.upsert(make_device("beta-01", TrustState::Unknown));
+    REQUIRE_FALSE(repository.find(DeviceId{"beta-01"})->inbound_trust);
+
+    // 目标行不存在：显式失败（RETURNING 空结果 → runtime_error），不静默。
+    REQUIRE_THROWS_AS(repository.set_inbound_trust(DeviceId{"missing"}, true),
+        std::runtime_error);
+}
+
+TEST_CASE("Schema step 3 appends idempotently onto a two-step database (DEC-021)",
+    "[unit][persistence][migration][dec021]") {
+    // 旧库：仅第 1/2 步（er-v1-core + device-local-remark）。
+    auto old_steps = aki::persistence::schema_steps();
+    REQUIRE(old_steps.size() == 3);
+    old_steps.pop_back();
+    Database db = Database::open(":memory:");
+    REQUIRE(Migrator(old_steps).bring_up_to_date(db) == 2);
+
+    // 旧库上先落一行设备（此时表尚无 inbound_trust 列；新 upsert SQL 引用
+    // 该列，故用旧列集裸 SQL 播种，镜像第 2 步时代的写入形态）。
+    {
+        aki::persistence::Statement seed = db.prepare(
+            "INSERT INTO device (device_id, display_name, device_class,"
+            " os_name, public_key, capabilities, trust_state, remark)"
+            " VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, '');");
+        seed.bind(1, std::string("legacy-01"));
+        seed.bind(2, std::string("device-legacy-01"));
+        seed.bind(3, 3);  // DeviceClass::Server
+        seed.bind(4, std::string("Linux"));
+        seed.bind(5, 7);  // messaging|file_transfer|status_query
+        seed.bind(6, 2);  // TrustState::Trusted
+        (void)seed.step();
+    }
+
+    // 追加第 3 步：恰一步，user_version 前进到 3；存量行按 DEFAULT 0 读出。
+    const Migrator full{aki::persistence::schema_steps()};
+    REQUIRE(full.bring_up_to_date(db) == 1);
+    aki::persistence::Statement version = db.prepare("PRAGMA user_version;");
+    REQUIRE(version.step());
+    REQUIRE(version.column_int64(0) == 3);
+    {
+        aki::persistence::DeviceRepository migrated(db);
+        const auto loaded = migrated.find(DeviceId{"legacy-01"});
+        REQUIRE(loaded.has_value());
+        REQUIRE_FALSE(loaded->inbound_trust);
+        // 新列可写。
+        migrated.set_inbound_trust(DeviceId{"legacy-01"}, true);
+        REQUIRE(migrated.find(DeviceId{"legacy-01"})->inbound_trust);
+    }
+
+    // 幂等重跑：no-op 返回 0。
+    REQUIRE(full.bring_up_to_date(db) == 0);
 }
 
 // ---- 验收 ②：conversation 仓储与外键 ----

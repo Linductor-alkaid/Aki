@@ -10,3 +10,6 @@ Exec=/opt/aki/aki
 Icon=aki
 Terminal=false
 Categories=Network;InstantMessaging;
+# X11 会话下按 WM_CLASS 关联运行窗口（Wayland 需运行时设置 app_id，
+# 见 DEC-021 遗留项：pinned EUI-NEO 窗口创建缺 glfwWindowHintString）。
+StartupWMClass=aki

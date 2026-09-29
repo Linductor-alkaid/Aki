@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -135,6 +136,17 @@ public:
     // 撤销既有信任（→ revoke_trust_grants，撤销该 peer 全部有效 grant）；
     // 无有效 grant 时 false（无操作可见）。
     virtual bool revoke_trust(const aki::device::DeviceId& peer) = 0;
+
+    // 对向信任查询（DEC-021 四态）：本机 TrustStore 中与该 peer 的双向
+    // 有效 grant。issued = 本机签发（对方信任本机）；received = 本机持有
+    // 对端签发（本机信任对方）。对端无 endpoint/会话上下文时返回
+    // std::nullopt（无信息，非 false）。本机侧有界 sqlite 查询。
+    struct TrustDirections {
+        bool issued = false;
+        bool received = false;
+    };
+    virtual std::optional<TrustDirections> trust_directions(
+        const aki::device::DeviceId& peer) = 0;
 
 protected:
     HeyakiAdapter() = default;

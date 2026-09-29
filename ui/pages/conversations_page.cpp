@@ -83,18 +83,6 @@ std::string path_label(aki::device::ConnectionPath path) {
     return std::string(aki::device::to_string(path));
 }
 
-std::string trust_label(aki::device::TrustState trust) {
-    using aki::device::TrustState;
-    switch (trust) {
-    case TrustState::Unknown: return "Unknown";
-    case TrustState::Pending: return "Pending";
-    case TrustState::Trusted: return "Trusted";
-    case TrustState::Rejected: return "Rejected";
-    case TrustState::Revoked: return "Revoked";
-    }
-    return "Unknown";
-}
-
 core::Color trust_color(const AkiSemanticPalette& semantic,
     aki::device::TrustState trust) {
     using aki::device::TrustState;
@@ -247,7 +235,22 @@ void pick_and_send_media(MainWindowModel& model,
             : tr("file pick cancelled"));
         return;
     }
-    const std::filesystem::path source{picked.paths.front()};
+    // 选取结果按存在性过滤：Linux 对话框实现（zenity/kdialog）会把 stderr
+    // 诊断行混进输出（third_party 平台层 2>&1），盲取首行会把诊断文本当
+    // 路径，stat 必然 ENOENT（24.04 zenity 实测）。只接受真实存在的路径；
+    // 全部无效时如实报告选择失败。
+    std::filesystem::path source;
+    for (const auto& candidate : picked.paths) {
+        std::error_code exists_error;
+        if (std::filesystem::exists(candidate, exists_error)) {
+            source = candidate;
+            break;
+        }
+    }
+    if (source.empty()) {
+        set_feedback(model, tr("Selected file is not accessible."));
+        return;
+    }
     std::error_code error;
     const auto bytes = std::filesystem::file_size(source, error);
     if (error) {
@@ -614,13 +617,14 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
                     odd = !odd;
                     const models::DeviceView* remote =
                         device_view_of(model, conversation.remote_device);
-                    // §3：Rejected/Revoked → 会话入口禁用（无点击面、
-                    // destructive 信任徽标）。
+                    // 连接事实与信任状态分离（DEC-019）：入口按连接/会话
+                    // 事实门控——已连接或会话仍活跃即可打开；Rejected/
+                    // Revoked 仅显示 destructive 徽标，不裁剪点击面。
                     const bool entry_disabled = remote != nullptr
-                        && (remote->trust_state
-                                == aki::device::TrustState::Rejected
-                            || remote->trust_state
-                                == aki::device::TrustState::Revoked);
+                        && remote->connection_path
+                            == aki::device::ConnectionPath::Unknown
+                        && conversation.state
+                            != aki::conversation::ConversationState::Active;
 
                     list_ui.stack(row_id)
                         .size(row_width, kConvRowHeight)
@@ -710,7 +714,7 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
                             }
                             if (entry_disabled && remote != nullptr) {
                                 components::text(list_ui, row_id + ".trust")
-                                    .text(tr(trust_label(remote->trust_state)))
+                                    .text(tr(remote->trust_relation_key()))
                                     .position(row_width
                                             - row_metrics.spacing.content
                                             - 70.0f,
@@ -722,8 +726,8 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
                                         remote->trust_state))
                                     .build();
                             }
-                            // 行点击面（透明按钮；Rejected/Revoked 无点击面
-                            // ——§3 会话入口禁用）。
+                            // 行点击面（透明按钮；入口按连接/会话事实
+                            // 门控——DEC-019，不按信任状态裁剪）。
                             if (!entry_disabled) {
                                 const core::Color transparent(0.0f, 0.0f,
                                     0.0f, 0.0f);
@@ -904,7 +908,7 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
         .build();
     if (remote != nullptr) {
         components::text(ui, "aki.chat.trust")
-            .text(tr(trust_label(remote->trust_state)))
+            .text(tr(remote->trust_relation_key()))
             .position(x + width - metrics.spacing.section - 80.0f,
                 y + metrics.spacing.section + 3.0f)
             .fontSize(metrics.typography.caption)

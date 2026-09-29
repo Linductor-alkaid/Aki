@@ -25,6 +25,25 @@ TEST_CASE("TrustState follows the design transition graph", "[unit][trust]") {
         REQUIRE(machine.transition_to(TrustState::Rejected));
         REQUIRE(machine.state == TrustState::Rejected);
     }
+
+    // DEC-021 终态重建边：唯一出口是用户显式重新配对轮把行放回 Pending；
+    // 自动事件仍不得离开终态（见下方 illegal 表与其余终态断言）。
+    SECTION("Rejected/Revoked -> Pending on explicit re-pairing (DEC-021)") {
+        REQUIRE(can_transition(TrustState::Rejected, TrustState::Pending));
+        REQUIRE(can_transition(TrustState::Revoked, TrustState::Pending));
+
+        TrustStateMachine rejected;
+        rejected.state = TrustState::Rejected;
+        REQUIRE(rejected.transition_to(TrustState::Pending));
+        REQUIRE(rejected.state == TrustState::Pending);
+        REQUIRE(rejected.transition_to(TrustState::Trusted));
+
+        TrustStateMachine revoked;
+        revoked.state = TrustState::Revoked;
+        REQUIRE(revoked.transition_to(TrustState::Pending));
+        REQUIRE(revoked.state == TrustState::Pending);
+        REQUIRE(revoked.transition_to(TrustState::Rejected));
+    }
 }
 
 TEST_CASE("TrustState rejects illegal transitions", "[unit][trust]") {
@@ -39,9 +58,10 @@ TEST_CASE("TrustState rejects illegal transitions", "[unit][trust]") {
         {TrustState::Pending, TrustState::Revoked},
         {TrustState::Trusted, TrustState::Pending},
         {TrustState::Trusted, TrustState::Rejected},
-        {TrustState::Rejected, TrustState::Pending},
+        // DEC-021：Rejected/Revoked -> Pending 已是合法边（用户显式重新
+        // 配对），从非法表移出；Rej/Revoked -> Trusted 仍非法（必须先回
+        // Pending 走完整配对轮）。
         {TrustState::Rejected, TrustState::Trusted},
-        {TrustState::Revoked, TrustState::Pending},
         {TrustState::Revoked, TrustState::Trusted},
     };
 

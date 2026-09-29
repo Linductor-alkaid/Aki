@@ -75,8 +75,9 @@ int main() {
         aki::persistence::Database::open(":memory:");
     if (aki::persistence::Migrator(aki::persistence::schema_steps())
             .bring_up_to_date(db)
-        != 2) {
-        std::puts("[FAIL] current schema migration should apply two steps");
+        // DEC-021：迁移第 3 步 device-inbound-trust——2→3。
+        != 3) {
+        std::puts("[FAIL] current schema migration should apply three steps");
         return 1;
     }
     aki::persistence::Statement version =

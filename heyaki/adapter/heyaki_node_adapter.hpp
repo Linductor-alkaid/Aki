@@ -405,6 +405,19 @@ public:
         return options_.session->revoke_trust_grants(peer);
     }
 
+    [[nodiscard]] std::optional<TrustDirections> trust_directions(
+        const aki::device::DeviceId& peer) override {
+        if (peer.empty()) {
+            return std::nullopt;
+        }
+        const auto directions = options_.session->trust_grants(peer);
+        if (!directions) {
+            return std::nullopt;
+        }
+        return TrustDirections{.issued = directions->issued,
+            .received = directions->received};
+    }
+
     // ---- 观测（EXEC-06）----
 
     [[nodiscard]] bool discovery_running() const noexcept {

@@ -45,6 +45,8 @@ public:
         const std::string& name);
     void set_remark(const aki::device::DeviceId& device_id,
         const std::string& remark);
+    void set_inbound_trust(const aki::device::DeviceId& device_id,
+        bool inbound_trust);
     [[nodiscard]] std::optional<aki::device::DeviceIdentity> find(
         const aki::device::DeviceId& device_id);
     [[nodiscard]] std::vector<aki::device::DeviceIdentity> load_all();

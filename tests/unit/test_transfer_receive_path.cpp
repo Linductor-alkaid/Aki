@@ -133,7 +133,8 @@ struct ReceivePathStack {
         std::error_code ec;
         std::filesystem::create_directories(receive_dir, ec);
         const Migrator migrator{schema_steps()};
-        if (migrator.bring_up_to_date(database) != 2) {
+        // DEC-021：迁移第 3 步 device-inbound-trust——2→3。
+        if (migrator.bring_up_to_date(database) != 3) {
             throw std::runtime_error("receive stack: migration failed");
         }
         db = std::make_shared<aki::persistence::DatabaseWorkerControl>(

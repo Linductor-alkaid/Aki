@@ -132,8 +132,9 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     REQUIRE(matched.has_value());
     REQUIRE(*matched.value_if());
     REQUIRE(assembly.recovered_transfers == 0);
-    // 空根首开：v1 schema 引导迁移恰一步（0→1）；tmp 清扫零孤儿。
-    REQUIRE(assembly.migrations_applied == 2);
+    // 空根首开：v1 schema 引导迁移全量应用（DEC-021 后为三步：er-v1-core +
+    // device-local-remark + device-inbound-trust）；tmp 清扫零孤儿。
+    REQUIRE(assembly.migrations_applied == 3);
     REQUIRE(assembly.tmp_orphans_removed == 0);
     REQUIRE(assembly.identity_created);
     REQUIRE_FALSE(assembly.local_device_id.empty());

@@ -188,8 +188,9 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
         .color(semantic.text_subtle)
         .build();
 
-    // ---- 本机名改名（M5-16）：草稿为空时回显状态中的当前名；保存成功清空
-    // 草稿回显新名。改名经 HostRuntime 字段级更新并热更新名称广播。
+    // ---- 本机名改名（M5-16）：未编辑时回显状态中的当前名；用户一旦编辑
+    // （含清空）即显示草稿，可清空重输。保存成功清空草稿回显新名；空名
+    // 提示命名规则。改名经 HostRuntime 字段级更新并热更新名称广播。
     if (model.actions && model.actions->set_device_name) {
         std::string current_name;
         for (const auto& device : model.state_view.devices) {
@@ -205,11 +206,12 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
             .position(pad_x, row_y)
             .size(name_width, metrics.control.field)
             .theme(tokens)
-            .value(model.settings_device_name_draft.empty()
-                ? current_name : model.settings_device_name_draft)
+            .value(model.settings_name_dirty
+                ? model.settings_device_name_draft : current_name)
             .placeholder(tr("Device name"))
             .onChange([&model](const std::string& value) {
                 model.settings_device_name_draft = value;
+                model.settings_name_dirty = true;
             }).build();
         components::button(ui, "aki.settings.name.save")
             .position(pad_x + name_width + metrics.spacing.compact, row_y)
@@ -217,15 +219,33 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
             .text(tr("Save"))
             .theme(tokens, false)
             .onClick([&model] {
-                if (model.settings_device_name_draft.empty()) return;
+                if (!model.settings_name_dirty) return;
+                if (model.settings_device_name_draft.empty()) {
+                    set_feedback(model,
+                        tr("Device name must be 1-64 bytes without controls."));
+                    return;
+                }
                 if (model.actions->set_device_name(
                         model.settings_device_name_draft)) {
                     model.settings_device_name_draft.clear();
+                    model.settings_name_dirty = false;
                     set_feedback(model, tr("Device name updated"));
                 } else {
                     set_feedback(model, tr("Device name save failed"));
                 }
             }).build();
+        // 输入行占位 + 用途说明（与密码区保持间距，不重叠）。
+        row_y += metrics.control.field + metrics.spacing.tiny;
+        components::text(ui, "aki.settings.name.hint")
+            .text(tr("Rename this device. Other devices will see"
+                     " the new name."))
+            .position(pad_x, row_y)
+            .fontSize(metrics.typography.caption)
+            .wrap(true)
+            .maxWidth(content_width)
+            .color(semantic.text_subtle)
+            .build();
+        row_y += metrics.typography.caption + metrics.spacing.section;
     }
 
     row_y += metrics.typography.caption + metrics.spacing.section;

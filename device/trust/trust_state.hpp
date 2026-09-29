@@ -1,6 +1,9 @@
 // 信任状态机（设计第 4 节）。
-// 转移规则：Unknown -> Pending -> Trusted；Pending -> Rejected；Trusted -> Revoked。
-// Rejected / Revoked 是终态；终态幂等，迟到的事件不得让已终结的信任关系回到活动状态。
+// 转移规则：Unknown -> Pending -> Trusted；Pending -> Rejected；Trusted -> Revoked；
+// Rejected/Revoked --用户显式重新配对--> Pending（DEC-021）。
+// Rejected / Revoked 对自动流程仍是终态（自动事件不得离开终态）；
+// 唯一出口是用户主动发起的重新配对。终态幂等，迟到的事件不得让已终结的
+// 信任关系回到活动状态。
 #pragma once
 
 #include <cstdint>
@@ -42,7 +45,7 @@ constexpr bool can_transition(TrustState from, TrustState to) noexcept {
             return to == TrustState::Revoked;
         case TrustState::Rejected:
         case TrustState::Revoked:
-            return false;
+            return to == TrustState::Pending;  // 仅用户显式重新配对（DEC-021）。
     }
     return false;
 }

@@ -149,6 +149,14 @@ public:
         return true;
     }
 
+    std::optional<TrustDirections> trust_directions(
+        const aki::device::DeviceId& peer) override {
+        if (peer.empty() || !has_valid_grant_) {
+            return TrustDirections{};
+        }
+        return TrustDirections{.issued = true, .received = true};
+    }
+
     bool revoke_trust(const aki::device::DeviceId& peer) override {
         if (peer.empty() || !has_valid_grant_) {
             return false;  // 无有效 grant（DEC-006 映射 3：无操作可见）。

@@ -89,18 +89,6 @@ std::string device_class_label(aki::device::DeviceClass device_class) {
     return "Device";
 }
 
-std::string trust_label(aki::device::TrustState trust_state) {
-    using aki::device::TrustState;
-    switch (trust_state) {
-    case TrustState::Unknown: return "Unknown";
-    case TrustState::Pending: return "Pending";
-    case TrustState::Trusted: return "Trusted";
-    case TrustState::Rejected: return "Rejected";
-    case TrustState::Revoked: return "Revoked";
-    }
-    return "Unknown";
-}
-
 core::Color trust_color(const AkiSemanticPalette& semantic,
     aki::device::TrustState trust_state) {
     using aki::device::TrustState;
@@ -531,7 +519,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 components::text(ui, row_id + ".trust")
                     .text(tr(device.pairing_failed && device.can_confirm()
                         ? "Pairing failed - retry"
-                        : trust_label(device.trust_state)))
+                        : device.trust_relation_key()))
                     .position(content_x + metrics.spacing.section
                             + metrics.spacing.content * 3.0f,
                         compact_rows
@@ -594,7 +582,9 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                     components::button(ui, row_id + ".begin")
                         .position(button_x, button_y)
                         .size(action_button_width, metrics.control.menuItem)
-                        .text(tr("Connect"))
+                        .text(tr(device.trust_state
+                                     == aki::device::TrustState::Unknown
+                            ? "Connect" : "Re-pair"))
                         .fontSize(metrics.typography.caption)
                         .theme(tokens, true)
                         .textColor(semantic.primary_foreground)
