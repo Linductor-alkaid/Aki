@@ -1081,9 +1081,15 @@ TEST_CASE("Concurrent senders never lose a work item (single-flight pump)",
     auto& messages = *stack.messages;
     auto& executor = stack.host.executor_owner.executor();
 
-    // DEC-009 ②：出站消息远端会话先行（FK 前置校验）。
+    // DEC-009 ②：出站消息远端会话先行（FK 前置校验）。会话泵的排空任务
+    // 与消息泵排空任务在 executor 上并发竞争——不在此处先排空落 owner，
+    // 慢机（ASAN CI）上会话行可能晚于消息入队，110 条 UpsertMessage 被
+    // FK 前置校验整体拒绝（updates_rejected 计水位，快照保持种子态）。
     REQUIRE(stack.conversations->ensure_conversation(
         DeviceId{"local-1"}, DeviceId{"beta"}));
+    REQUIRE(stack.conversations->flush(5s));
+    drain_until_idle(owner);
+    REQUIRE(owner.stats().updates_rejected == 0);
 
     constexpr int kSenders = 4;
     constexpr int kPerSender = 25;
@@ -1119,6 +1125,9 @@ TEST_CASE("Concurrent senders never lose a work item (single-flight pump)",
     REQUIRE(stats.drain_failures == 0);
 
     drain_until_idle(owner);
+    // FK 前置校验拒绝在此用例中必须为零（会话先行已在上方保证）——精确
+    // 诊断位，避免退化成难以解读的快照计数失败。
+    REQUIRE(owner.stats().updates_rejected == 0);
     executor::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.messages.messages.size() == kSenders * kPerSender + 10);
