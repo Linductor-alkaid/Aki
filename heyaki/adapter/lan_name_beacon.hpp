@@ -62,7 +62,13 @@ public:
         if (::bind(socket_, reinterpret_cast<sockaddr*>(&local),
                 sizeof(local)) != 0) { close_locked(); return false; }
         ip_mreq membership{};
-        membership.imr_multiaddr.s_addr = inet_addr(kGroup);
+        // inet_addr is deprecated on Windows (C4996 there is an error);
+        // inet_pton is the supported replacement on both platforms.
+        if (::inet_pton(AF_INET, kGroup, &group_) != 1) {
+            close_locked();
+            return false;
+        }
+        membership.imr_multiaddr = group_;
         membership.imr_interface.s_addr = htonl(INADDR_ANY);
         if (setsockopt(socket_, IPPROTO_IP, IP_ADD_MEMBERSHIP,
                 reinterpret_cast<const char*>(&membership),
@@ -111,15 +117,18 @@ private:
     static constexpr std::uint16_t kPort = 49191;
     static constexpr const char* kGroup = "239.255.42.98";
 
+    // Resolved once in start(); valid whenever socket_ is open.
+    in_addr group_{};
+
     void tick() {
         std::lock_guard guard(mutex_);  // timer callbacks may overlap.
         if (socket_ == kInvalidSocket) return;
         auto packet = encode_lan_name(identity_, name_);
         if (!packet.empty()) {
-            sockaddr_in remote{};
-            remote.sin_family = AF_INET;
-            remote.sin_port = htons(kPort);
-            remote.sin_addr.s_addr = inet_addr(kGroup);
+        sockaddr_in remote{};
+        remote.sin_family = AF_INET;
+        remote.sin_port = htons(kPort);
+        remote.sin_addr = group_;
             (void)::sendto(socket_, reinterpret_cast<const char*>(packet.data()),
                 static_cast<int>(packet.size()), 0,
                 reinterpret_cast<sockaddr*>(&remote), sizeof(remote));
