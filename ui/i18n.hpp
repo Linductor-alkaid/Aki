@@ -102,6 +102,8 @@ inline std::string tr(std::string_view english) {
         {"Pairing submitted for ", "已提交配对请求："},
         {"Pairing request rejected", "配对请求未被接收"},
         {"Language save failed", "语言设置保存失败"},
+        {"Device name updated", "设备名已更新"},
+        {"Device name save failed", "设备名保存失败"},
         {"Local pairing password updated", "本设备配对密码已更新"},
         {"Select an image to send", "选择要发送的图片"},
         {"Select a file to send", "选择要发送的文件"},

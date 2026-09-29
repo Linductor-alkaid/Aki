@@ -292,6 +292,9 @@ void app::compose(eui::Ui& ui, const eui::Screen& screen) {
             ui_actions()->set_language = [&host](std::string code) {
                 return host.set_language(std::move(code));
             };
+            ui_actions()->set_device_name = [&host](std::string name) {
+                return host.set_device_name(std::move(name));
+            };
             if (model.language_selection_pending || assembly.identity_created) {
                 (void)host.set_language(model.language
                     == aki::ui::Language::Chinese ? "zh-CN" : "en");

@@ -664,6 +664,25 @@ bool HostRuntime::set_language(std::string language_code) {
     return true;
 }
 
+bool HostRuntime::set_device_name(std::string name) {
+    if (!impl_->assembled || impl_->shutdown_attempted
+        || !impl_->state_owner || !impl_->profile) return false;
+    // 与首启输入、广播报文同一校验（1-64 字节、无控制字符）。
+    if (!aki::heyaki::valid_lan_name(name)) return false;
+    const aki::heyaki::LocalIdentity& identity = impl_->profile->identity();
+    // 公钥绑定 + 字段级 display_name 更新（SetDeviceName apply 校验）；
+    // DB 列与快照经 owner 接受后处理器联动（WritePathSink jobs_for）。
+    std::string stored_name = name;
+    const bool stored = impl_->state_owner->submit_update(
+        aki::app::SetDeviceName{identity.id, identity.public_key,
+            std::move(stored_name)});
+    if (!stored) return false;
+    if (impl_->name_beacon) {
+        (void)impl_->name_beacon->set_name(std::move(name));
+    }
+    return true;
+}
+
 bool HostRuntime::assembled() const noexcept {
     return impl_->assembled;
 }

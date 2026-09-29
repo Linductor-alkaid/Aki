@@ -123,6 +123,10 @@ public:
     [[nodiscard]] bool set_local_pairing_password(std::string password,
         std::string& error);
     [[nodiscard]] bool set_language(std::string language_code);
+    // 本机设备名改名（M5-16）：与首启同一校验（1-64 字节、无控制字符），
+    // 经状态 owner 字段级更新（公钥绑定校验 + DB display_name 列）并热更新
+    // 局域网名称广播；广播不可用时改名仍然生效（DEC-020 尽力而为元数据）。
+    [[nodiscard]] bool set_device_name(std::string name);
 
     [[nodiscard]] bool assembled() const noexcept;
     [[nodiscard]] bool assembly_failed() const noexcept;

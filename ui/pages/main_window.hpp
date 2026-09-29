@@ -52,6 +52,8 @@ struct MainWindowModel {
     bool language_selection_pending = false;
     std::string local_device_name_draft;
     std::string initial_device_name;
+    // Settings 页本机名改名草稿（空 = 显示当前名；保存成功后清空回显）。
+    std::string settings_device_name_draft;
     std::string local_password_draft;
     std::string local_password_confirm;
     std::string initial_password;

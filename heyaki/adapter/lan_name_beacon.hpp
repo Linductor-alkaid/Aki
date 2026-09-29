@@ -91,6 +91,15 @@ public:
         close_locked();
     }
 
+    // Settings rename support: subsequent ticks announce the new name. The
+    // announcement itself stays best-effort metadata (DEC-020).
+    [[nodiscard]] bool set_name(std::string name) {
+        std::lock_guard guard(mutex_);
+        if (!valid_lan_name(name)) return false;
+        name_ = std::move(name);
+        return true;
+    }
+
 private:
 #ifdef _WIN32
     using Socket = SOCKET;

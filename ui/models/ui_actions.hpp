@@ -73,6 +73,8 @@ struct UiActions {
     std::function<bool(aki::device::DeviceId, std::string)> confirm_pairing;
     std::function<bool(std::string, std::string&)> set_local_pairing_password;
     std::function<bool(std::string)> set_language;
+    // 本机设备名改名（HostRuntime::set_device_name；M5-16 Settings 入口）。
+    std::function<bool(std::string)> set_device_name;
     std::function<bool(aki::device::DeviceId)> reject_device;
     std::function<bool(aki::device::DeviceId)> revoke_device;
     std::function<bool(aki::device::DeviceId, std::string)> set_device_remark;

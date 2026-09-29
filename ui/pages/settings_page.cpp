@@ -11,6 +11,7 @@
 #include "ui/pages/main_window.hpp"
 
 #include "app/lifecycle/system_theme.hpp"
+#include "components/input.h"
 #include "components/segmented.h"
 #include "components/text.h"
 
@@ -186,6 +187,46 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
         .maxWidth(content_width)
         .color(semantic.text_subtle)
         .build();
+
+    // ---- 本机名改名（M5-16）：草稿为空时回显状态中的当前名；保存成功清空
+    // 草稿回显新名。改名经 HostRuntime 字段级更新并热更新名称广播。
+    if (model.actions && model.actions->set_device_name) {
+        std::string current_name;
+        for (const auto& device : model.state_view.devices) {
+            if (device.id == model.state_view.local_device
+                && !device.display_name.empty()) {
+                current_name = device.display_name;
+                break;
+            }
+        }
+        row_y += metrics.typography.caption + metrics.spacing.content;
+        const float name_width = std::min(320.0f, content_width);
+        components::input(ui, "aki.settings.name")
+            .position(pad_x, row_y)
+            .size(name_width, metrics.control.field)
+            .theme(tokens)
+            .value(model.settings_device_name_draft.empty()
+                ? current_name : model.settings_device_name_draft)
+            .placeholder(tr("Device name"))
+            .onChange([&model](const std::string& value) {
+                model.settings_device_name_draft = value;
+            }).build();
+        components::button(ui, "aki.settings.name.save")
+            .position(pad_x + name_width + metrics.spacing.compact, row_y)
+            .size(96.0f, metrics.control.field)
+            .text(tr("Save"))
+            .theme(tokens, false)
+            .onClick([&model] {
+                if (model.settings_device_name_draft.empty()) return;
+                if (model.actions->set_device_name(
+                        model.settings_device_name_draft)) {
+                    model.settings_device_name_draft.clear();
+                    set_feedback(model, tr("Device name updated"));
+                } else {
+                    set_feedback(model, tr("Device name save failed"));
+                }
+            }).build();
+    }
 
     row_y += metrics.typography.caption + metrics.spacing.section;
     if (model.actions && model.actions->set_local_pairing_password) {
