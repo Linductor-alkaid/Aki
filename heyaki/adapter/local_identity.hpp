@@ -146,8 +146,9 @@ public:
                 "meet Heyaki password policy");
         }
         auto generation = store_.password_generation();
+        // Parenthesized: Windows windows.h max macro would break the call.
         if (!generation || *generation.value_if()
-                == std::numeric_limits<std::uint64_t>::max()) {
+                == (std::numeric_limits<std::uint64_t>::max)()) {
             throw std::runtime_error("local identity: password generation unavailable");
         }
         auto updated = store_.set_password_verifier(*verifier.value_if(),
@@ -231,7 +232,7 @@ private:
                 "file.push:inbox") != policy.default_scopes.end()) {
             return;
         }
-        if (policy.generation == std::numeric_limits<std::uint64_t>::max()) {
+        if (policy.generation == (std::numeric_limits<std::uint64_t>::max)()) {
             throw std::runtime_error("local identity: pairing policy generation exhausted");
         }
         policy.default_scopes.push_back("file.push:inbox");

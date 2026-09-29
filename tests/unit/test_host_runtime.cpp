@@ -368,7 +368,8 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     // display_name 必须是末次合法改名值（make_device_name_job →
     // set_display_name 列落库）。
     {
-        auto reopened = aki::persistence::perform_startup_recovery(data_root);
+        auto reopened = aki::persistence::perform_startup_recovery(
+            data_root.string());
         REQUIRE(reopened.diagnostics.migrations_applied == 0);
         const aki::device::DeviceIdentity* recovered_local = nullptr;
         for (const auto& device : reopened.state.devices) {
