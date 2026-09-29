@@ -17,15 +17,15 @@
 int main() {
     aki::persistence::Database db =
         aki::persistence::Database::open(":memory:");
-    // 迁移：v1 正式 schema（ER 四表）+ 探针表（两步，验证多步迁移）。
+    // 迁移：正式 schema v1/v2 + 探针表（第三步，验证多步迁移）。
     std::vector<aki::persistence::MigrationStep> steps =
-        aki::persistence::schema_v1_steps();
+        aki::persistence::schema_steps();
     steps.push_back(aki::persistence::MigrationStep{
-        2, "public-surface-probe",
+        3, "public-surface-probe",
         "CREATE TABLE probe (k TEXT PRIMARY KEY, v TEXT);"});
     aki::persistence::Migrator migrator(steps);
-    if (migrator.bring_up_to_date(db) != 2) {
-        std::puts("[FAIL] migration should apply two steps");
+    if (migrator.bring_up_to_date(db) != 3) {
+        std::puts("[FAIL] migration should apply three steps");
         return 1;
     }
 

@@ -81,6 +81,8 @@ struct DeviceCapabilities {
 struct DeviceIdentity {
     DeviceId id;
     std::string display_name;
+    // Local-only label. Never advertised to peers or used as an identity key.
+    std::string remark;
     DeviceClass device_class = DeviceClass::Other;
     std::string os_name;
     PublicKey public_key;

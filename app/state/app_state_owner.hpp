@@ -357,7 +357,17 @@ private:
             if (!trust_allows(existing.trust_state, upsert.device.trust_state)) {
                 return false;
             }
-            existing = upsert.device;
+            // Discovery can race with a signed name or a local remark update.
+            // Those fields have dedicated partial updates; a stale discovery
+            // snapshot must never erase them.
+            auto merged = upsert.device;
+            if (merged.remark.empty() && !existing.remark.empty())
+                merged.remark = existing.remark;
+            if ((merged.display_name.empty()
+                    || merged.display_name == merged.id.value.substr(0, 16))
+                && !existing.display_name.empty())
+                merged.display_name = existing.display_name;
+            existing = std::move(merged);
             snapshot_dirty_ = true;
             return true;
         }
@@ -367,6 +377,32 @@ private:
         devices.push_back(upsert.device);
         snapshot_dirty_ = true;
         return true;
+    }
+
+    bool apply_impl(const SetDeviceName& update) {
+        if (update.name.empty() || update.name.size() > 64
+            || update.public_key.bytes.size() != 32) return false;
+        for (auto& existing : current_.devices.devices) {
+            if (existing.id != update.device) continue;
+            if (existing.public_key != update.public_key) return false;
+            if (existing.display_name == update.name) return true;
+            existing.display_name = update.name;
+            snapshot_dirty_ = true;
+            return true;
+        }
+        return false;
+    }
+
+    bool apply_impl(const SetDeviceRemark& update) {
+        if (update.remark.size() > 128) return false;
+        for (auto& existing : current_.devices.devices) {
+            if (existing.id != update.device) continue;
+            if (existing.remark == update.remark) return true;
+            existing.remark = update.remark;
+            snapshot_dirty_ = true;
+            return true;
+        }
+        return false;
     }
 
     bool apply_impl(const UpsertConversation& upsert) {

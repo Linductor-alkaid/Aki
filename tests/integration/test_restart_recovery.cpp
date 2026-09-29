@@ -152,7 +152,7 @@ TEST_CASE("Restart recovery restores every domain after a drained shutdown",
 
     // 启动恢复（主线程同步，§11.1 ②）：空库首开 → 迁移 1 步 + 全域空。
     RecoveryResult first = perform_startup_recovery(root);
-    REQUIRE(first.diagnostics.migrations_applied == 1);
+    REQUIRE(first.diagnostics.migrations_applied == 2);
     REQUIRE(first.diagnostics.tmp_orphans_removed == 0);
     REQUIRE(first.state.devices.empty());
     REQUIRE(first.state.conversations.empty());
@@ -359,7 +359,7 @@ TEST_CASE("Corrupted database file fails recovery open cleanly",
     // 失败不残留半初始化状态：同组件对有效根仍正常工作。
     const std::string other = temp_root("corrupt-clean");
     RecoveryResult ok = perform_startup_recovery(other);
-    CHECK(ok.diagnostics.migrations_applied == 1);
+    CHECK(ok.diagnostics.migrations_applied == 2);
     CHECK(ok.state.devices.empty());
 }
 

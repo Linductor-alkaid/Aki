@@ -49,6 +49,7 @@ struct HostAssemblyReport {
     bool identity_created = false;
     std::string local_device_id;
     bool lan_interfaces = false;
+    bool name_announcement_started = false;
     std::string receive_dir;
     // peer_sessions 观察管道随装配启动（M5-11：主动/被动配对、presence、
     // 路径与断线重连的事件源；false = executor 拒绝，装配失败可见）。
@@ -93,6 +94,7 @@ struct HostShutdownReport {
     std::uint64_t db_failed = 0;
     std::uint64_t db_rejected = 0;
     std::uint64_t post_accept_failures = 0;
+    bool language_write_failed = false;
 };
 
 class HostRuntime {
@@ -114,11 +116,17 @@ public:
     // assembled()==false 且 failure_reason 非空——调用方以错误占位呈现，
     // 关闭仍经 shutdown_with_report()（幂等）闭合。
     const HostAssemblyReport& ensure_assembled(std::string data_root = {},
-        std::function<void()> wake = {}, std::string initial_password = {});
+        std::function<void()> wake = {}, std::string initial_password = {},
+        std::string initial_device_name = {});
 
     // 主线程设置本机配对 verifier；返回 false 时 error 为可展示原因。
     [[nodiscard]] bool set_local_pairing_password(std::string password,
         std::string& error);
+    [[nodiscard]] bool set_language(std::string language_code);
+    // 本机设备名改名（M5-16）：与首启同一校验（1-64 字节、无控制字符），
+    // 经状态 owner 字段级更新（公钥绑定校验 + DB display_name 列）并热更新
+    // 局域网名称广播；广播不可用时改名仍然生效（DEC-020 尽力而为元数据）。
+    [[nodiscard]] bool set_device_name(std::string name);
 
     [[nodiscard]] bool assembled() const noexcept;
     [[nodiscard]] bool assembly_failed() const noexcept;

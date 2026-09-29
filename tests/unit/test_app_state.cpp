@@ -768,9 +768,9 @@ TEST_CASE("UpsertMessage with unknown conversation is rejected by the owner",
 TEST_CASE("Idempotent no-op acceptance enqueues and is absorbed by the job",
     "[unit][app_state][dec009]") {
     auto db = aki::persistence::Database::open(":memory:");
-    REQUIRE(aki::persistence::Migrator(aki::persistence::schema_v1_steps())
+    REQUIRE(aki::persistence::Migrator(aki::persistence::schema_steps())
                 .bring_up_to_date(db)
-        == 1);
+        == 2);
     auto control = std::make_shared<aki::persistence::DatabaseWorkerControl>(
         std::make_unique<aki::persistence::Repositories>(std::move(db)));
     control->repositories().transfers.upsert(

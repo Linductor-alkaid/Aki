@@ -254,6 +254,11 @@ struct StubAdapter final : HeyakiAdapter {
         return true;
     }
 
+    bool send_file_message(const DeviceId& to, const MessageId& message_id,
+        const FileMetadata& file, const TransferId& transfer_id) override {
+        return send_image_message(to, message_id, file, transfer_id);
+    }
+
     bool start_file_transfer(const DeviceId&, const TransferId&,
         const FileMetadata&, const std::filesystem::path&) override {
         transfer_entered.fetch_add(1);
@@ -777,11 +782,44 @@ TEST_CASE("Device presence fallback routes to a volatile SetPresence without a m
     REQUIRE(report.fully_stopped());
 }
 
-// ---- M5-11 双认证：会话授权（connected）推进 Pending 行 → Trusted，口令
-// ---- 由任一侧输入一次即可；Unknown/终态/缺失行不动作，拒绝面可观测。
+TEST_CASE("Signed peer name and local remark retain separate device fields",
+    "[unit][managers][m5_16]") {
+    AppStack stack;
+    auto settle = [&] {
+        quiesce(stack.state_owner, *stack.devices, *stack.conversations,
+            *stack.messages, *stack.transfers);
+    };
+    auto discovered = make_discovered("dev-named");
+    discovered.identity.public_key.bytes.assign(32, std::uint8_t{7});
+    REQUIRE(stack.devices->enqueue_discovered(discovered));
+    settle();
+    REQUIRE(stack.devices->enqueue_name(DeviceId{"dev-named"},
+        discovered.identity.public_key, "客厅电脑"));
+    REQUIRE(stack.devices->set_remark(DeviceId{"dev-named"}, "小主机"));
+    settle();
+    executor::comm::Snapshot<AppState> snapshot;
+    REQUIRE(stack.state_owner.try_load_snapshot(snapshot));
+    REQUIRE(snapshot.value.devices.devices.front().display_name == "客厅电脑");
+    REQUIRE(snapshot.value.devices.devices.front().remark == "小主机");
+    REQUIRE(stack.devices->enqueue_discovered(discovered));
+    settle();
+    REQUIRE(stack.state_owner.try_load_snapshot(snapshot));
+    REQUIRE(snapshot.value.devices.devices.front().display_name == "客厅电脑");
+    REQUIRE(snapshot.value.devices.devices.front().remark == "小主机");
+    auto wrong_key = discovered.identity.public_key;
+    wrong_key.bytes[0] = 9;
+    REQUIRE(stack.devices->enqueue_name(DeviceId{"dev-named"},
+        wrong_key, "攻击者名称"));
+    settle();
+    REQUIRE(stack.state_owner.try_load_snapshot(snapshot));
+    REQUIRE(snapshot.value.devices.devices.front().display_name == "客厅电脑");
+    REQUIRE(stack.host.executor_owner.shutdown().fully_stopped());
+}
 
-TEST_CASE("Session authorization advances a Pending row to Trusted without a second password entry",
-    "[unit][managers][m5_11]") {
+// ---- DEC-019：连接不能代表本机取得对端签发的 trust grant。
+
+TEST_CASE("Session authorization keeps local trust Pending until local pairing succeeds",
+    "[unit][managers][dec019]") {
     AppStack stack;
     auto& owner = stack.state_owner;
     const auto settle = [&] {
@@ -806,9 +844,7 @@ TEST_CASE("Session authorization advances a Pending row to Trusted without a sec
     const auto dm_handler_rejections_before =
         stack.devices->stats().handler_rejections;
 
-    // ② connected：Pending → Trusted（会话授权 = 对端已通过本机口令校验的
-    //    wire 证据，M5-11 修订）；presence Online、路径条目 Lan，主路径事件
-    //    恰好一次，owner 零拒绝（推进走合法边 Pending→Trusted）。
+    // ② connected：只更新连接事实；本机 Pending 不因对端认证而变化。
     REQUIRE(stack.devices->enqueue_connected(DeviceId{"dev-peer"},
         ConnectionPath::Lan));
     settle();
@@ -817,7 +853,7 @@ TEST_CASE("Session authorization advances a Pending row to Trusted without a sec
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.size() == 1);
         REQUIRE(snapshot.value.devices.devices.front().trust_state
-            == TrustState::Trusted);
+            == TrustState::Pending);
         REQUIRE(snapshot.value.devices.devices.front().presence
             == PresenceState::Online);
         bool path_seen = false;
@@ -844,8 +880,7 @@ TEST_CASE("Session authorization advances a Pending row to Trusted without a sec
     }
     REQUIRE(owner.stats().updates_rejected == rejected_before);
 
-    // ③ 已 Trusted 行再次 connected：推进静默不触发（Trusted 非 Pending），
-    //    易失更新照常受理，owner 拒绝计数不变。
+    // ③ 重复连接仍保持 Pending，易失更新照常受理。
     REQUIRE(stack.devices->enqueue_connected(DeviceId{"dev-peer"},
         ConnectionPath::Lan));
     settle();
@@ -853,7 +888,7 @@ TEST_CASE("Session authorization advances a Pending row to Trusted without a sec
         executor::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.front().trust_state
-            == TrustState::Trusted);
+            == TrustState::Pending);
         REQUIRE(snapshot.value.devices.devices.front().presence
             == PresenceState::Online);
     }
@@ -1533,6 +1568,8 @@ TEST_CASE("Image send routes through MessageManager with terminal idempotency",
         Message inbound = make_message("m-img-in");
         inbound.type = MessageType::Image;
         inbound.payload = aki::conversation::ImagePayload{media, TransferId{"t-img"}};
+        inbound.timestamp = std::chrono::system_clock::time_point{};
+        const auto received_after = std::chrono::system_clock::now();
         REQUIRE(fake.inject_message_received(std::move(inbound)));
         settle();
         {
@@ -1542,6 +1579,8 @@ TEST_CASE("Image send routes through MessageManager with terminal idempotency",
             const auto& row = snapshot.value.messages.messages.back();
             REQUIRE(row.id == MessageId{"m-img-in"});
             REQUIRE(row.state == DeliveryState::Delivered);
+            REQUIRE(row.timestamp >= received_after);
+            REQUIRE(row.timestamp <= std::chrono::system_clock::now());
         }
 
         const auto report = stack.host.executor_owner.shutdown();

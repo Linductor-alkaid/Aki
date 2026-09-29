@@ -113,7 +113,9 @@ struct DiscoveredDevice {
 ```
 
 新发现的设备默认处于未信任状态。客户端显示设备名称、类型、Device
-ID、公钥指纹和发现来源，用户确认后建立信任关系。在这个模型下，"添加联系人"对应的实际操作就是信任一个设备。
+ID、公钥指纹和发现来源。设备名在发现阶段经 Aki 的签名局域网名称报文
+补充（[DEC-020](../decisions/DEC-020-signed-lan-device-name.md)）；签名公钥
+须与 Heyaki 发现身份一致。本机备注只保存在本机设备记录。
 公钥指纹的展示形式即 `DeviceId` 规范串（`hy1_` + 52 位小写 base32，
 SHA-256 摘要的规范编码——确认面两个显示项同值合并，不引入第二种编码；
 M5-04）。
@@ -136,8 +138,11 @@ Trusted -> Revoked
 `Revoked` 表示对既有信任的收回，只能从 `Trusted` 进入；`Rejected` 与 `Revoked`
 是终态。新增状态或转移必须先更新本节，不允许代码私有状态。
 
-`Trusted`
-只表示身份已经得到认可，不包含远程操作授权。终端、屏幕控制、机器人控制等能力需要继续经过
+`Trusted` 表示本机输入对端口令、取得对端签发的 Heyaki grant；对端输入
+本机口令建立的连接不自动推进本机信任状态。`ConnectionPath` 和 presence
+独立表达通信连接；会话中的消息和文件在已授权连接上可使用，不要求双向
+`Trusted`（[DEC-019](../decisions/DEC-019-directional-trust-and-chat-scopes.md)）。
+终端、屏幕控制、机器人控制等能力需要继续经过
 capability 和 permission 判断，避免把设备信任直接等同于控制权限。
 
 ## 5. Conversation
@@ -854,6 +859,11 @@ EUI-NEO 当前的组件化 C++ UI 模型能够直接对应，同时不需要额�
 `Settings`。Devices 处理发现、身份、信任和连接信息；Conversations
 承载日常通信；Transfers 集中管理文件任务。
 
+首启设置配对密码、设备名和界面语言（默认中文）；Settings 可切换中英文，并可修改本机设备名（改名经状态 owner 字段级更新落库，并即时反映到后续名称广播，见 [DEC-020](../decisions/DEC-020-signed-lan-device-name.md)）。
+设备列表选中后在右栏显示对端声明名称、ID、连接路径、信任状态和操作，
+并编辑本机备注。聊天输入法组合串的退格在平台输入边界先于文本框拦截；
+气泡在滚动视口内不使用会被裁切的阴影，长文本按可用宽度换行。
+
 界面令牌、语义色板、状态视觉语义与组件映射由
 [Aki UI 设计规范](aki_ui_design.md)固定。
 
@@ -1085,6 +1095,7 @@ erDiagram
     DEVICE {
         string device_id
         string display_name
+        string remark
         blob public_key
         int trust_state
     }
@@ -1121,6 +1132,13 @@ POSIX 相对路径，`hash` 为终态流式 SHA-256，`size_bytes` / `mime_type`
 为文件本体 metadata（`file_name` 是远端原始文件名，仅供展示、禁止拼入路径）；
 `transferred` / `total` 承载传输进度，供 `UpdateTransferProgress` 部分更新与重启
 恢复。
+
+M5-16 使用 schema v2 为 `device` 增加本机备注 `remark`（默认空串）；
+`display_name` 是对端签名声明的设备名，二者独立持久化。界面语言保存在
+数据根的 `ui-language.txt`，写入经 Executor 有限任务并在宿主关闭时消费
+结果，缺失时默认中文。名称和备注由 `SetDeviceName` / `SetDeviceRemark`
+部分更新在 Application State 单写者中按序应用，数据库也只更新对应列；
+不得从旧快照构造整行覆盖另一字段。
 
 ### 11.1 持久化集成契约（M2 契约，M2-01；M3-02/DEC-009 修订）
 

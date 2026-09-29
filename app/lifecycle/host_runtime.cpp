@@ -6,6 +6,7 @@
 #include "app/application/router_sink.hpp"
 #include "app/state/app_state_owner.hpp"
 #include "heyaki/adapter/heyaki_node_adapter.hpp"
+#include "heyaki/adapter/lan_name_beacon.hpp"
 #include "heyaki/adapter/local_identity.hpp"
 #include "heyaki/adapter/peer_sessions_pipeline.hpp"
 #include "heyaki/session/runtime_node.hpp"
@@ -23,6 +24,7 @@
 #include <algorithm>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <future>
 #include <memory>
@@ -82,7 +84,8 @@ bool wait_until(const std::function<bool()>& predicate,
 
 // 本地身份 → DeviceIdentity（DEC-006 映射 1；main.cpp 同款语义）。
 DeviceIdentity make_local_device_identity(const aki::heyaki::LocalIdentity& identity,
-    const std::vector<DeviceIdentity>& recovered_devices) {
+    const std::vector<DeviceIdentity>& recovered_devices,
+    const std::string& initial_name = {}) {
     DeviceIdentity device;
     device.id = identity.id;
     device.display_name = "aki";
@@ -96,11 +99,15 @@ DeviceIdentity make_local_device_identity(const aki::heyaki::LocalIdentity& iden
             device.display_name = recovered.display_name;
             device.device_class = recovered.device_class;
             device.os_name = recovered.os_name;
+            device.remark = recovered.remark;
             device.trust_state = recovered.trust_state;
             device.capabilities = recovered.capabilities;
             device.public_key = identity.public_key;
             break;
         }
+    }
+    if (!initial_name.empty()) {
+        device.display_name = initial_name;
     }
     return device;
 }
@@ -137,6 +144,14 @@ private:
                     jobs.push_back(
                         aki::persistence::make_device_upsert_job(
                             concrete.device));
+                } else if constexpr (std::is_same_v<Update,
+                                       aki::app::SetDeviceName>) {
+                    jobs.push_back(aki::persistence::make_device_name_job(
+                        concrete.device, concrete.name));
+                } else if constexpr (std::is_same_v<Update,
+                                       aki::app::SetDeviceRemark>) {
+                    jobs.push_back(aki::persistence::make_device_remark_job(
+                        concrete.device, concrete.remark));
                 } else if constexpr (std::is_same_v<Update,
                                        aki::app::UpsertConversation>) {
                     jobs.push_back(
@@ -231,6 +246,8 @@ struct HostRuntime::Impl {
     std::optional<RouterSink> router;
     std::unique_ptr<ReconnectCoordinator> reconnect;
     std::unique_ptr<aki::heyaki::PeerSessionPipeline> peer_pipeline;
+    std::unique_ptr<aki::heyaki::LanNameBeacon> name_beacon;
+    std::future<void> language_write;
 
     bool assembled = false;
     bool assembly_failed = false;
@@ -270,7 +287,8 @@ HostRuntime& HostRuntime::instance() {
 }
 
 const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
-    std::function<void()> wake, std::string initial_password) {
+    std::function<void()> wake, std::string initial_password,
+    std::string initial_device_name) {
     Impl& impl = *impl_;
     if (impl.assembled || impl.assembly_failed || impl.assembly_report.attempted) {
         return impl.assembly_report;  // 幂等：返回首次结果。
@@ -320,6 +338,33 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
         return fail(std::string("startup recovery failed: ") + error.what());
     }
     const aki::heyaki::LocalIdentity identity = impl.profile->identity();
+    std::vector<DeviceIdentity> corrected_trust_rows;
+    const auto now_ms = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+    for (auto& device : impl.recovery->state.devices) {
+        if (device.id == identity.id || device.trust_state != TrustState::Trusted)
+            continue;
+        auto peer = ::heyaki::parse_device_id(device.id.value);
+        if (!peer) continue;  // synthetic test/legacy identifiers have no Heyaki grant.
+        auto grants = impl.profile->store().trust_grants_for_peer(
+            *peer.value, now_ms);
+        bool received = false;
+        if (grants) {
+            for (const auto& grant : *grants.value_if()) {
+                if (grant.direction == ::heyaki::TrustGrantDirection::received
+                    && grant.issuer == *peer.value
+                    && grant.subject == impl.profile->store().device_id()) {
+                    received = true;
+                    break;
+                }
+            }
+        }
+        if (!received) {
+            device.trust_state = TrustState::Pending;
+            corrected_trust_rows.push_back(device);
+        }
+    }
     {
         const auto& recovered = impl.recovery->state;
         impl.assembly_report.recovered_devices = recovered.devices.size();
@@ -394,9 +439,12 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
         [&sink = impl.sink](const AppStateUpdate& update) { sink(update); });
 
     // 本地身份经 UpsertDevice 进入 Application State（SCOPE-01）。
-    (void)impl.state_owner->submit_update(
-        UpsertDevice{make_local_device_identity(identity,
-            impl.recovery->state.devices)});
+    auto local_device = make_local_device_identity(identity,
+        impl.recovery->state.devices, initial_device_name);
+    const std::string local_name = local_device.display_name;
+    (void)impl.state_owner->submit_update(UpsertDevice{std::move(local_device)});
+    for (auto& corrected : corrected_trust_rows)
+        (void)impl.state_owner->submit_update(UpsertDevice{std::move(corrected)});
 
     // 5) 真实 Adapter + 四 Manager（M3-08 组合；presence/path 观察关闭保
     //    确定性，发现观察管道由 start_discovery 启停）。
@@ -472,6 +520,22 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
     impl.router.emplace(*impl.devices, *impl.conversations, *impl.messages,
         *impl.transfers);
     impl.adapter->set_sink(&*impl.router);
+
+    // Aki metadata announcement is signed by the same Heyaki identity.
+    // Failure to bind multicast does not break authenticated chat; scan may
+    // then show the peer ID until the network permits name announcements.
+    if (auto keypair = impl.profile->store().load_identity(); keypair) {
+        impl.name_beacon = std::make_unique<aki::heyaki::LanNameBeacon>(
+            impl.executor_owner.executor(), std::move(*keypair.value_if()),
+            local_name, [&devices = *impl.devices](aki::heyaki::SignedLanName peer) {
+                return devices.enqueue_name(std::move(peer.id),
+                    std::move(peer.public_key), std::move(peer.name));
+            });
+        impl.assembly_report.name_announcement_started =
+            impl.name_beacon->start();
+        if (!impl.assembly_report.name_announcement_started)
+            impl.name_beacon.reset();
+    }
 
     // 7.5) peer_sessions diff 管道 + 重连协调器（M3-06/M3-08；断开后有界
     //      重连循环 EXEC-05 长任务，DEC-008 承载）。裸指针捕获成员地址：
@@ -576,6 +640,49 @@ bool HostRuntime::set_local_pairing_password(std::string password,
     }
 }
 
+bool HostRuntime::set_language(std::string language_code) {
+    if (!impl_->assembled || impl_->shutdown_attempted
+        || (language_code != "zh-CN" && language_code != "en")) return false;
+    if (impl_->language_write.valid()) {
+        if (impl_->language_write.wait_for(0ms)
+            != std::future_status::ready) return false;
+        try { impl_->language_write.get(); } catch (...) { return false; }
+    }
+    const auto path = std::filesystem::path(impl_->data_root)
+        / "ui-language.txt";
+    impl_->language_write = impl_->executor_owner.executor().submit_auto(
+        [path, language_code = std::move(language_code)] {
+            std::ofstream file(path, std::ios::binary | std::ios::trunc);
+            if (!file) throw std::runtime_error("language preference open failed");
+            file << language_code << '\n';
+            file.close();
+            if (!file) throw std::runtime_error("language preference write failed");
+        });
+    if (impl_->language_write.wait_for(0ms) == std::future_status::ready) {
+        try { impl_->language_write.get(); } catch (...) { return false; }
+    }
+    return true;
+}
+
+bool HostRuntime::set_device_name(std::string name) {
+    if (!impl_->assembled || impl_->shutdown_attempted
+        || !impl_->state_owner || !impl_->profile) return false;
+    // 与首启输入、广播报文同一校验（1-64 字节、无控制字符）。
+    if (!aki::heyaki::valid_lan_name(name)) return false;
+    const aki::heyaki::LocalIdentity& identity = impl_->profile->identity();
+    // 公钥绑定 + 字段级 display_name 更新（SetDeviceName apply 校验）；
+    // DB 列与快照经 owner 接受后处理器联动（WritePathSink jobs_for）。
+    std::string stored_name = name;
+    const bool stored = impl_->state_owner->submit_update(
+        aki::app::SetDeviceName{identity.id, identity.public_key,
+            std::move(stored_name)});
+    if (!stored) return false;
+    if (impl_->name_beacon) {
+        (void)impl_->name_beacon->set_name(std::move(name));
+    }
+    return true;
+}
+
 bool HostRuntime::assembled() const noexcept {
     return impl_->assembled;
 }
@@ -656,6 +763,10 @@ const HostShutdownReport& HostRuntime::shutdown_with_report() {
     }
     impl.shutdown_attempted = true;
     HostShutdownReport& report = impl.shutdown_report;
+    if (impl.language_write.valid()) {
+        try { impl.language_write.get(); }
+        catch (...) { report.language_write_failed = true; }
+    }
     report.attempted = true;
 
     // ---- §8.3 宿主钩子原序（不省略不重排）→ EXEC-01 步骤 2~5 ----
@@ -666,6 +777,7 @@ const HostShutdownReport& HostRuntime::shutdown_with_report() {
         if (impl.transfers) {
             (void)impl.transfers->request_cancel_all();
         }
+        if (impl.name_beacon) impl.name_beacon->stop();
         report.transfers_cancelled = true;
         report.hook_sequence.push_back("hook:transfer.request_cancel_all");
 

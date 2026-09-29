@@ -34,6 +34,7 @@ namespace aki::ui::models {
 struct DeviceView {
     aki::device::DeviceId id;
     std::string display_name;
+    std::string remark;
     std::string os_name;
     aki::device::DeviceClass device_class = aki::device::DeviceClass::Other;
     aki::device::TrustState trust_state = aki::device::TrustState::Unknown;
@@ -51,6 +52,10 @@ struct DeviceView {
     [[nodiscard]] bool can_confirm() const noexcept {
         return trust_state == aki::device::TrustState::Pending
             && fingerprint_available;
+    }
+    [[nodiscard]] bool can_renew() const noexcept {
+        return trust_state == aki::device::TrustState::Trusted
+            && connection_path != aki::device::ConnectionPath::Unknown;
     }
     [[nodiscard]] bool can_begin() const noexcept {
         return trust_state == aki::device::TrustState::Unknown

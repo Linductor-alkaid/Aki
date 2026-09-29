@@ -15,6 +15,23 @@ DbJob make_device_upsert_job(aki::device::DeviceIdentity device) {
         std::move(done)};
 }
 
+DbJob make_device_name_job(aki::device::DeviceId device, std::string name) {
+    auto done = std::make_shared<std::promise<void>>();
+    return DbJob{[device = std::move(device), name = std::move(name)](
+                     Repositories& repos) {
+                     repos.devices.set_display_name(device, name);
+                 }, std::move(done)};
+}
+
+DbJob make_device_remark_job(aki::device::DeviceId device,
+    std::string remark) {
+    auto done = std::make_shared<std::promise<void>>();
+    return DbJob{[device = std::move(device), remark = std::move(remark)](
+                     Repositories& repos) {
+                     repos.devices.set_remark(device, remark);
+                 }, std::move(done)};
+}
+
 DbJob make_conversation_upsert_job(
     aki::conversation::Conversation conversation) {
     auto done = std::make_shared<std::promise<void>>();

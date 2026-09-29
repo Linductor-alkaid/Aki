@@ -49,7 +49,8 @@ std::vector<DeviceView> derive_device_views(const aki::app::DeviceStore& store) 
     std::vector<DeviceView> views;
     views.reserve(store.devices.size());
     for (const aki::device::DeviceIdentity& device : store.devices) {
-        DeviceView view{device.id, device.display_name, device.os_name,
+        DeviceView view{device.id, device.display_name, device.remark,
+            device.os_name,
             device.device_class, device.trust_state, device.presence,
             aki::device::ConnectionPath::Unknown,
             device.public_key.bytes.size() == 32};

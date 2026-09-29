@@ -105,6 +105,10 @@ public:
         const aki::conversation::MessageId& message_id,
         const aki::transfer::FileMetadata& file,
         const aki::transfer::TransferId& transfer_id) = 0;
+    virtual bool send_file_message(const aki::device::DeviceId& to,
+        const aki::conversation::MessageId& message_id,
+        const aki::transfer::FileMetadata& file,
+        const aki::transfer::TransferId& transfer_id) = 0;
 
     // 文件传输接口面（设计第 7/7.1⑤ 节）。M4-02 起签名含发送侧本地路径
     // `source_path`（std::filesystem::path）——不进入对端可见的 FileMetadata

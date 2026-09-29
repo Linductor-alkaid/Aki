@@ -64,7 +64,7 @@ using aki::heyaki::FakeHeyakiAdapter;
 using aki::persistence::Database;
 using aki::persistence::FileStore;
 using aki::persistence::Migrator;
-using aki::persistence::schema_v1_steps;
+using aki::persistence::schema_steps;
 using aki::persistence::sha256_hex;
 using aki::transfer::FileMetadata;
 using aki::transfer::Transfer;
@@ -132,8 +132,8 @@ struct ReceivePathStack {
               (std::filesystem::path{root} / "aki.db3").string())) {
         std::error_code ec;
         std::filesystem::create_directories(receive_dir, ec);
-        const Migrator migrator{schema_v1_steps()};
-        if (migrator.bring_up_to_date(database) != 1) {
+        const Migrator migrator{schema_steps()};
+        if (migrator.bring_up_to_date(database) != 2) {
             throw std::runtime_error("receive stack: migration failed");
         }
         db = std::make_shared<aki::persistence::DatabaseWorkerControl>(
@@ -430,7 +430,7 @@ TEST_CASE("Inbound transfer merges from the receive root and survives restart",
     // ---- 重启：行 + 文件本体 + 回写列一致（验收）----
     auto reopened = Database::open(
         (std::filesystem::path{root} / "aki.db3").string());
-    const Migrator reopen_migrator{schema_v1_steps()};
+    const Migrator reopen_migrator{schema_steps()};
     REQUIRE(reopen_migrator.bring_up_to_date(reopened) == 0);
     {
         aki::persistence::Statement statement = reopened.prepare(

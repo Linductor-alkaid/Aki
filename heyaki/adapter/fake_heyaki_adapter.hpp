@@ -87,6 +87,13 @@ public:
         return true;
     }
 
+    bool send_file_message(const aki::device::DeviceId& to,
+        const aki::conversation::MessageId& message_id,
+        const aki::transfer::FileMetadata& file,
+        const aki::transfer::TransferId& transfer_id) override {
+        return send_image_message(to, message_id, file, transfer_id);
+    }
+
     bool start_file_transfer(const aki::device::DeviceId& to,
         const aki::transfer::TransferId& transfer_id,
         const aki::transfer::FileMetadata& file,

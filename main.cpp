@@ -27,12 +27,14 @@
 #include "ui/models/ui_actions.hpp"
 #include "ui/models/ui_state_consumer.hpp"
 #include "ui/pages/main_window.hpp"
+#include "ui/platform/ime_guard.hpp"
 #include "ui/theme/aki_theme.hpp"
 
 #include <eui/dsl_app.h>
 
 #include <chrono>
 #include <cstdio>
+#include <fstream>
 #include <memory>
 #include <string>
 
@@ -140,7 +142,7 @@ void log_shutdown(const aki::app::HostShutdownReport& report,
     std::snprintf(buffer, sizeof(buffer),
         "shutdown: hook_sequence_completed=%d fully_stopped=%d "
         "workers=%zu/%zu state_closed=%d db_drained=%d write "
-        "admitted=%llu settled_failures=%llu (elapsed %lldms)",
+        "admitted=%llu settled_failures=%llu language_write_failed=%d (elapsed %lldms)",
         report.hook_sequence_completed ? 1 : 0,
         report.executor_report.fully_stopped() ? 1 : 0,
         report.executor_report.blocking_workers_requested,
@@ -149,6 +151,7 @@ void log_shutdown(const aki::app::HostShutdownReport& report,
         report.db_drained_within_budget ? 1 : 0,
         static_cast<unsigned long long>(report.write_admitted),
         static_cast<unsigned long long>(report.write_settle_failures),
+        report.language_write_failed ? 1 : 0,
         static_cast<long long>(elapsed.count()));
     log_line(buffer);
     for (const std::string& step : report.hook_sequence) {
@@ -205,14 +208,23 @@ void app::compose(eui::Ui& ui, const eui::Screen& screen) {
     ++frames;
     auto& model = main_window_model();
     auto& host = aki::app::HostRuntime::instance();
+    aki::ui::platform::install_ime_backspace_guard();
 
     if (!setup_checked) {
         setup_checked = true;
         model.data_directory = aki::persistence::resolve_data_root();
+        {
+            std::ifstream preference(model.data_directory + "/ui-language.txt");
+            std::string code;
+            if (preference >> code && code == "en")
+                model.language = aki::ui::Language::English;
+            aki::ui::set_language(model.language);
+        }
         try {
             model.needs_password_setup =
                 aki::heyaki::LocalProfile::requires_password_setup(
                     model.data_directory);
+            model.language_selection_pending = model.needs_password_setup;
         } catch (...) {
             // HostRuntime will report the profile failure through startup_error.
             model.needs_password_setup = false;
@@ -237,7 +249,8 @@ void app::compose(eui::Ui& ui, const eui::Screen& screen) {
             }();
             (void)first;
             app::requestUpdate();
-        }, std::move(model.initial_password));
+        }, std::move(model.initial_password),
+            std::move(model.initial_device_name));
         aki::ui::clear_secret(model.initial_password);
         log_assembly(assembly,
             std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -276,6 +289,17 @@ void app::compose(eui::Ui& ui, const eui::Screen& screen) {
                 return host.set_local_pairing_password(
                     std::move(password), error);
             };
+            ui_actions()->set_language = [&host](std::string code) {
+                return host.set_language(std::move(code));
+            };
+            ui_actions()->set_device_name = [&host](std::string name) {
+                return host.set_device_name(std::move(name));
+            };
+            if (model.language_selection_pending || assembly.identity_created) {
+                (void)host.set_language(model.language
+                    == aki::ui::Language::Chinese ? "zh-CN" : "en");
+                model.language_selection_pending = false;
+            }
             model.actions = ui_actions();
         }
         log_theme_override();

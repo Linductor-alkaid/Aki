@@ -29,5 +29,7 @@ namespace aki::persistence {
 
 // 返回 v1 迁移步骤（单步、原子），供宿主注册进 Migrator。
 [[nodiscard]] std::vector<MigrationStep> schema_v1_steps();
+// Complete migration chain for the current application schema.
+[[nodiscard]] std::vector<MigrationStep> schema_steps();
 
 }  // namespace aki::persistence

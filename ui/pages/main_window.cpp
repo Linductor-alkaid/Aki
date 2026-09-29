@@ -1,3 +1,4 @@
+#include "ui/i18n.hpp"
 // 三栏壳与四页导航（M5-04 Devices 页实体化；其余页 M5-03 消费面接线形态保持，
 // 页面具体展示归 M5-05~07）。
 //
@@ -14,6 +15,8 @@
 
 #include "components/button.h"
 #include "components/dialog.h"
+#include "components/input.h"
+#include "components/scrollview.h"
 #include "components/text.h"
 
 #include <algorithm>
@@ -59,11 +62,14 @@ const char* list_guidance(NavPage page) {
 std::string list_summary(NavPage page, const MainWindowModel& model) {
     switch (page) {
     case NavPage::Conversations:
-        return std::to_string(model.state_view.conversations.size()) + " chats";
+        return std::to_string(model.state_view.conversations.size())
+            + (language() == Language::Chinese ? " 个会话" : " chats");
     case NavPage::Devices:
-        return std::to_string(model.state_view.devices.size()) + " known devices";
+        return std::to_string(model.state_view.devices.size())
+            + (language() == Language::Chinese ? " 台设备" : " known devices");
     case NavPage::Transfers:
-        return std::to_string(model.state_view.transfers.size()) + " transfers";
+        return std::to_string(model.state_view.transfers.size())
+            + (language() == Language::Chinese ? " 个传输" : " transfers");
     case NavPage::Settings:
         return "Preferences";
     }
@@ -142,35 +148,57 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
     const float width = std::max(screen.width, 1.0f);
     const float height = std::max(screen.height, 1.0f);
     if (model.needs_password_setup) {
-        const float panel_w = std::min(500.0f, width - 48.0f);
+        const float panel_w = std::max(200.0f,
+            std::min(500.0f, width - 64.0f));
         const float panel_x = (width - panel_w) * 0.5f;
-        const float panel_y = std::max(40.0f, (height - 350.0f) * 0.5f);
+        const float panel_y = std::max(20.0f, (height - 480.0f) * 0.5f);
         ui.rect("aki.setup.bg").size(width, height)
             .color(tokens.background).build();
+        components::scrollView(ui, "aki.setup.scroll")
+            .size(width, height).theme(tokens)
+            .content([&](eui::Ui& ui, float scroll_width, float) {
+                ui.stack("aki.setup.content")
+                    .width(scroll_width)
+                    .height(std::max(height, panel_y + 440.0f))
+                    .content([&] {
         components::text(ui, "aki.setup.title")
-            .text("Set a local pairing password")
+            .text(tr("Set up this device"))
             .position(panel_x, panel_y)
             .fontSize(metrics.typography.title).fontWeight(600)
             .color(tokens.text).build();
         components::text(ui, "aki.setup.help")
-            .text("Other devices need this password to pair with this device."
-                  " Use at least 8 characters.")
+            .text(tr("Choose a device name and a pairing password (8+ characters)."))
             .position(panel_x, panel_y + 42.0f)
             .fontSize(metrics.typography.body).wrap(true)
             .maxWidth(panel_w).color(semantic.text_subtle).build();
-        secureInput(ui, "aki.setup.password", model.local_password_draft,
-            tokens, panel_x, panel_y + 115.0f, panel_w,
-            metrics.control.field, "Local pairing password");
-        secureInput(ui, "aki.setup.confirm", model.local_password_confirm,
-            tokens, panel_x, panel_y + 175.0f, panel_w,
-            metrics.control.field, "Confirm password");
-        components::button(ui, "aki.setup.save")
-            .position(panel_x, panel_y + 240.0f)
+        components::input(ui, "aki.setup.name")
+            .position(panel_x, panel_y + 105.0f)
             .size(panel_w, metrics.control.field)
-            .text("Save password and start Aki")
+            .theme(tokens)
+            .value(model.local_device_name_draft)
+            .placeholder(tr("Device name"))
+            .onChange([&model](const std::string& name) {
+                model.local_device_name_draft = name;
+            }).build();
+        secureInput(ui, "aki.setup.password", model.local_password_draft,
+            tokens, panel_x, panel_y + 165.0f, panel_w,
+            metrics.control.field, tr("Local pairing password"));
+        secureInput(ui, "aki.setup.confirm", model.local_password_confirm,
+            tokens, panel_x, panel_y + 225.0f, panel_w,
+            metrics.control.field, tr("Confirm password"));
+        components::button(ui, "aki.setup.save")
+            .position(panel_x, panel_y + 290.0f)
+            .size(panel_w, metrics.control.field)
+            .text(tr("Save password and start Aki"))
             .theme(tokens, true).textColor(semantic.primary_foreground)
             .onClick([&model] {
-                if (utf8_scalar_count(model.local_password_draft) < 8) {
+                if (model.local_device_name_draft.empty()
+                    || model.local_device_name_draft.size() > 64
+                    || std::any_of(model.local_device_name_draft.begin(),
+                        model.local_device_name_draft.end(),
+                        [](unsigned char c) { return c < 0x20; })) {
+                    model.password_feedback = "Device name must be 1-64 bytes without controls.";
+                } else if (utf8_scalar_count(model.local_password_draft) < 8) {
                     model.password_feedback = "Use at least 8 characters.";
                 } else if (model.local_password_draft
                     == "aki-mvp-pairing-passphrase") {
@@ -181,18 +209,44 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                     model.password_feedback = "Passwords do not match.";
                 } else {
                     model.initial_password = std::move(model.local_password_draft);
+                    model.initial_device_name =
+                        std::move(model.local_device_name_draft);
                     clear_secret(model.local_password_confirm);
                     model.needs_password_setup = false;
                     model.password_feedback.clear();
                 }
             }).build();
+        components::text(ui, "aki.setup.language.label")
+            .text(tr("Language"))
+            .position(panel_x + panel_w - 214.0f,
+                panel_y + metrics.spacing.compact)
+            .fontSize(metrics.typography.caption)
+            .color(semantic.text_subtle).build();
+        for (int index = 0; index < 2; ++index) {
+            const auto selected = index == 0 ? Language::Chinese
+                                             : Language::English;
+            components::button(ui, "aki.setup.language." + std::to_string(index))
+                .position(panel_x + panel_w - 156.0f + index * 82.0f,
+                    panel_y)
+                .size(74.0f, metrics.control.menuItem)
+                .text(tr(index == 0 ? "Chinese" : "English"))
+                .theme(tokens, model.language == selected)
+                .textColor(model.language == selected
+                    ? semantic.primary_foreground : tokens.text)
+                .onClick([&model, selected] {
+                    model.language = selected;
+                    set_language(selected);
+                }).build();
+        }
         if (!model.password_feedback.empty()) {
             components::text(ui, "aki.setup.feedback")
-                .text(model.password_feedback)
-                .position(panel_x, panel_y + 300.0f)
+                .text(tr(model.password_feedback))
+                .position(panel_x, panel_y + 397.0f)
                 .fontSize(metrics.typography.caption)
                 .color(semantic.destructive).build();
         }
+                    }).build();
+            }).build();
         return;
     }
     const float list_column_width = std::clamp(width * 0.31f,
@@ -241,7 +295,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 .color(label_color)
                 .build();
             components::text(ui, id + ".label")
-                .text(entry.rail_label)
+                .text(tr(entry.rail_label))
                 .position(metrics.spacing.compact,
                     nav_y + metrics.control.menuItem + metrics.spacing.tiny)
                 .size(item_width, metrics.typography.hint)
@@ -259,7 +313,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
             .color(tokens.surface)
             .build();
         components::text(ui, "aki.list.title")
-            .text(navPageTitle(model.page))
+            .text(tr(navPageTitle(model.page)))
             .position(list_x + metrics.spacing.content,
                 metrics.spacing.content)
             .fontSize(metrics.typography.title)
@@ -290,9 +344,62 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 list_column_width - metrics.spacing.content * 2.0f,
                 height - list_body_y,
                 width, height, model);
+        } else if (model.page == NavPage::Devices) {
+            components::scrollView(ui, "aki.devices.list")
+                .position(list_x + metrics.spacing.content, list_body_y)
+                .size(list_column_width - metrics.spacing.content * 2.0f,
+                    std::max(1.0f, height - list_body_y - metrics.spacing.content))
+                .theme(tokens)
+                .gap(metrics.spacing.tiny)
+                .content([&](eui::Ui& list_ui, float row_width, float) {
+                    for (const auto& device : model.state_view.devices) {
+                        if (device.id == model.state_view.local_device) continue;
+                        const auto id = "aki.devices.list." + device.id.value;
+                        const bool selected =
+                            model.selected_device_id == device.id.value;
+                        list_ui.stack(id).width(row_width).height(64.0f)
+                            .content([&] {
+                                list_ui.rect(id + ".bg")
+                                    .size(row_width, 64.0f)
+                                    .color(selected ? semantic.surface_overlay_strong
+                                                    : semantic.card)
+                                    .radius(metrics.radius.small).build();
+                                components::text(list_ui, id + ".name")
+                                    .text(device.remark.empty()
+                                        ? device.display_name : device.remark)
+                                    .position(metrics.spacing.compact,
+                                        metrics.spacing.compact)
+                                    .fontSize(metrics.typography.body)
+                                    .fontWeight(600)
+                                    .maxWidth(row_width - metrics.spacing.content)
+                                    .color(tokens.text).build();
+                                components::text(list_ui, id + ".detail")
+                                    .text(device.remark.empty()
+                                        ? path_label(device.connection_path)
+                                        : device.display_name)
+                                    .position(metrics.spacing.compact, 34.0f)
+                                    .fontSize(metrics.typography.hint)
+                                    .maxWidth(row_width - metrics.spacing.content)
+                                    .color(semantic.text_subtle).build();
+                                components::button(list_ui, id + ".select")
+                                    .size(row_width, 64.0f).text(tr(""))
+                                    .theme(tokens, false)
+                                    .colors(core::Color{0,0,0,0},
+                                        semantic.surface_overlay_strong,
+                                        core::Color{0,0,0,0})
+                                    .shadow(0.0f, 0.0f, 0.0f,
+                                        core::Color{0,0,0,0})
+                                    .onClick([&model, selected_id = device.id.value,
+                                            remark = device.remark] {
+                                        model.selected_device_id = selected_id;
+                                        model.remark_draft = remark;
+                                    }).build();
+                            }).build();
+                    }
+                }).build();
         } else {
             components::text(ui, "aki.list.placeholder")
-                .text(list_guidance(model.page))
+                .text(tr(list_guidance(model.page)))
                 .position(list_x + metrics.spacing.content, list_body_y)
                 .fontSize(metrics.typography.caption)
                 .wrap(true)
@@ -310,7 +417,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
         if (!model.startup_error.empty()) {
             // 装配失败降级占位（§9.1：错误占位 UI + 关窗仍经 onShutdown 闭合）。
             components::text(ui, "aki.content.error.title")
-                .text("startup failed")
+                .text(tr("startup failed"))
                 .position(content_x + metrics.spacing.section,
                     metrics.spacing.section)
                 .fontSize(metrics.typography.subtitle)
@@ -330,7 +437,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
         } else if (model.page == NavPage::Devices) {
             // ---- Devices 页（M5-04，SCOPE-04/02/03/10 展示面）----
             components::text(ui, "aki.content.placeholder")
-                .text(navPageTitle(model.page))
+                .text(tr(navPageTitle(model.page)))
                 .position(content_x + metrics.spacing.section,
                     metrics.spacing.section)
                 .fontSize(metrics.typography.title)
@@ -348,6 +455,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
             const float action_y = height - metrics.control.field
                 - metrics.spacing.section * 2.0f;
             for (const models::DeviceView& device : model.state_view.devices) {
+                if (device.id.value != model.selected_device_id) continue;
                 // Connect 门控（M5-11）：仅对**当前在广播**（presence Online，
                 // LAN 目录租约内存活 = 正在运行 Aki）的非本机行可发起——离线
                 // 行 connect_lan 无目录端点必然被拒，不渲染无效按钮。
@@ -359,7 +467,8 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 const float row_height = compact_rows
                     ? ((connectable || device.can_confirm()
                             || device.can_reject()
-                            || device.can_revoke()) ? 112.0f : 80.0f)
+                            || device.can_revoke() || device.can_renew())
+                        ? 112.0f : 80.0f)
                     : kDeviceRowHeight;
                 if (row_y + row_height > action_y
                         - metrics.typography.caption * 3.0f
@@ -396,16 +505,18 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                     .build();
                 // 名称 + 类型/OS 摘要。
                 components::text(ui, row_id + ".name")
-                    .text(device.display_name)
+                    .text(device.remark.empty() ? device.display_name
+                                                : device.remark)
                     .position(content_x + metrics.spacing.section
                             + metrics.spacing.content * 3.0f,
                         row_y + metrics.spacing.compact)
                     .fontSize(metrics.typography.body)
                     .fontWeight(600)
+                    .maxWidth(compact_rows ? row_width - 64.0f : 210.0f)
                     .color(tokens.text)
                     .build();
                 components::text(ui, row_id + ".meta")
-                    .text(device_class_label(device.device_class) + " · "
+                    .text(tr(device_class_label(device.device_class)) + " · "
                         + device.os_name + " · "
                         + path_label(device.connection_path))
                     .position(content_x + metrics.spacing.section
@@ -413,13 +524,14 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                         row_y + metrics.spacing.compact
                             + metrics.typography.body + 2.0f)
                     .fontSize(metrics.typography.caption)
+                    .maxWidth(compact_rows ? row_width - 64.0f : 210.0f)
                     .color(semantic.text_subtle)
                     .build();
                 // 信任徽标（§3 语义色）。
                 components::text(ui, row_id + ".trust")
-                    .text(device.pairing_failed && device.can_confirm()
+                    .text(tr(device.pairing_failed && device.can_confirm()
                         ? "Pairing failed - retry"
-                        : trust_label(device.trust_state))
+                        : trust_label(device.trust_state)))
                     .position(content_x + metrics.spacing.section
                             + metrics.spacing.content * 3.0f,
                         compact_rows
@@ -433,7 +545,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                     .build();
                 // 指纹列（mono；缺公钥显示显式不可用态——不以 id 冒充）。
                 const std::string fingerprint = device.fingerprint_available
-                    ? device.id.value : "Fingerprint unavailable";
+                    ? device.id.value : tr("Fingerprint unavailable");
                 const std::string compact_fingerprint =
                     fingerprint.size() > 28
                         ? fingerprint.substr(0, 16) + "..."
@@ -449,7 +561,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                                 - metrics.typography.hint
                                 - (connectable || device.can_confirm()
                                     || device.can_reject()
-                                    || device.can_revoke()
+                                    || device.can_revoke() || device.can_renew()
                                        ? metrics.control.menuItem
                                            + metrics.spacing.compact
                                            + metrics.spacing.tiny
@@ -482,7 +594,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                     components::button(ui, row_id + ".begin")
                         .position(button_x, button_y)
                         .size(action_button_width, metrics.control.menuItem)
-                        .text("Connect")
+                        .text(tr("Connect"))
                         .fontSize(metrics.typography.caption)
                         .theme(tokens, true)
                         .textColor(semantic.primary_foreground)
@@ -491,15 +603,16 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                             const bool admitted = model.actions->begin_pairing(
                                 aki::device::DeviceId{id});
                             model.last_action_feedback = admitted
-                                ? "Connection request submitted for " + id
-                                : "Connection request rejected";
+                                ? tr("Connection request submitted for ") + id
+                                : tr("Connection request rejected");
                         }).build();
                 }
-                if (device.can_confirm() && model.actions) {
+                if ((device.can_confirm() || device.can_renew()) && model.actions) {
                     components::button(ui, row_id + ".confirm")
                         .position(button_x, button_y)
                         .size(action_button_width, metrics.control.menuItem)
-                        .text("Confirm")
+                        .text(tr(device.can_renew() ? "Renew file access"
+                                                    : "Confirm"))
                         .fontSize(metrics.typography.caption)
                         .theme(tokens, true)
                         .textColor(semantic.primary_foreground)
@@ -518,7 +631,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                                         + metrics.spacing.compact
                                     : 0.0f), button_y)
                         .size(action_button_width, metrics.control.menuItem)
-                        .text("Reject")
+                        .text(tr("Reject"))
                         .fontSize(metrics.typography.caption)
                         .theme(tokens, false)
                         .radius(metrics.radius.small)
@@ -527,16 +640,18 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                                 model.actions->reject_device(
                                     aki::device::DeviceId{id});
                             model.last_action_feedback =
-                                admitted ? "reject " + id + " admitted"
-                                         : "reject " + id + " rejected";
+                                admitted ? tr("Reject submitted for ") + id
+                                         : tr("Reject request rejected");
                         })
                         .build();
                 }
                 if (device.can_revoke() && model.actions) {
                     components::button(ui, row_id + ".revoke")
-                        .position(button_x, button_y)
+                        .position(button_x + (device.can_renew()
+                            ? action_button_width + metrics.spacing.compact
+                            : 0.0f), button_y)
                         .size(action_button_width, metrics.control.menuItem)
-                        .text("Revoke")
+                        .text(tr("Revoke"))
                         .fontSize(metrics.typography.caption)
                         .theme(tokens, false)
                         .radius(metrics.radius.small)
@@ -545,16 +660,65 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                                 model.actions->revoke_device(
                                     aki::device::DeviceId{id});
                             model.last_action_feedback =
-                                admitted ? "revoke " + id + " admitted"
-                                         : "revoke " + id + " rejected";
+                                admitted ? tr("Revoke submitted for ") + id
+                                         : tr("Revoke request rejected");
                         })
                         .build();
                 }
-                row_y += row_height + metrics.spacing.compact;
+                row_y += row_height + metrics.spacing.content;
+                components::text(ui, row_id + ".id.label")
+                    .text(tr("Device ID"))
+                    .position(content_x + metrics.spacing.section, row_y)
+                    .fontSize(metrics.typography.caption)
+                    .color(semantic.text_subtle).build();
+                row_y += metrics.typography.caption + metrics.spacing.tiny;
+                components::text(ui, row_id + ".id.value")
+                    .text(device.id.value)
+                    .position(content_x + metrics.spacing.section, row_y)
+                    .fontSize(metrics.typography.hint).fontFamily("Mono")
+                    .wrap(true).maxWidth(row_width)
+                    .color(tokens.text).build();
+                row_y += metrics.typography.hint * 3.0f + metrics.spacing.content;
+                components::text(ui, row_id + ".real_name")
+                    .text(tr("Device name") + ": " + device.display_name)
+                    .position(content_x + metrics.spacing.section, row_y)
+                    .fontSize(metrics.typography.body)
+                    .wrap(true).maxWidth(row_width)
+                    .color(tokens.text).build();
+                row_y += metrics.typography.body * 2.0f + metrics.spacing.content;
+                components::text(ui, row_id + ".remark.label")
+                    .text(tr("My remark"))
+                    .position(content_x + metrics.spacing.section, row_y)
+                    .fontSize(metrics.typography.body).fontWeight(600)
+                    .color(tokens.text).build();
+                row_y += metrics.typography.body + metrics.spacing.compact;
+                const float save_width = std::min(112.0f, row_width * 0.3f);
+                components::input(ui, row_id + ".remark.input")
+                    .position(content_x + metrics.spacing.section, row_y)
+                    .size(row_width - save_width - metrics.spacing.compact,
+                        metrics.control.field)
+                    .theme(tokens).value(model.remark_draft)
+                    .placeholder(tr("Optional local name"))
+                    .onChange([&model](const std::string& value) {
+                        model.remark_draft = value;
+                    }).build();
+                if (model.actions && model.actions->set_device_remark) {
+                    components::button(ui, row_id + ".remark.save")
+                        .position(content_x + metrics.spacing.section
+                                + row_width - save_width, row_y)
+                        .size(save_width, metrics.control.field)
+                        .text(tr("Save")).theme(tokens, false)
+                        .onClick([&model, id = device.id.value] {
+                            const bool admitted = model.actions->set_device_remark(
+                                aki::device::DeviceId{id}, model.remark_draft);
+                            model.last_action_feedback = admitted
+                                ? "Remark saved" : "Remark was not saved";
+                        }).build();
+                }
             }
-            if (model.state_view.devices.empty()) {
+            if (model.selected_device_id.empty()) {
                 components::text(ui, "aki.devices.empty")
-                    .text("No devices yet. Start discovery to find nearby peers.")
+                    .text(tr("Select a device to see its details and actions."))
                     .position(content_x + metrics.spacing.section,
                         metrics.spacing.section + metrics.typography.title
                             + metrics.spacing.content)
@@ -574,7 +738,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 components::button(ui, "aki.content.action.discover")
                     .position(content_x + metrics.spacing.section, action_y)
                     .size(discovery_button_width, metrics.control.field)
-                    .text("Start scan")
+                    .text(tr("Start scan"))
                     .fontSize(metrics.typography.caption)
                     .theme(tokens, true)
                     .textColor(semantic.primary_foreground)
@@ -583,28 +747,28 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                         const bool admitted = model.actions->start_discovery(
                             aki::device::DiscoveryMethod::LanDiscovery);
                         model.last_action_feedback = admitted
-                            ? "Discovery request submitted"
-                            : "Discovery request rejected";
+                            ? tr("Discovery request submitted")
+                            : tr("Discovery request rejected");
                     })
                     .build();
                 components::button(ui, "aki.content.action.stop")
                     .position(content_x + metrics.spacing.section * 2.0f
                             + discovery_button_width, action_y)
                     .size(discovery_button_width, metrics.control.field)
-                    .text("Stop scan")
+                    .text(tr("Stop scan"))
                     .fontSize(metrics.typography.caption)
                     .theme(tokens, false)
                     .radius(metrics.radius.small)
                     .onClick([&model] {
                         const bool admitted = model.actions->stop_discovery();
                         model.last_action_feedback = admitted
-                            ? "Stop request submitted"
-                            : "Stop request rejected";
+                            ? tr("Stop request submitted")
+                            : tr("Stop request rejected");
                     })
                     .build();
             }
             components::text(ui, "aki.devices.source_note")
-                .text("Find devices on your local network.")
+                .text(tr("Find devices on your local network."))
                 .position(content_x + metrics.spacing.section,
                     action_y - metrics.typography.caption * 3.0f
                         - metrics.spacing.content)
@@ -624,11 +788,23 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 content_width, height, model);
         } else if (model.page == NavPage::Settings) {
             // ---- Settings 页（M5-07，SCOPE-12 主题三选 + 最小设置项）----
-            composeSettingsPage(ui, tokens, semantic, content_x, 0.0f,
-                content_width, height, width, height, model);
+            components::scrollView(ui, "aki.settings.scroll")
+                .position(content_x, 0.0f)
+                .size(content_width, height)
+                .theme(tokens)
+                .content([&](eui::Ui& content, float scroll_width, float) {
+                    content.stack("aki.settings.content")
+                        .width(scroll_width)
+                        .height(std::max(height, 600.0f))
+                        .content([&] {
+                            composeSettingsPage(content, tokens, semantic,
+                                0.0f, 0.0f, scroll_width, height,
+                                width, height, model);
+                        }).build();
+                }).build();
         } else {
             components::text(ui, "aki.content.placeholder")
-                .text(navPageTitle(model.page))
+                .text(tr(navPageTitle(model.page)))
                 .position(content_x + metrics.spacing.section,
                     metrics.spacing.section)
                 .fontSize(metrics.typography.title)
@@ -670,7 +846,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 .size(dialog_width, 330.0f)
                 .content([&] {
                     components::text(ui, "aki.devices.confirm.title")
-                        .text("Confirm pairing")
+                        .text(tr("Confirm pairing"))
                         .position(metrics.spacing.section,
                             metrics.spacing.section)
                         .fontSize(metrics.typography.subtitle)
@@ -678,8 +854,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                         .color(tokens.text)
                         .build();
                     components::text(ui, "aki.devices.confirm.hint")
-                        .text("verify the fingerprint matches the one shown"
-                              " on the peer device")
+                        .text(tr("Verify the fingerprint on the peer device."))
                         .position(metrics.spacing.section,
                             metrics.spacing.section + metrics.typography
                                 .subtitle
@@ -699,7 +874,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                         .color(tokens.text)
                         .build();
                     components::text(ui, "aki.devices.confirm.password.label")
-                        .text("Peer device password")
+                        .text(tr("Peer device password"))
                         .position(metrics.spacing.section, 143.0f)
                         .fontSize(metrics.typography.caption)
                         .color(tokens.text).build();
@@ -707,10 +882,10 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                         model.peer_password_draft, tokens,
                         metrics.spacing.section, 166.0f,
                         dialog_width - metrics.spacing.section * 2.0f,
-                        metrics.control.field, "Password set on the peer");
+                        metrics.control.field, tr("Password set on the peer"));
                     if (!model.peer_password_feedback.empty()) {
                         components::text(ui, "aki.devices.confirm.error")
-                            .text(model.peer_password_feedback)
+                            .text(tr(model.peer_password_feedback))
                             .position(metrics.spacing.section, 222.0f)
                             .fontSize(metrics.typography.caption)
                             .color(semantic.destructive).build();
@@ -720,7 +895,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                             330.0f - metrics.control.field
                                 - metrics.spacing.section)
                         .size(180.0f, metrics.control.field)
-                        .text("Confirm pairing")
+                        .text(tr("Confirm pairing"))
                         .fontSize(metrics.typography.caption)
                         .theme(tokens, true)
                         .textColor(semantic.primary_foreground)
@@ -737,9 +912,9 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                                         model.pending_confirm_device},
                                     std::move(model.peer_password_draft));
                             model.last_action_feedback =
-                                admitted ? "pairing submitted for "
+                                admitted ? tr("Pairing submitted for ")
                                        + model.pending_confirm_device
-                                         : "pairing submit rejected";
+                                         : tr("Pairing request rejected");
                             model.pending_confirm_device.clear();
                             model.peer_password_feedback.clear();
                             clear_secret(model.peer_password_draft);
@@ -750,7 +925,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                             330.0f - metrics.control.field
                                 - metrics.spacing.section)
                         .size(140.0f, metrics.control.field)
-                        .text("Cancel")
+                        .text(tr("Cancel"))
                         .fontSize(metrics.typography.caption)
                         .theme(tokens, false)
                         .radius(metrics.radius.small)

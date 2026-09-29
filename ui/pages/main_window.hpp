@@ -10,6 +10,7 @@
 #pragma once
 
 #include "ui/models/ui_actions.hpp"
+#include "ui/i18n.hpp"
 #include "ui/models/ui_state_consumer.hpp"
 #include "ui/pages/conversations_page.hpp"
 #include "ui/pages/settings_page.hpp"
@@ -38,6 +39,7 @@ struct MainWindowModel {
     // 生效档位（akiTheme()/akiSemanticColors() 参数；由 theme_setting 解析，
     // M5-07）。
     ThemeMode theme = ThemeMode::Light;
+    Language language = Language::Chinese;
     // 主题三选 UI 态（M5-07 Settings 页 segmented；§9.1 页面持有 UI 态）。
     ThemeSetting theme_setting = ThemeSetting::Light;
     // 数据目录（HostRuntime::data_root() 装配面；Settings 页只读展示，
@@ -47,6 +49,11 @@ struct MainWindowModel {
     // 仍经 onShutdown 闭合）；空 = 装配成功。
     std::string startup_error;
     bool needs_password_setup = false;
+    bool language_selection_pending = false;
+    std::string local_device_name_draft;
+    std::string initial_device_name;
+    // Settings 页本机名改名草稿（空 = 显示当前名；保存成功后清空回显）。
+    std::string settings_device_name_draft;
     std::string local_password_draft;
     std::string local_password_confirm;
     std::string initial_password;
@@ -68,6 +75,8 @@ struct MainWindowModel {
     // 页面持有的信任确认弹窗态（M5-04）：待确认设备 id；空 = 弹窗关闭。
     // 弹窗展示该设备的 mono 指纹（=DeviceId 规范串），确认/拒绝经 UiActions。
     std::string pending_confirm_device;
+    std::string selected_device_id;
+    std::string remark_draft;
     // Conversations 页页面模型（M5-05：选中会话/输入草稿/消息视图缓存/
     // 弹窗 open 态；语义见 conversations_page.hpp）。
     ConversationsPageModel conversations;

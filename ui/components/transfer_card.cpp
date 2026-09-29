@@ -1,6 +1,7 @@
 // 传输卡片共享形态实现（语义见 transfer_card.hpp；元素排布自 M5-05 ③
 // 会话内文件卡片原样迁移——形状与语义色不变，aki_ui_design §4 复用契约）。
 #include "ui/components/transfer_card.hpp"
+#include "ui/i18n.hpp"
 
 #include "components/progress.h"
 #include "components/text.h"
@@ -107,11 +108,11 @@ void compose_transfer_card_body(eui::Ui& ui,
                 state_y = progress_y + 6.0f + metrics.spacing.tiny;
             }
             const std::string state_text = data.tracked
-                ? std::string(aki::transfer::to_string(data.state)) + " · "
+                ? tr(aki::transfer::to_string(data.state)) + " · "
                     + std::to_string(
                         static_cast<int>(data.progress * 100.0))
                     + "%"
-                : "no transfer row (single-side arrival)";
+                : tr("no transfer row (single-side arrival)");
             components::text(ui, id + ".state")
                 .text(state_text)
                 .position(0.0f, state_y)

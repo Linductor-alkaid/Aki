@@ -45,7 +45,7 @@ RecoveryResult perform_startup_recovery(const std::string& data_root,
     diagnostics.data_root = data_root;
     diagnostics.db_path = db_path;
     diagnostics.migrations_applied =
-        Migrator(schema_v1_steps()).bring_up_to_date(database);
+        Migrator(schema_steps()).bring_up_to_date(database);
 
     // 单一连接移交：Repositories 锚定该 Database（恢复期主线程独占，之后由
     // DatabaseWorker 串行消费，§11.1 ③）。

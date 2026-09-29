@@ -61,11 +61,20 @@ struct SendImageWork {
     bool transfer_admitted = true;
 };
 
+struct SendFileWork {
+    aki::device::DeviceId to;
+    aki::conversation::MessageId message_id;
+    aki::transfer::FileMetadata media;
+    aki::transfer::TransferId transfer_id;
+    bool transfer_admitted = true;
+};
+
 using MessageManagerWork = std::variant<MessageReceivedWork,
     MessageDeliveredWork,
     MessageDeliveryFailedWork,
     SendTextWork,
-    SendImageWork>;
+    SendImageWork,
+    SendFileWork>;
 
 // 构造选项置于命名空间作用域（同 AppStateOwnerOptions 处理，GCC 纪律）。
 struct MessageManagerOptions {
@@ -139,6 +148,15 @@ public:
             transfer_admitted});
     }
 
+    [[nodiscard]] bool send_file(aki::device::DeviceId to,
+        aki::conversation::MessageId message_id,
+        aki::transfer::FileMetadata media, aki::transfer::TransferId transfer_id,
+        bool transfer_admitted = true) {
+        return pump_.enqueue(SendFileWork{std::move(to),
+            std::move(message_id), std::move(media), std::move(transfer_id),
+            transfer_admitted});
+    }
+
     [[nodiscard]] bool flush(std::chrono::milliseconds budget) {
         return pump_.flush(budget);
     }
@@ -155,6 +173,11 @@ private:
     bool handle(MessageReceivedWork& work) {
         if (work.message.id.empty()) {
             return false;
+        }
+        // Older adapters and recovered test fixtures can still supply the
+        // default epoch. Never persist that as a visible 08:00 message.
+        if (work.message.timestamp.time_since_epoch().count() == 0) {
+            work.message.timestamp = std::chrono::system_clock::now();
         }
         // 收到的消息在本地记录为 Delivered（设计第 6 节）；会话归属由
         // sender 派生（DEC-009 ②；会话须已由 ensure_conversation 建立，
@@ -231,6 +254,26 @@ private:
             accepted = adapter_.send_image_message(
                 work.to, work.message_id, work.media, work.transfer_id);
         }
+        message.state = accepted ? aki::conversation::DeliveryState::Sent
+                                 : aki::conversation::DeliveryState::Failed;
+        return state_owner_.submit_update(UpsertMessage{std::move(message),
+            options_.conversation_for(work.to)});
+    }
+
+    bool handle(SendFileWork& work) {
+        if (work.to.empty() || work.message_id.empty()
+            || work.media.name.empty() || work.transfer_id.empty()) return false;
+        aki::conversation::Message message;
+        message.id = work.message_id;
+        message.sender = options_.local_device;
+        message.receiver = work.to;
+        message.timestamp = std::chrono::system_clock::now();
+        message.type = aki::conversation::MessageType::File;
+        message.payload = aki::conversation::FilePayload{
+            work.media, work.transfer_id};
+        const bool accepted = work.transfer_admitted
+            && adapter_.send_file_message(work.to, work.message_id,
+                work.media, work.transfer_id);
         message.state = accepted ? aki::conversation::DeliveryState::Sent
                                  : aki::conversation::DeliveryState::Failed;
         return state_owner_.submit_update(UpsertMessage{std::move(message),

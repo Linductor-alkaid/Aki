@@ -60,4 +60,11 @@ std::vector<MigrationStep> schema_v1_steps() {
     return {MigrationStep{1, "er-v1-core", kSchemaV1Sql}};
 }
 
+std::vector<MigrationStep> schema_steps() {
+    auto steps = schema_v1_steps();
+    steps.push_back(MigrationStep{2, "device-local-remark",
+        "ALTER TABLE device ADD COLUMN remark TEXT NOT NULL DEFAULT '';"});
+    return steps;
+}
+
 }  // namespace aki::persistence

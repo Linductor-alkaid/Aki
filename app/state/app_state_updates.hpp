@@ -9,12 +9,24 @@
 #include "device/device/device_types.hpp"
 
 #include <cstdint>
+#include <string>
 #include <variant>
 
 namespace aki::app {
 
 struct UpsertDevice {
     aki::device::DeviceIdentity device;
+};
+
+struct SetDeviceName {
+    aki::device::DeviceId device;
+    aki::device::PublicKey public_key;
+    std::string name;
+};
+
+struct SetDeviceRemark {
+    aki::device::DeviceId device;
+    std::string remark;
 };
 
 struct UpsertConversation {
@@ -76,6 +88,8 @@ struct CompleteTransfer {
 };
 
 using AppStateUpdate = std::variant<UpsertDevice,
+    SetDeviceName,
+    SetDeviceRemark,
     UpsertConversation,
     UpsertMessage,
     UpsertTransfer,

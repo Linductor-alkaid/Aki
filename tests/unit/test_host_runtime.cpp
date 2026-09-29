@@ -24,7 +24,12 @@
 //（peer_observation_started / peer_observation_running 证据面）与启动恢复
 // 播种策略 seeded_app_state（历史 Unknown 设备行不进入会话 DeviceStore，
 // 其余信任态与其他域原值恢复）——播种为纯函数单测，不触碰 HostRuntime 单例。
+//
+// M5-16（DEC-020）：Settings 改本机设备名 set_device_name——未装配/已关闭
+// 拒绝、非法名零扰动拒绝、合法名（含中文）快照改名 + 重启语义 DB 持久化、
+// 同名幂等；广播名校验由 LanNameBeacon::set_name 纯逻辑用例锁定。
 #include "app/lifecycle/host_runtime.hpp"
+#include "heyaki/adapter/lan_name_beacon.hpp"
 #include "heyaki/adapter/local_identity.hpp"
 
 #include <catch2/catch_session.hpp>
@@ -39,6 +44,7 @@
 #include <future>
 #include <memory>
 #include <stdexcept>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -96,6 +102,8 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
 
     // ---- 装配（§8.3 七步；空根 → 0 恢复 + 新建身份；M5-03 唤醒回调注入）----
     HostRuntime& host = HostRuntime::instance();
+    // M5-16：未装配（默认构造单例）set_device_name 显式拒绝。
+    REQUIRE_FALSE(host.set_device_name("pre-assembly-name"));
     // 唤醒计数器经 shared_ptr 值捕获：宿主单例生命周期覆盖测试函数之外，
     // 引用捕获会在静态析构期悬垂（AppStateOwner 关闭排空仍可能触发钩子）。
     auto wake_calls = std::make_shared<std::atomic<int>>(0);
@@ -104,6 +112,7 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
             wake_calls->fetch_add(1);  // GUI 侧此处为 app::requestUpdate()。
         }, "test-local-password");
     REQUIRE(host.assembled());
+    REQUIRE(host.set_language("en"));
     REQUIRE(assembly.ok);
     REQUIRE(assembly.failure_reason.empty());
     REQUIRE(assembly.recovered_devices == 0);
@@ -124,7 +133,7 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     REQUIRE(*matched.value_if());
     REQUIRE(assembly.recovered_transfers == 0);
     // 空根首开：v1 schema 引导迁移恰一步（0→1）；tmp 清扫零孤儿。
-    REQUIRE(assembly.migrations_applied == 1);
+    REQUIRE(assembly.migrations_applied == 2);
     REQUIRE(assembly.tmp_orphans_removed == 0);
     REQUIRE(assembly.identity_created);
     REQUIRE_FALSE(assembly.local_device_id.empty());
@@ -159,6 +168,62 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     REQUIRE(snapshot.devices.devices.size() == 1);
     REQUIRE(snapshot.devices.devices.front().id.value
         == assembly.local_device_id);
+
+    // ---- M5-16：Settings 改本机设备名（set_device_name；广播热更新为
+    //      DEC-020 尽力而为元数据，本用例锁定快照/DB 权威面）----
+    {
+        const auto& local_row = snapshot.devices.devices.front();
+        REQUIRE(local_row.display_name == "aki");  // 首启默认名（无注入名）。
+
+        // (b) 非法名（空 / 65 字节 / 控制字符）→ false 且状态零扰动：校验在
+        // HostRuntime 层，更新不进 owner（updates_rejected 不动、快照不变）。
+        const auto rejected_before =
+            host.state_owner().stats().updates_rejected;
+        REQUIRE_FALSE(host.set_device_name(""));
+        REQUIRE_FALSE(host.set_device_name(std::string(65, 'a')));
+        REQUIRE_FALSE(host.set_device_name("aki\nname"));
+        REQUIRE_FALSE(host.set_device_name(std::string{"aki\x01" "name"}));
+        host.quiesce();
+        REQUIRE(host.state_owner().stats().updates_rejected
+            == rejected_before);
+        aki::app::AppState unchanged;
+        REQUIRE(host.load_state_snapshot(unchanged));
+        REQUIRE(unchanged.devices.devices.front().display_name == "aki");
+
+        // (a) 合法名（含中文 UTF-8）：quiesce 推进后快照本机行改名，公钥
+        // 绑定不变。
+        REQUIRE(host.set_device_name("小明的工作站"));
+        host.quiesce();
+        aki::app::AppState renamed;
+        REQUIRE(host.load_state_snapshot(renamed));
+        REQUIRE(renamed.devices.devices.size() == 1);
+        REQUIRE(renamed.devices.devices.front().display_name
+            == "小明的工作站");
+        REQUIRE(renamed.devices.devices.front().public_key
+            == local_row.public_key);
+
+        // (d) 同名重复提交幂等 → true（apply 幂等 no-op，状态不再脏发布）。
+        REQUIRE(host.set_device_name("小明的工作站"));
+        host.quiesce();
+        aki::app::AppState idempotent;
+        REQUIRE(host.load_state_snapshot(idempotent));
+        REQUIRE(idempotent.devices.devices.front().display_name
+            == "小明的工作站");
+
+        // 上边界：恰好 64 字节合法；末次再改值为 DB 持久化断言锚点。
+        REQUIRE(host.set_device_name(std::string(64, 'n')));
+        host.quiesce();
+        aki::app::AppState bounded;
+        REQUIRE(host.load_state_snapshot(bounded));
+        REQUIRE(bounded.devices.devices.front().display_name
+            == std::string(64, 'n'));
+        REQUIRE(host.set_device_name("aki-renamed"));
+        host.quiesce();
+        aki::app::AppState final_named;
+        REQUIRE(host.load_state_snapshot(final_named));
+        REQUIRE(final_named.devices.devices.front().display_name
+            == "aki-renamed");
+    }
 
     // ---- ② 任务异常：future 上浮 + Executor failure 计数可见 ----
     {
@@ -287,6 +352,35 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     REQUIRE(report.db_failed == 0);
     REQUIRE(report.db_rejected == 0);
     REQUIRE(report.post_accept_failures == 0);
+    REQUIRE_FALSE(report.language_write_failed);
+    {
+        std::ifstream preference(data_root / "ui-language.txt");
+        std::string code;
+        REQUIRE(preference >> code);
+        CHECK(code == "en");
+    }
+
+    // M5-16：已 shutdown 后 set_device_name 显式拒绝。
+    REQUIRE_FALSE(host.set_device_name("post-shutdown-name"));
+
+    // M5-16 重启语义：写路径已零丢失结算（上方 db_completed == 写路径计数），
+    // 同一数据根重开启动恢复（第二次 open：0 迁移步），恢复出的本机行
+    // display_name 必须是末次合法改名值（make_device_name_job →
+    // set_display_name 列落库）。
+    {
+        auto reopened = aki::persistence::perform_startup_recovery(
+            data_root.string());
+        REQUIRE(reopened.diagnostics.migrations_applied == 0);
+        const aki::device::DeviceIdentity* recovered_local = nullptr;
+        for (const auto& device : reopened.state.devices) {
+            if (device.id.value == assembly.local_device_id) {
+                recovered_local = &device;
+                break;
+            }
+        }
+        REQUIRE(recovered_local != nullptr);
+        REQUIRE(recovered_local->display_name == "aki-renamed");
+    }
 
     // 幂等：重复关闭返回同一报告。
     REQUIRE(&host.shutdown_with_report() == &report);
@@ -395,6 +489,25 @@ TEST_CASE("seeded_app_state keeps an empty recovery clean", "[unit][host_runtime
     REQUIRE(seeded.conversations.conversations.empty());
     REQUIRE(seeded.messages.messages.empty());
     REQUIRE(seeded.transfers.transfers.empty());
+}
+
+// ---- M5-16：LanNameBeacon::set_name 广播名校验（纯逻辑面：不 start、无
+// socket/timer；executor 引用仅由构造存储、未启动不会被使用——宿主单例在
+// 上一个用例已受控关闭，引用仍有效；与 host_runtime::set_device_name 同一
+// valid_lan_name 校验口径）。
+TEST_CASE("lan name beacon set_name validates without starting",
+    "[unit][host_runtime][lan_name][m5_16]") {
+    auto identity = ::heyaki::create_identity();
+    REQUIRE(identity.has_value());
+    aki::heyaki::LanNameBeacon beacon(HostRuntime::instance().executor(),
+        std::move(*identity.value_if()), "aki-beacon", {});
+    REQUIRE(beacon.set_name("rename-ok"));
+    REQUIRE_FALSE(beacon.set_name(""));
+    REQUIRE_FALSE(beacon.set_name(std::string(65, 'b')));
+    REQUIRE_FALSE(beacon.set_name("bad\nname"));
+    REQUIRE_FALSE(beacon.set_name("bad\x01" "name"));
+    // 非法拒绝不锁死改名路径：随后仍可合法更新。
+    REQUIRE(beacon.set_name("小明"));
 }
 
 int main(int argc, char* argv[]) {
