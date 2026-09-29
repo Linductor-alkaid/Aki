@@ -295,6 +295,13 @@ private:
             SetPresence{work.device, aki::device::PresenceState::Online});
         const bool path = state_owner_.submit_update(
             SetDeviceConnectionPath{work.device, work.path});
+        // 对向信任校准（DEC-021）：会话（重）裁定通过，本机 TrustStore 的
+        // 双向 grant 有效性可能已变。有界本地查询后字段级落库；查询失败
+        // （对端无 endpoint/会话上下文）不阻塞连接事实。
+        if (auto directions = adapter_.trust_directions(work.device)) {
+            (void)state_owner_.submit_update(
+                SetDeviceInboundTrust{work.device, directions->issued});
+        }
         return posted && presence && path;
     }
 
@@ -347,7 +354,23 @@ private:
             if (existing.trust_state == aki::device::TrustState::Pending) {
                 return true;
             }
-            if (existing.trust_state != aki::device::TrustState::Unknown) {
+            // Trusted 会话被裁定 restricted：双向有效 grant 均不存在——
+            // 对端撤销（或 grant 过期）的可观测信号（DEC-021）。本机信任
+            // 降级 Trusted→Revoked，双向显示随之归零。
+            if (existing.trust_state == aki::device::TrustState::Trusted) {
+                aki::device::DeviceIdentity downgraded = existing;
+                downgraded.trust_state = aki::device::TrustState::Revoked;
+                downgraded.inbound_trust = false;
+                return state_owner_.submit_update(
+                    UpsertDevice{std::move(downgraded)});
+            }
+            // 终态唯一出口：用户可见的重新配对轮把行放回 Pending
+            // （Rejected/Revoked→Pending，DEC-021）；Unknown 正常首轮。
+            const bool rebegin = existing.trust_state
+                == aki::device::TrustState::Rejected
+                || existing.trust_state == aki::device::TrustState::Revoked;
+            if (existing.trust_state != aki::device::TrustState::Unknown
+                && !rebegin) {
                 return false;
             }
             aki::device::DeviceIdentity updated = existing;
@@ -425,12 +448,16 @@ private:
 
     bool handle(RevokeDeviceWork& work) {
         // wire 面撤销全部有效 grant（无 grant 时 false 可见）+ 本地
-        // Trusted → Revoked。
+        // Trusted → Revoked；撤销收回本机签发授权，对向信任随之归零
+        // （DEC-021 四态）。
         if (!adapter_.revoke_trust(work.device)) {
             return false;
         }
-        return apply_trust_transition(work.device,
+        const bool transitioned = apply_trust_transition(work.device,
             aki::device::TrustState::Revoked);
+        (void)state_owner_.submit_update(
+            SetDeviceInboundTrust{work.device, false});
+        return transitioned;
     }
 
     bool handle(PairingCompletedWork& work) {

@@ -405,6 +405,17 @@ private:
         return false;
     }
 
+    bool apply_impl(const SetDeviceInboundTrust& update) {
+        for (auto& existing : current_.devices.devices) {
+            if (existing.id != update.device) continue;
+            if (existing.inbound_trust == update.trust) return true;
+            existing.inbound_trust = update.trust;
+            snapshot_dirty_ = true;
+            return true;
+        }
+        return false;
+    }
+
     bool apply_impl(const UpsertConversation& upsert) {
         auto& conversations = current_.conversations.conversations;
         for (auto& existing : conversations) {

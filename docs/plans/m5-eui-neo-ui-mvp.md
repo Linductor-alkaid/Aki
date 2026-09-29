@@ -19,7 +19,26 @@
 > 状态：In Progress；负责人：Linductor；设计依据：
 > [DEC-019](../decisions/DEC-019-directional-trust-and-chat-scopes.md)、
 > [DEC-020](../decisions/DEC-020-signed-lan-device-name.md)、
+> [DEC-021](../decisions/DEC-021-bidirectional-trust-and-repair.md)、
 > [Aki 设计](../design/aki_design.md)及 [UI 规范](../design/aki_ui_design.md)。
+
+## M5-18~M5-24：第二轮双端实测修复（信任四态与恢复体验）
+
+> 状态：In Progress；负责人：Linductor；设计依据：
+> [DEC-021](../decisions/DEC-021-bidirectional-trust-and-repair.md)。
+
+- [ ] `M5-18` Settings 本机名输入可清空重输、带用途说明且不与密码区重叠。
+- [ ] `M5-19` 会话入口按连接/会话事实门控，Rejected/Revoked 已连接可通信。
+- [ ] `M5-20` 终态设备有「重新配对」入口（Rejected/Revoked→Pending 显式边）。
+- [ ] `M5-21` 四态信任显示（inbound_trust 校准/撤销归零/降级启发）。
+- [ ] `M5-22` 掉线恢复：周期重连对账 re-arm，presence/会话状态随 connected 恢复。
+- [ ] `M5-23` 图片/文件选取按存在性过滤（zenity stderr 诊断行不再致 stat 失败）。
+- [ ] `M5-24` 24.04 图标：desktop StartupWMClass 已落；Wayland app_id
+  不改 pinned 依赖，已登记 EUI-NEO 反馈台账并报上游
+  （#77），随依赖升级跟进。
+
+2026-09-29：用户第二轮双端实测发现上述七类问题，归入本维护批；
+双端复验需分别测试撤销方向、重建配对与断线恢复时序。
 
 - [ ] `M5-12` 入站消息采用真实接收时间并覆盖持久化后显示；验收：入站
   无时间戳仍得到非 epoch 时间，重启后时间不回退为 `08:00`。

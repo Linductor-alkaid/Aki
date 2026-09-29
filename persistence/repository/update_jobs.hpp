@@ -35,6 +35,8 @@ namespace aki::persistence {
     std::string name);
 [[nodiscard]] DbJob make_device_remark_job(aki::device::DeviceId device,
     std::string remark);
+[[nodiscard]] DbJob make_device_inbound_trust_job(aki::device::DeviceId device,
+    bool inbound_trust);
 
 // UpsertConversation → CONVERSATION 整行 upsert。
 [[nodiscard]] DbJob make_conversation_upsert_job(

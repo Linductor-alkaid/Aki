@@ -64,6 +64,8 @@ std::vector<MigrationStep> schema_steps() {
     auto steps = schema_v1_steps();
     steps.push_back(MigrationStep{2, "device-local-remark",
         "ALTER TABLE device ADD COLUMN remark TEXT NOT NULL DEFAULT '';"});
+    steps.push_back(MigrationStep{3, "device-inbound-trust",
+        "ALTER TABLE device ADD COLUMN inbound_trust INTEGER NOT NULL DEFAULT 0;"});
     return steps;
 }
 

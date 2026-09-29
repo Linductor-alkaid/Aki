@@ -334,6 +334,18 @@ public:
         return connected.has_value();
     }
 
+    // 对端当前是否在 LAN/Relay 目录可见（租约内存活 = 正在运行 Aki）。
+    // 重连对账（DEC-021）的发起门：目录不可见时 connect_lan 必然被拒。
+    [[nodiscard]] bool endpoint_visible(
+        const aki::device::DeviceId& peer) const {
+        for (const auto& entry : node_.endpoints()) {
+            if (::heyaki::to_string(entry.key.device_id) == peer.value) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // 会话已认证（pairing 成功后的稳态）。
     [[nodiscard]] bool session_authenticated(
         const aki::device::DeviceId& peer) const {
@@ -398,6 +410,37 @@ public:
             }
         }
         return true;
+    }
+
+    // 对向信任查询（DEC-021 四态数据源）：本机 TrustStore 中与该 peer 的
+    // 双向有效 grant（SQL 已过滤 revoked 与过期）。issued = 本机签发给
+    // 对端（「对方信任本机」）；received = 对端签发给本机（「本机信任
+    // 对方」的 heyaki 权威记录）。查不到 endpoint key（对端不在目录且无
+    // 会话）时返回 std::nullopt，由调用方按无信息处理而非 false。
+    struct TrustDirections {
+        bool issued = false;
+        bool received = false;
+    };
+    [[nodiscard]] std::optional<TrustDirections> trust_grants(
+        const aki::device::DeviceId& peer) {
+        auto key = endpoint_key_of(peer);
+        if (!key.has_value()) {
+            return std::nullopt;
+        }
+        auto grants = node_.trust_grants_for(*key);
+        if (!grants) {
+            return std::nullopt;
+        }
+        TrustDirections result;
+        for (const auto& grant : *grants.value_if()) {
+            if (grant.revoked) continue;
+            if (grant.direction == ::heyaki::TrustGrantDirection::issued) {
+                result.issued = true;
+            } else {
+                result.received = true;
+            }
+        }
+        return result;
     }
 
     // ---- M3-05/M4-03：消息面（DEC-006 映射 4 + 图片面扩展；aki/std 公开面）----

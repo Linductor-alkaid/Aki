@@ -209,6 +209,27 @@ struct StubAdapter final : HeyakiAdapter {
         revoked_peers.push_back(peer);
         return true;
     }
+    std::optional<TrustDirections> trust_directions(
+        const DeviceId&) override {
+        return trust_directions_value();
+    }
+
+    // DEC-021 对向信任查询返回值面：0 = {false,false}（既有用例默认不变），
+    // 1 = {true,true}（双向有效 grant），2 = nullopt（无信息——handler 不
+    // 提交校准更新）。
+    int trust_directions_mode = 0;
+
+    std::optional<TrustDirections> trust_directions_value() const {
+        switch (trust_directions_mode) {
+            case 1:
+                return TrustDirections{.issued = true, .received = true};
+            case 2:
+                return std::nullopt;
+            default:
+                return TrustDirections{};
+        }
+    }
+
     std::vector<DeviceId> pairing_submits;
     std::vector<DeviceId> revoked_peers;
 
@@ -919,10 +940,12 @@ TEST_CASE("Session authorization keeps local trust Pending until local pairing s
     REQUIRE(stack.devices->stats().handler_rejections
         == dm_handler_rejections_before);
 
-    // ⑤ 未知设备 connected：SetPresence 与 SetDeviceConnectionPath 双双被
-    //    owner 拒绝（updates_rejected +2，RULE-09 可观测——submit_update 是
-    //    通道 admission，拒绝在 drain 的 apply() 计数），不出现新行；
-    //    handler 返回 true（admission 语义），handler_rejections 不变。
+    // ⑤ 未知设备 connected：SetPresence、SetDeviceConnectionPath 与
+    //    SetDeviceInboundTrust（DEC-021 对向信任校准，Stub 返回 {false,false}
+    //    非 nullopt）三条更新双双被 owner 拒绝（updates_rejected +3，RULE-09
+    //    可观测——submit_update 是通道 admission，拒绝在 drain 的 apply() 计
+    //    数），不出现新行；handler 返回 true（admission 语义），
+    //    handler_rejections 不变。
     REQUIRE(stack.devices->enqueue_connected(DeviceId{"ghost"},
         ConnectionPath::Lan));
     settle();
@@ -934,13 +957,119 @@ TEST_CASE("Session authorization keeps local trust Pending until local pairing s
             REQUIRE(device.id != DeviceId{"ghost"});
         }
     }
-    REQUIRE(owner.stats().updates_rejected == rejected_before + 2);
+    REQUIRE(owner.stats().updates_rejected == rejected_before + 3);
     REQUIRE(stack.devices->stats().handler_rejections
         == dm_handler_rejections_before);
 
     // EXEC-01：干净关闭。
     const auto report = stack.host.executor_owner.shutdown();
     REQUIRE(report.fully_stopped());
+}
+
+// ---- DEC-021：connected 的对向信任校准（trust_directions → 行字段）与
+// ---- nullopt（无信息）不提交路径；撤销归零。
+
+TEST_CASE("Connected calibrates inbound trust and nullopt queries submit nothing (DEC-021)",
+    "[unit][managers][dec021]") {
+    auto seed_trusted_row = [](AppStateOwner& owner) {
+        aki::device::DeviceIdentity row;
+        row.id = DeviceId{"peer"};
+        row.display_name = "peer";
+        row.public_key.bytes.assign(32, std::uint8_t{5});
+        row.trust_state = TrustState::Trusted;
+        REQUIRE(owner.submit_update(
+            aki::app::UpsertDevice{std::move(row)}));
+    };
+    const auto inbound_of = [](AppStateOwner& owner) {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        return snapshot.value.devices.devices.front().inbound_trust;
+    };
+
+    // ① issued=true（双向有效 grant）：connected 后行 inbound_trust 置位，
+    //    其余连接事实照常；查询成功不产生拒绝。
+    SECTION("issued=true sets the inbound flag") {
+        BasicStack<StubAdapter> stack;
+        auto& owner = stack.state_owner;
+        stack.adapter.trust_directions_mode = 1;
+        seed_trusted_row(owner);
+        quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+            *stack.transfers);
+        const auto rejected_before = owner.stats().updates_rejected;
+
+        REQUIRE(stack.devices->enqueue_connected(DeviceId{"peer"},
+            ConnectionPath::Lan));
+        quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+            *stack.transfers);
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.devices.devices.front().presence
+            == PresenceState::Online);
+        REQUIRE(inbound_of(owner));
+        REQUIRE(owner.stats().updates_rejected == rejected_before);
+
+        const auto report = stack.host.executor_owner.shutdown();
+        REQUIRE(report.fully_stopped());
+    }
+
+    // ② nullopt（对端无 endpoint/会话上下文）：handler 不提交校准更新——
+    //    无拒绝、无 applied 增量（相对 presence/path 两条之外零追加），
+    //    行 inbound_trust 保持原值。
+    SECTION("nullopt submits nothing and keeps the row unchanged") {
+        BasicStack<StubAdapter> stack;
+        auto& owner = stack.state_owner;
+        stack.adapter.trust_directions_mode = 2;
+        seed_trusted_row(owner);
+        quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+            *stack.transfers);
+        const auto rejected_before = owner.stats().updates_rejected;
+        const auto applied_before = owner.stats().updates_applied;
+
+        REQUIRE(stack.devices->enqueue_connected(DeviceId{"peer"},
+            ConnectionPath::Lan));
+        quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+            *stack.transfers);
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.devices.devices.front().presence
+            == PresenceState::Online);
+        REQUIRE_FALSE(inbound_of(owner));
+        REQUIRE(owner.stats().updates_rejected == rejected_before);
+        // applied 只含 presence + path 两条（无校准更新追加）。
+        REQUIRE(owner.stats().updates_applied == applied_before + 2);
+
+        const auto report = stack.host.executor_owner.shutdown();
+        REQUIRE(report.fully_stopped());
+    }
+
+    // ③ revoke：wire 撤销 + 本机 Trusted→Revoked，行 inbound_trust 归零。
+    SECTION("revoke clears the inbound flag with the Revoked edge") {
+        BasicStack<StubAdapter> stack;
+        auto& owner = stack.state_owner;
+        stack.adapter.trust_directions_mode = 1;
+        seed_trusted_row(owner);
+        quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+            *stack.transfers);
+        REQUIRE(stack.devices->enqueue_connected(DeviceId{"peer"},
+            ConnectionPath::Lan));
+        quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+            *stack.transfers);
+        REQUIRE(inbound_of(owner));
+
+        REQUIRE(stack.devices->revoke_device(DeviceId{"peer"}));
+        quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
+            *stack.transfers);
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.devices.devices.front().trust_state
+            == TrustState::Revoked);
+        REQUIRE_FALSE(inbound_of(owner));
+        REQUIRE(stack.adapter.revoked_peers.size() == 1);
+        REQUIRE(stack.adapter.revoked_peers[0] == DeviceId{"peer"});
+
+        const auto report = stack.host.executor_owner.shutdown();
+        REQUIRE(report.fully_stopped());
+    }
 }
 
 // ---- 用例 2：并发入队不丢（单飞泵丢失唤醒防护；DOD-02 正常完成·并发面）----
@@ -952,9 +1081,15 @@ TEST_CASE("Concurrent senders never lose a work item (single-flight pump)",
     auto& messages = *stack.messages;
     auto& executor = stack.host.executor_owner.executor();
 
-    // DEC-009 ②：出站消息远端会话先行（FK 前置校验）。
+    // DEC-009 ②：出站消息远端会话先行（FK 前置校验）。会话泵的排空任务
+    // 与消息泵排空任务在 executor 上并发竞争——不在此处先排空落 owner，
+    // 慢机（ASAN CI）上会话行可能晚于消息入队，110 条 UpsertMessage 被
+    // FK 前置校验整体拒绝（updates_rejected 计水位，快照保持种子态）。
     REQUIRE(stack.conversations->ensure_conversation(
         DeviceId{"local-1"}, DeviceId{"beta"}));
+    REQUIRE(stack.conversations->flush(5s));
+    drain_until_idle(owner);
+    REQUIRE(owner.stats().updates_rejected == 0);
 
     constexpr int kSenders = 4;
     constexpr int kPerSender = 25;
@@ -990,6 +1125,9 @@ TEST_CASE("Concurrent senders never lose a work item (single-flight pump)",
     REQUIRE(stats.drain_failures == 0);
 
     drain_until_idle(owner);
+    // FK 前置校验拒绝在此用例中必须为零（会话先行已在上方保证）——精确
+    // 诊断位，避免退化成难以解读的快照计数失败。
+    REQUIRE(owner.stats().updates_rejected == 0);
     executor::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.messages.messages.size() == kSenders * kPerSender + 10);

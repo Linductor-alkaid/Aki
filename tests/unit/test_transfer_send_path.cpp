@@ -843,7 +843,7 @@ TEST_CASE("Send archive completes through the DB terminal job group and "
     auto database = Database::open(
         (std::filesystem::path{root} / "aki.db3").string());
     const Migrator migrator{schema_steps()};
-    REQUIRE(migrator.bring_up_to_date(database) == 2);
+    REQUIRE(migrator.bring_up_to_date(database) == 3);  // DEC-021：三步。
     auto db = std::make_shared<aki::persistence::DatabaseWorkerControl>(
         std::make_unique<aki::persistence::Repositories>(std::move(database)),
         aki::persistence::DatabaseWorkerOptions{});

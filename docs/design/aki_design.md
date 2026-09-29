@@ -136,14 +136,29 @@ Trusted -> Revoked
 配对结果失败时保持 `Pending`，通过 DeviceStore 易失的失败标志提示重试；
 `Pending -> Rejected` 只由用户明确拒绝动作触发，避免错误口令让设备永久不可认证。
 `Revoked` 表示对既有信任的收回，只能从 `Trusted` 进入；`Rejected` 与 `Revoked`
-是终态。新增状态或转移必须先更新本节，不允许代码私有状态。
+对自动流程是终态，唯一出口是用户显式的「重新配对」动作
+（`Rejected/Revoked -> Pending`，发起全新配对轮；
+[DEC-021](../decisions/DEC-021-bidirectional-trust-and-repair.md)）。
+新增状态或转移必须先更新本节，不允许代码私有状态。
 
 `Trusted` 表示本机输入对端口令、取得对端签发的 Heyaki grant；对端输入
 本机口令建立的连接不自动推进本机信任状态。`ConnectionPath` 和 presence
-独立表达通信连接；会话中的消息和文件在已授权连接上可使用，不要求双向
-`Trusted`（[DEC-019](../decisions/DEC-019-directional-trust-and-chat-scopes.md)）。
+独立表达通信连接；**会话入口与发送路径按连接事实门控，不按信任状态裁剪**
+——被拒绝/撤销的设备在已连接或会话活跃时仍可打开会话通信
+（[DEC-019](../decisions/DEC-019-directional-trust-and-chat-scopes.md)、
+[DEC-021](../decisions/DEC-021-bidirectional-trust-and-repair.md)）。
 终端、屏幕控制、机器人控制等能力需要继续经过
 capability 和 permission 判断，避免把设备信任直接等同于控制权限。
+
+信任是双向语义（DEC-021）：`TrustState` 描述本机→对端方向；设备记录的
+`inbound_trust` 描述对端→本机方向（本机已向对端签发有效 Heyaki grant，
+以本机 TrustStore 查询为权威，启动、会话连接、撤销时校准）。UI 按二元
+组合显示互相信任 / 本机已信任对方 / 对方已信任本机 / 未建立信任四态。
+已信任会话被裁定落入 restricted（双向有效 grant 均不存在）时，本机信任
+降级 `Trusted -> Revoked` 并归零对向信任——这是对端撤销/授权过期的可
+观测信号（协议无撤销推送，限制见 DEC-021）。断线重连循环预算耗尽后由
+周期对账任务重启：离线且重新出现在 LAN 目录、尚未认证的已知设备触发
+单飞重连，恢复仍由 connected 事件链承载。
 
 ## 5. Conversation
 

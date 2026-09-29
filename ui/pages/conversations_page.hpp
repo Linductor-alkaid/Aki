@@ -60,7 +60,8 @@ struct ConversationsPageModel {
     // 历史滚动代数（滚动契约见文件头）：选中切换/新消息入流时 +1。
     std::uint32_t history_scroll_gen = 0;
 
-    // 新建会话弹窗（页面持有 open 态；Trusted 设备选择面）。false = 关闭。
+    // 新建会话弹窗（页面持有 open 态；已连接设备选择面，DEC-019）。
+    // false = 关闭。
     bool new_chat_open = false;
 
     // 图片预览弹窗（页面持有 open 态；空消息 id = 关闭）。

@@ -52,6 +52,7 @@ std::vector<DeviceView> derive_device_views(const aki::app::DeviceStore& store) 
         DeviceView view{device.id, device.display_name, device.remark,
             device.os_name,
             device.device_class, device.trust_state, device.presence,
+            device.inbound_trust,
             aki::device::ConnectionPath::Unknown,
             device.public_key.bytes.size() == 32};
         // 逐设备路径 join（DEC-015：DeviceStore.connection_paths 按设备键

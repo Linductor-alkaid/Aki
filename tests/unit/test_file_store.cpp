@@ -231,7 +231,8 @@ TEST_CASE("Completed job group renames with SHA-256 and writes back",
     Database db = Database::open(":memory:");
     REQUIRE(aki::persistence::Migrator(aki::persistence::schema_steps())
                 .bring_up_to_date(db)
-        == 2);
+        // DEC-021：迁移第 3 步 device-inbound-trust——2→3。
+        == 3);
     auto control = std::make_shared<DatabaseWorkerControl>(
         std::make_unique<Repositories>(std::move(db)));
     auto& transfers = control->repositories().transfers;
@@ -292,7 +293,8 @@ TEST_CASE("Completed job group fails explicitly when the part is missing",
     Database db = Database::open(":memory:");
     REQUIRE(aki::persistence::Migrator(aki::persistence::schema_steps())
                 .bring_up_to_date(db)
-        == 2);
+        // DEC-021：迁移第 3 步 device-inbound-trust——2→3。
+        == 3);
     auto control = std::make_shared<DatabaseWorkerControl>(
         std::make_unique<Repositories>(std::move(db)));
     auto& transfers = control->repositories().transfers;
@@ -334,7 +336,8 @@ TEST_CASE("Failed and Cancelled terminal states discard the part idempotently",
     Database db = Database::open(":memory:");
     REQUIRE(aki::persistence::Migrator(aki::persistence::schema_steps())
                 .bring_up_to_date(db)
-        == 2);
+        // DEC-021：迁移第 3 步 device-inbound-trust——2→3。
+        == 3);
     auto control = std::make_shared<DatabaseWorkerControl>(
         std::make_unique<Repositories>(std::move(db)));
     auto& transfers = control->repositories().transfers;
@@ -373,7 +376,8 @@ TEST_CASE("Startup sweep removes orphans and keeps active transfers",
     Database db = Database::open(":memory:");
     REQUIRE(aki::persistence::Migrator(aki::persistence::schema_steps())
                 .bring_up_to_date(db)
-        == 2);
+        // DEC-021：迁移第 3 步 device-inbound-trust——2→3。
+        == 3);
     aki::persistence::TransferRepository transfers(db);
     Transfer active = make_transfer_for("t-active", "a.bin");
     active.state = TransferState::Transferring;   // 活动 → .part 保留

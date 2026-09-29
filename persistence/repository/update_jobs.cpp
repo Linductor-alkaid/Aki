@@ -32,6 +32,15 @@ DbJob make_device_remark_job(aki::device::DeviceId device,
                  }, std::move(done)};
 }
 
+DbJob make_device_inbound_trust_job(aki::device::DeviceId device,
+    bool inbound_trust) {
+    auto done = std::make_shared<std::promise<void>>();
+    return DbJob{[device = std::move(device), inbound_trust](
+                     Repositories& repos) {
+                     repos.devices.set_inbound_trust(device, inbound_trust);
+                 }, std::move(done)};
+}
+
 DbJob make_conversation_upsert_job(
     aki::conversation::Conversation conversation) {
     auto done = std::make_shared<std::promise<void>>();

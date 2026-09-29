@@ -261,6 +261,60 @@ TEST_CASE("Per-device connection path upserts, idempotence and rejection",
         == ConnectionPath::Relay);
 }
 
+// DEC-021：SetDeviceInboundTrust 字段级更新——生效、同值幂等（不置 dirty，
+// 即不触发快照发布）、未知设备拒绝；与 remark/display_name 互不覆盖。
+TEST_CASE("SetDeviceInboundTrust applies field-level, is idempotent and rejects unknown devices",
+    "[unit][app_state][dec021]") {
+    AppStateOwner owner;
+
+    // 未知设备拒绝并可观测（RULE-09：可见性分层，状态不新增行）。
+    REQUIRE(owner.submit_update(
+        aki::app::SetDeviceInboundTrust{DeviceId{"ghost"}, true}));
+    owner.drain();
+    REQUIRE(owner.stats().updates_rejected == 1);
+
+    // 建行（inbound_trust 默认 false）→ 置 true 生效。
+    DeviceIdentity with_remark = make_device("local");
+    with_remark.remark = "主机";
+    with_remark.display_name = "客厅电脑";
+    REQUIRE(owner.submit_update(UpsertDevice{with_remark}));
+    REQUIRE(owner.submit_update(
+        aki::app::SetDeviceInboundTrust{DeviceId{"local"}, true}));
+    owner.drain();
+    executor::comm::Snapshot<AppState> snapshot;
+    REQUIRE(owner.try_load_snapshot(snapshot));
+    REQUIRE(snapshot.value.devices.devices.front().inbound_trust);
+
+    // 同值幂等 no-op：applied 吸收且不触发快照发布（不置 dirty）。
+    const auto applied_before = owner.stats().updates_applied;
+    const auto published_before = owner.stats().snapshots_published;
+    REQUIRE(owner.submit_update(
+        aki::app::SetDeviceInboundTrust{DeviceId{"local"}, true}));
+    owner.drain();
+    REQUIRE(owner.stats().updates_applied == applied_before + 1);
+    REQUIRE(owner.stats().snapshots_published == published_before);
+
+    // false 回写生效；与名称/备注字段分离——对向信任翻转不覆盖既有
+    // remark/display_name，备注更新也不覆盖 inbound_trust。
+    REQUIRE(owner.submit_update(
+        aki::app::SetDeviceInboundTrust{DeviceId{"local"}, false}));
+    REQUIRE(owner.submit_update(aki::app::SetDeviceRemark{
+        DeviceId{"local"}, "书房主机"}));
+    owner.drain();
+    REQUIRE(owner.try_load_snapshot(snapshot));
+    REQUIRE_FALSE(snapshot.value.devices.devices.front().inbound_trust);
+    REQUIRE(snapshot.value.devices.devices.front().remark == "书房主机");
+    REQUIRE(snapshot.value.devices.devices.front().display_name == "客厅电脑");
+
+    REQUIRE(owner.submit_update(
+        aki::app::SetDeviceInboundTrust{DeviceId{"local"}, true}));
+    owner.drain();
+    REQUIRE(owner.try_load_snapshot(snapshot));
+    REQUIRE(snapshot.value.devices.devices.front().inbound_trust);
+    REQUIRE(snapshot.value.devices.devices.front().remark == "书房主机");
+    REQUIRE(snapshot.value.devices.devices.front().display_name == "客厅电脑");
+}
+
 TEST_CASE("Topic fans out events in order and makes rejection visible",
     "[unit][app_state][topic]") {
     AppStateOwner owner;
@@ -768,9 +822,10 @@ TEST_CASE("UpsertMessage with unknown conversation is rejected by the owner",
 TEST_CASE("Idempotent no-op acceptance enqueues and is absorbed by the job",
     "[unit][app_state][dec009]") {
     auto db = aki::persistence::Database::open(":memory:");
+    // DEC-021：schema_steps 增至三步（第 3 步 device-inbound-trust）。
     REQUIRE(aki::persistence::Migrator(aki::persistence::schema_steps())
                 .bring_up_to_date(db)
-        == 2);
+        == 3);
     auto control = std::make_shared<aki::persistence::DatabaseWorkerControl>(
         std::make_unique<aki::persistence::Repositories>(std::move(db)));
     control->repositories().transfers.upsert(

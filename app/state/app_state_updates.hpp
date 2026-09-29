@@ -29,6 +29,13 @@ struct SetDeviceRemark {
     std::string remark;
 };
 
+// 对向信任（DEC-021）：本机签发给该设备的 grant 有效性变化（连接裁定、
+// 撤销、启动校准）。字段级更新，与名称/备注互不覆盖。
+struct SetDeviceInboundTrust {
+    aki::device::DeviceId device;
+    bool trust = false;
+};
+
 struct UpsertConversation {
     aki::conversation::Conversation conversation;
 };
@@ -90,6 +97,7 @@ struct CompleteTransfer {
 using AppStateUpdate = std::variant<UpsertDevice,
     SetDeviceName,
     SetDeviceRemark,
+    SetDeviceInboundTrust,
     UpsertConversation,
     UpsertMessage,
     UpsertTransfer,

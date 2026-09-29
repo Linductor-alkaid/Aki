@@ -92,6 +92,22 @@ struct TrustStack {
         return aki::device::TrustState::Unknown;
     }
 
+    // 对向信任（DEC-021）：快照中该行的 inbound_trust；无行 = false。
+    [[nodiscard]] bool inbound_of(const std::string& id) {
+        executor::comm::Snapshot<AppState> snapshot;
+        int attempts = 0;
+        while (!state.try_load_snapshot(snapshot) && attempts < 64) {
+            ++attempts;
+        }
+        REQUIRE(attempts < 64);
+        for (const auto& device : snapshot.value.devices.devices) {
+            if (device.id.value == id) {
+                return device.inbound_trust;
+            }
+        }
+        return false;
+    }
+
     [[nodiscard]] aki::device::ConnectionPath path_of(const std::string& id) {
         executor::comm::Snapshot<AppState> snapshot;
         REQUIRE(state.try_load_snapshot(snapshot));
@@ -297,6 +313,119 @@ TEST_CASE("Connected carries the mapped path and disconnect resets to Unknown",
         aki::device::DeviceId{"alpha"}, aki::device::ConnectionPath::Relay));
     stack.settle();
     REQUIRE(stack.path_of("alpha") == aki::device::ConnectionPath::Relay);
+
+    const auto report = stack.owner.shutdown([&stack] {
+        (void)stack.devices.flush(2s);
+        stack.state.close();
+    });
+    REQUIRE(report.fully_stopped());
+}
+
+// ---- DEC-021：终态重建边（唯一出口 = 用户显式重新配对轮）与 Trusted 会话
+// ---- 被裁定 restricted 后的降级。
+
+TEST_CASE("Pairing ready reopens terminal rows and downgrades revoked sessions (DEC-021)",
+    "[unit][device_trust][dec021]") {
+    TrustStack stack;
+
+    // Revoked 行：pairing_ready 把行放回 Pending（状态机新边）；行上其余
+    // 字段（含对向信任）随整行 upsert 保留。
+    REQUIRE(stack.state.submit_update(
+        UpsertDevice{make_device("revoked-dev", aki::device::TrustState::Revoked)}));
+    stack.settle();
+    REQUIRE(stack.router.on_pairing_ready(aki::device::DeviceId{"revoked-dev"}));
+    stack.settle();
+    REQUIRE(stack.trust_of("revoked-dev") == aki::device::TrustState::Pending);
+
+    // Rejected 行：同样可重建。
+    REQUIRE(stack.state.submit_update(
+        UpsertDevice{make_device("rejected-dev", aki::device::TrustState::Rejected)}));
+    stack.settle();
+    REQUIRE(stack.router.on_pairing_ready(aki::device::DeviceId{"rejected-dev"}));
+    stack.settle();
+    REQUIRE(stack.trust_of("rejected-dev")
+        == aki::device::TrustState::Pending);
+
+    // Trusted 行 + 对向信任在位：pairing_ready = 对端撤销/grant 过期的
+    // 可观测信号 → 本机降级 Revoked 且双向显示归零（inbound=false）。
+    REQUIRE(stack.state.submit_update(
+        UpsertDevice{make_device("trusted-dev", aki::device::TrustState::Trusted)}));
+    REQUIRE(stack.state.submit_update(
+        aki::app::SetDeviceInboundTrust{
+            aki::device::DeviceId{"trusted-dev"}, true}));
+    stack.settle();
+    REQUIRE(stack.inbound_of("trusted-dev"));
+    REQUIRE(stack.router.on_pairing_ready(aki::device::DeviceId{"trusted-dev"}));
+    stack.settle();
+    REQUIRE(stack.trust_of("trusted-dev") == aki::device::TrustState::Revoked);
+    REQUIRE_FALSE(stack.inbound_of("trusted-dev"));
+
+    // Pending 行：pairing_ready 幂等（无更新入队，状态不变）。
+    REQUIRE(stack.state.submit_update(
+        UpsertDevice{make_device("pending-dev", aki::device::TrustState::Pending)}));
+    stack.settle();
+    const auto applied_before = stack.state.stats().updates_applied;
+    const auto rejected_before = stack.state.stats().updates_rejected;
+    REQUIRE(stack.router.on_pairing_ready(aki::device::DeviceId{"pending-dev"}));
+    stack.settle();
+    REQUIRE(stack.trust_of("pending-dev") == aki::device::TrustState::Pending);
+    REQUIRE(stack.state.stats().updates_applied == applied_before);
+    REQUIRE(stack.state.stats().updates_rejected == rejected_before);
+
+    const auto report = stack.owner.shutdown([&stack] {
+        (void)stack.devices.flush(2s);
+        stack.state.close();
+    });
+    REQUIRE(report.fully_stopped());
+}
+
+// ---- DEC-021：connected 事件的对向信任校准（trust_directions.issued →
+// ---- 行字段 inbound_trust）。
+
+TEST_CASE("Connected work calibrates inbound trust from the adapter query (DEC-021)",
+    "[unit][device_trust][dec021]") {
+    TrustStack stack;
+    // Fake 默认持有有效 grant → trust_directions 返回 {issued=true,
+    // received=true}；issued = 对端信任本机 → 行 inbound_trust 置位。
+    REQUIRE(stack.state.submit_update(
+        UpsertDevice{make_device("alpha", aki::device::TrustState::Trusted)}));
+    stack.settle();
+    REQUIRE_FALSE(stack.inbound_of("alpha"));
+
+    REQUIRE(stack.adapter.inject_device_connected(
+        aki::device::DeviceId{"alpha"}, aki::device::ConnectionPath::Lan));
+    stack.settle();
+    REQUIRE(stack.inbound_of("alpha"));
+    REQUIRE(stack.path_of("alpha") == aki::device::ConnectionPath::Lan);
+    REQUIRE(stack.trust_of("alpha") == aki::device::TrustState::Trusted);
+
+    const auto report = stack.owner.shutdown([&stack] {
+        (void)stack.devices.flush(2s);
+        stack.state.close();
+    });
+    REQUIRE(report.fully_stopped());
+}
+
+// ---- DEC-021：撤销收回本机签发授权，对向信任随之归零。
+
+TEST_CASE("Revoke clears inbound trust along the local Revoked edge (DEC-021)",
+    "[unit][device_trust][dec021]") {
+    TrustStack stack;
+    REQUIRE(stack.state.submit_update(
+        UpsertDevice{make_device("alpha", aki::device::TrustState::Trusted)}));
+    stack.settle();
+    // 先经 connected 校准置位对向信任（fake 默认 grant 有效）。
+    REQUIRE(stack.adapter.inject_device_connected(
+        aki::device::DeviceId{"alpha"}, aki::device::ConnectionPath::Lan));
+    stack.settle();
+    REQUIRE(stack.inbound_of("alpha"));
+
+    REQUIRE(stack.devices.revoke_device(aki::device::DeviceId{"alpha"}));
+    stack.settle();
+    REQUIRE(stack.trust_of("alpha") == aki::device::TrustState::Revoked);
+    REQUIRE_FALSE(stack.inbound_of("alpha"));
+    REQUIRE(stack.adapter.revoked_peers().size() == 1);
+    REQUIRE(stack.adapter.revoked_peers()[0].value == "alpha");
 
     const auto report = stack.owner.shutdown([&stack] {
         (void)stack.devices.flush(2s);

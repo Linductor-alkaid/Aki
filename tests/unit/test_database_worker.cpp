@@ -107,7 +107,8 @@ struct WorkerFixture {
         REQUIRE(aki::persistence::Migrator(
                     aki::persistence::schema_steps())
                     .bring_up_to_date(database)
-            == 2);
+            // DEC-021：迁移第 3 步 device-inbound-trust——2→3。
+            == 3);
         control = std::make_shared<DatabaseWorkerControl>(
             std::make_unique<Repositories>(std::move(database),
                 worker_options.repository_cache_capacity),

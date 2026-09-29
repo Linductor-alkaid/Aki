@@ -153,6 +153,11 @@ private:
                     jobs.push_back(aki::persistence::make_device_remark_job(
                         concrete.device, concrete.remark));
                 } else if constexpr (std::is_same_v<Update,
+                                       aki::app::SetDeviceInboundTrust>) {
+                    jobs.push_back(
+                        aki::persistence::make_device_inbound_trust_job(
+                            concrete.device, concrete.trust));
+                } else if constexpr (std::is_same_v<Update,
                                        aki::app::UpsertConversation>) {
                     jobs.push_back(
                         aki::persistence::make_conversation_upsert_job(
@@ -248,6 +253,9 @@ struct HostRuntime::Impl {
     std::unique_ptr<aki::heyaki::PeerSessionPipeline> peer_pipeline;
     std::unique_ptr<aki::heyaki::LanNameBeacon> name_beacon;
     std::future<void> language_write;
+    // 重连对账周期句柄（DEC-021）与启动信任校准任务 future（有界单次）。
+    executor::TimerHandle reconnect_sweep;
+    std::future<void> trust_calibration;
 
     bool assembled = false;
     bool assembly_failed = false;
@@ -613,6 +621,71 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
     }
     impl.assembly_report.peer_observation_started = true;
 
+    // 启动信任校准（DEC-021 四态）：恢复的设备行以本机 TrustStore 为权威
+    // 校准对向信任（issued = 对端信任本机）。单次有界任务：每设备一次
+    // 有界本地查询；submit_update 为 MPSC admission，任意上下文安全。
+    if (impl.adapter && impl.state_owner && impl.recovery) {
+        impl.trust_calibration = impl.executor_owner.executor().submit_auto(
+            [adapter = &*impl.adapter, owner = &*impl.state_owner,
+                local = impl.assembly_report.local_device_id,
+                devices = impl.recovery->state.devices] {
+                for (const auto& device : devices) {
+                    if (device.id.value == local
+                        || device.public_key.bytes.size() != 32) {
+                        continue;
+                    }
+                    if (auto directions =
+                            adapter->trust_directions(device.id)) {
+                        (void)owner->submit_update(
+                            aki::app::SetDeviceInboundTrust{device.id,
+                                directions->issued});
+                    }
+                }
+            });
+    }
+
+    // 周期重连对账（DEC-021）：重连循环 30s 预算耗尽后不 re-arm，对端
+    // 稍后恢复时无人再触发连接——本 sweep 对「离线 + 目录重新可见 + 未
+    // 认证」的已知设备重启单飞重连循环；connected diff 事件链随后自动
+    // 恢复 presence/路径/会话状态。句柄在关闭钩子 ① 取消。
+    {
+        auto* owner_for_sweep = &*impl.state_owner;
+        auto* node_for_sweep = &*impl.node_session;
+        auto* reconnect_for_sweep = impl.reconnect.get();
+        const auto& local_for_sweep = impl.assembly_report.local_device_id;
+        impl.reconnect_sweep =
+            impl.executor_owner.executor().submit_periodic_with_handle(5000,
+                [owner_for_sweep, node_for_sweep, reconnect_for_sweep,
+                    &local_for_sweep] {
+                    executor::comm::Snapshot<AppState> snapshot;
+                    if (!owner_for_sweep->try_load_snapshot(snapshot)) {
+                        return;
+                    }
+                    for (const auto& device :
+                        snapshot.value.devices.devices) {
+                        if (device.id.value == local_for_sweep
+                            || device.presence
+                                != aki::device::PresenceState::Offline) {
+                            continue;
+                        }
+                        if (!node_for_sweep->endpoint_visible(device.id)
+                            || node_for_sweep->session_authenticated(
+                                device.id)) {
+                            continue;
+                        }
+                        ReconnectCoordinator::PerPeerHooks hooks{
+                            [node_for_sweep, id = device.id] {
+                                return node_for_sweep->connect_lan(id);
+                            },
+                            [node_for_sweep, id = device.id] {
+                                return node_for_sweep->session_authenticated(
+                                    id);
+                            }};
+                        (void)reconnect_for_sweep->start(device.id, hooks);
+                    }
+                });
+    }
+
     impl.assembled = true;
     impl.assembly_report.ok = true;
     return impl.assembly_report;
@@ -767,6 +840,10 @@ const HostShutdownReport& HostRuntime::shutdown_with_report() {
         try { impl.language_write.get(); }
         catch (...) { report.language_write_failed = true; }
     }
+    if (impl.trust_calibration.valid()) {
+        try { impl.trust_calibration.get(); }
+        catch (...) { }  // 校准失败不阻断关闭；行状态保持库中现值。
+    }
     report.attempted = true;
 
     // ---- §8.3 宿主钩子原序（不省略不重排）→ EXEC-01 步骤 2~5 ----
@@ -778,6 +855,10 @@ const HostShutdownReport& HostRuntime::shutdown_with_report() {
             (void)impl.transfers->request_cancel_all();
         }
         if (impl.name_beacon) impl.name_beacon->stop();
+        if (impl.reconnect_sweep.valid()) {
+            (void)impl.reconnect_sweep.cancel();
+            impl.reconnect_sweep = executor::TimerHandle{};
+        }
         report.transfers_cancelled = true;
         report.hook_sequence.push_back("hook:transfer.request_cancel_all");
 
