@@ -105,9 +105,9 @@ struct WorkerFixture {
         : path(temp_db_path(tag)) {
         auto database = Database::open(path);
         REQUIRE(aki::persistence::Migrator(
-                    aki::persistence::schema_v1_steps())
+                    aki::persistence::schema_steps())
                     .bring_up_to_date(database)
-            == 1);
+            == 2);
         control = std::make_shared<DatabaseWorkerControl>(
             std::make_unique<Repositories>(std::move(database),
                 worker_options.repository_cache_capacity),

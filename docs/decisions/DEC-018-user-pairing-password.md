@@ -1,6 +1,6 @@
 # DEC-018：用户设置本机配对口令并主动认证设备
 
-> 状态：Accepted
+> 状态：Superseded（双侧自动 Trusted 语义由 [DEC-019](DEC-019-directional-trust-and-chat-scopes.md) 修订；首启口令与主动配对部分继续有效）
 > 日期：2026-09-28
 > 负责人：Linductor
 > 冻结里程碑：M5 维护项 `M5-11`

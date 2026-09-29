@@ -185,29 +185,40 @@ TEST_CASE("Two-node image messaging over the borrowed runtime",
     // 解码无损）、A 收 acked。
     const auto aki_id =
         aki::heyaki::NodeSession::to_aki_message_id(fixed_wire_id());
+    auto file_wire = fixed_wire_id().bytes();
+    file_wire[15] = std::byte{0x41};
+    const auto file_id = aki::heyaki::NodeSession::to_aki_message_id(
+        ::heyaki::MessageId{file_wire});
     const auto transfer_id = canonical_transfer_id();
     const aki::transfer::FileMetadata media{"photo.png", 2048, "image/png", ""};
+    const aki::transfer::FileMetadata file_media{
+        "report.pdf", 4096, "application/pdf", ""};
     std::atomic<bool> inbound_seen{false};
     std::atomic<bool> acked_seen{false};
+    std::atomic<bool> file_inbound_seen{false};
+    std::atomic<bool> file_acked_seen{false};
     side_b.set_message_handlers(
         [&](const DeviceId& peer, const aki::conversation::MessageId& id,
             const std::string& type, const std::string& payload) {
-            if (peer != identity_a.id || id != aki_id
-                || type
-                    != std::string(
-                        aki::conversation::codec::kAkiImageEnvelopeType)) {
-                return;
-            }
+            if (peer != identity_a.id) return;
             const auto decoded =
                 aki::conversation::codec::decode_image_payload(
                     std::span<const std::byte>(
                         reinterpret_cast<const std::byte*>(payload.data()),
                         payload.size()));
-            if (decoded.value.has_value()
+            if (id == aki_id && type
+                    == aki::conversation::codec::kAkiImageEnvelopeType
+                && decoded.value.has_value()
                 && decoded.value->media == media
                 && decoded.value->transfer_id == transfer_id) {
                 inbound_seen.store(true);
             }
+            if (id == file_id && type
+                    == aki::conversation::codec::kAkiFileEnvelopeType
+                && decoded.value.has_value()
+                && decoded.value->media == file_media
+                && decoded.value->transfer_id == transfer_id)
+                file_inbound_seen.store(true);
         },
         [](const DeviceId&, const aki::conversation::MessageId&,
             const std::string&) {});
@@ -219,6 +230,8 @@ TEST_CASE("Two-node image messaging over the borrowed runtime",
             if (peer == identity_b.id && id == aki_id && event == "acked") {
                 acked_seen.store(true);
             }
+            if (peer == identity_b.id && id == file_id && event == "acked")
+                file_acked_seen.store(true);
         });
 
     // 发送（DEC-006 冻结信封 + 冻结字段号载荷）；送达回报 acked →
@@ -226,6 +239,9 @@ TEST_CASE("Two-node image messaging over the borrowed runtime",
     REQUIRE(side_a.send_image(identity_b.id, aki_id, media, transfer_id));
     REQUIRE(wait_until([&] { return inbound_seen.load(); }, 20s));  // 验收 ①
     REQUIRE(wait_until([&] { return acked_seen.load(); }, 20s));
+    REQUIRE(side_a.send_file(identity_b.id, file_id, file_media, transfer_id));
+    REQUIRE(wait_until([&] { return file_inbound_seen.load(); }, 20s));
+    REQUIRE(wait_until([&] { return file_acked_seen.load(); }, 20s));
 
     // send 拒绝路径：非规范 TransferId（ad-hoc 串）→ admission false 可见
     //（RULE-09；对端可达性已由上一断言确立，失败归因于编码契约校验）。

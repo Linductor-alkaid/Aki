@@ -52,6 +52,10 @@ struct UiActions {
         aki::transfer::FileMetadata, aki::transfer::TransferId,
         std::filesystem::path)>
         send_image;
+    std::function<bool(aki::device::DeviceId, aki::conversation::MessageId,
+        aki::transfer::FileMetadata, aki::transfer::TransferId,
+        std::filesystem::path)>
+        send_file;
 
     // 传输域（TransferManager 四接口）。
     std::function<bool(aki::device::DeviceId, aki::transfer::TransferId,
@@ -68,8 +72,10 @@ struct UiActions {
     std::function<bool(aki::device::DeviceId)> begin_pairing;
     std::function<bool(aki::device::DeviceId, std::string)> confirm_pairing;
     std::function<bool(std::string, std::string&)> set_local_pairing_password;
+    std::function<bool(std::string)> set_language;
     std::function<bool(aki::device::DeviceId)> reject_device;
     std::function<bool(aki::device::DeviceId)> revoke_device;
+    std::function<bool(aki::device::DeviceId, std::string)> set_device_remark;
 
     // 会话域（ConversationManager::ensure_conversation——显式建会话，不从
     // 事件隐式建，设计 §8.3）。

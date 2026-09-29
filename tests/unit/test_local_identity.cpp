@@ -6,10 +6,12 @@
 // endpoint_for("org.aki.app")（DEC-006 冻结 application_id）确定性；
 // 公开面仅 aki/std 类型（本 TU 经 aki_heyaki 消费，heyaki 类型不出层）。
 #include "heyaki/adapter/local_identity.hpp"
+#include "heyaki/adapter/lan_name_protocol.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <algorithm>
 #include <filesystem>
 #include <string>
 
@@ -106,6 +108,14 @@ TEST_CASE("First launch requires a password and rotation preserves identity",
         std::filesystem::path{root} / "db" / "profile.sqlite"));
 
     auto profile = aki::heyaki::LocalProfile::open(root, "first-password");
+    const auto policy = profile.store().pairing_policy();
+    REQUIRE(policy.has_value());
+    REQUIRE(std::find(policy.value_if()->default_scopes.begin(),
+                policy.value_if()->default_scopes.end(), "message.send")
+        != policy.value_if()->default_scopes.end());
+    REQUIRE(std::find(policy.value_if()->default_scopes.begin(),
+                policy.value_if()->default_scopes.end(), "file.push:inbox")
+        != policy.value_if()->default_scopes.end());
     REQUIRE_FALSE(aki::heyaki::LocalProfile::requires_password_setup(root));
     const auto id = profile.identity().id;
     const auto first = profile.store().password_verifier();
@@ -156,4 +166,47 @@ TEST_CASE("Legacy shared password profile requires migration without losing iden
     const auto generation = upgraded.store().password_generation();
     REQUIRE(generation.has_value());
     REQUIRE(*generation.value_if() == 3U);
+}
+
+TEST_CASE("LAN name announcement binds name to Heyaki identity and rejects tampering",
+    "[unit][local_identity][lan_name]") {
+    auto profile = aki::heyaki::LocalProfile::open(unique_root(),
+        "test-local-password");
+    auto keypair = profile.store().load_identity();
+    REQUIRE(keypair.has_value());
+    const auto now = std::chrono::system_clock::now();
+    auto packet = aki::heyaki::encode_lan_name(*keypair.value_if(),
+        "客厅电脑", now);
+    REQUIRE_FALSE(packet.empty());
+    auto decoded = aki::heyaki::decode_lan_name(packet, now);
+    REQUIRE(decoded.has_value());
+    CHECK(decoded->id == profile.identity().id);
+    CHECK(decoded->public_key == profile.identity().public_key);
+    CHECK(decoded->name == "客厅电脑");
+    packet[49] ^= std::byte{1};
+    CHECK_FALSE(aki::heyaki::decode_lan_name(packet, now).has_value());
+    CHECK_FALSE(aki::heyaki::decode_lan_name(
+        aki::heyaki::encode_lan_name(*keypair.value_if(), "x", now),
+        now + std::chrono::seconds(31)).has_value());
+}
+
+TEST_CASE("Existing profile pairing policy gains file scope without replacing identity",
+    "[unit][local_identity][file_scope]") {
+    const auto root = unique_root();
+    auto profile = aki::heyaki::LocalProfile::open(root, "test-local-password");
+    const auto id = profile.identity().id;
+    auto current = profile.store().pairing_policy();
+    REQUIRE(current.has_value());
+    auto old = *current.value_if();
+    old.default_scopes = {"message.send"};
+    ++old.generation;
+    REQUIRE(profile.store().set_pairing_policy(old).has_value());
+    auto reopened = aki::heyaki::LocalProfile::open(root);
+    REQUIRE(reopened.identity().id == id);
+    auto upgraded = reopened.store().pairing_policy();
+    REQUIRE(upgraded.has_value());
+    CHECK(upgraded.value_if()->generation == old.generation + 1);
+    CHECK(std::find(upgraded.value_if()->default_scopes.begin(),
+            upgraded.value_if()->default_scopes.end(), "file.push:inbox")
+        != upgraded.value_if()->default_scopes.end());
 }

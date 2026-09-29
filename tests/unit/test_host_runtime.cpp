@@ -39,6 +39,7 @@
 #include <future>
 #include <memory>
 #include <stdexcept>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -104,6 +105,7 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
             wake_calls->fetch_add(1);  // GUI 侧此处为 app::requestUpdate()。
         }, "test-local-password");
     REQUIRE(host.assembled());
+    REQUIRE(host.set_language("en"));
     REQUIRE(assembly.ok);
     REQUIRE(assembly.failure_reason.empty());
     REQUIRE(assembly.recovered_devices == 0);
@@ -124,7 +126,7 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     REQUIRE(*matched.value_if());
     REQUIRE(assembly.recovered_transfers == 0);
     // 空根首开：v1 schema 引导迁移恰一步（0→1）；tmp 清扫零孤儿。
-    REQUIRE(assembly.migrations_applied == 1);
+    REQUIRE(assembly.migrations_applied == 2);
     REQUIRE(assembly.tmp_orphans_removed == 0);
     REQUIRE(assembly.identity_created);
     REQUIRE_FALSE(assembly.local_device_id.empty());
@@ -287,6 +289,13 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     REQUIRE(report.db_failed == 0);
     REQUIRE(report.db_rejected == 0);
     REQUIRE(report.post_accept_failures == 0);
+    REQUIRE_FALSE(report.language_write_failed);
+    {
+        std::ifstream preference(data_root / "ui-language.txt");
+        std::string code;
+        REQUIRE(preference >> code);
+        CHECK(code == "en");
+    }
 
     // 幂等：重复关闭返回同一报告。
     REQUIRE(&host.shutdown_with_report() == &report);

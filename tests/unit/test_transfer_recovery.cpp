@@ -72,7 +72,7 @@ using aki::persistence::perform_startup_recovery;
 using aki::persistence::TransferIoControl;
 using aki::persistence::TransferIoRunnable;
 using aki::persistence::TransferIoWorkerOptions;
-using aki::persistence::schema_v1_steps;
+using aki::persistence::schema_steps;
 using aki::persistence::sha256_hex;
 using aki::persistence::Statement;
 using aki::transfer::FileMetadata;
@@ -134,8 +134,8 @@ void seed_database(const std::string& root,
     const std::vector<Transfer>& transfers) {
     Database database = Database::open(
         (std::filesystem::path{root} / "db" / "aki.db3").string());
-    const Migrator seed_migrator{schema_v1_steps()};
-    if (seed_migrator.bring_up_to_date(database) != 1) {
+    const Migrator seed_migrator{schema_steps()};
+    if (seed_migrator.bring_up_to_date(database) != 2) {
         throw std::runtime_error("seed: migration failed");
     }
     aki::persistence::Repositories repos{std::move(database)};
@@ -371,8 +371,8 @@ TEST_CASE("Full-chain combo: archive, image message, receive merge, "
     auto database = Database::open(
         (std::filesystem::path{root} / "db" / "aki.db3").string());
     {
-        const Migrator combo_migrator{schema_v1_steps()};
-        REQUIRE(combo_migrator.bring_up_to_date(database) == 1);
+        const Migrator combo_migrator{schema_steps()};
+        REQUIRE(combo_migrator.bring_up_to_date(database) == 2);
     }
     auto db = std::make_shared<aki::persistence::DatabaseWorkerControl>(
         std::make_unique<aki::persistence::Repositories>(std::move(database)),

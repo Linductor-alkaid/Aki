@@ -24,6 +24,6 @@ target_link_libraries(aki_host PUBLIC
 # M5-07：系统主题查询的注册表读取（Windows；平台条件编译单元
 # lifecycle/system_theme.cpp，公开面仅 std/aki 类型，RULE-10）。
 if(WIN32)
-    target_link_libraries(aki_host PRIVATE advapi32)
+    target_link_libraries(aki_host PRIVATE advapi32 ws2_32)
 endif()
 aki_apply_warnings(aki_host PRIVATE)

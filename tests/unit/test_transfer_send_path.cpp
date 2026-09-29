@@ -82,7 +82,7 @@ using aki::persistence::Migrator;
 using aki::persistence::TransferIoControl;
 using aki::persistence::TransferIoRunnable;
 using aki::persistence::TransferIoWorkerOptions;
-using aki::persistence::schema_v1_steps;
+using aki::persistence::schema_steps;
 using aki::persistence::sha256_hex;
 using aki::transfer::FileMetadata;
 using aki::transfer::TransferId;
@@ -842,8 +842,8 @@ TEST_CASE("Send archive completes through the DB terminal job group and "
     // 传输子集——镜像 main.cpp 装配）。
     auto database = Database::open(
         (std::filesystem::path{root} / "aki.db3").string());
-    const Migrator migrator{schema_v1_steps()};
-    REQUIRE(migrator.bring_up_to_date(database) == 1);
+    const Migrator migrator{schema_steps()};
+    REQUIRE(migrator.bring_up_to_date(database) == 2);
     auto db = std::make_shared<aki::persistence::DatabaseWorkerControl>(
         std::make_unique<aki::persistence::Repositories>(std::move(database)),
         aki::persistence::DatabaseWorkerOptions{});
@@ -992,7 +992,7 @@ TEST_CASE("Send archive completes through the DB terminal job group and "
     // ---- 重启：重开 DB + 断言行与文件本体一致（验收：重启一致性）----
     auto reopened = Database::open(
         (std::filesystem::path{root} / "aki.db3").string());
-    const Migrator reopen_migrator{schema_v1_steps()};
+    const Migrator reopen_migrator{schema_steps()};
     REQUIRE(reopen_migrator.bring_up_to_date(reopened) == 0);
     // 写回位断言先行（prepare 于 Database 移交仓储前——Database move-only）。
     std::string stored_relative_path;

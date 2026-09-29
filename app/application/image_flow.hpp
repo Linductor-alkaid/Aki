@@ -119,4 +119,31 @@ enum class ImageSendFlowResult {
     return ImageSendFlowResult::Submitted;  // 消息经 hash 延续异步发出
 }
 
+// Ordinary files use the same hash-first transfer gate as images. The
+// envelope and persisted payload remain File, so chat history distinguishes
+// the two media kinds after restart.
+[[nodiscard]] inline ImageSendFlowResult send_file_message_with_hash(
+    TransferManager& transfers, MessageManager& messages,
+    const aki::device::DeviceId& to,
+    const aki::conversation::MessageId& message_id,
+    const aki::transfer::FileMetadata& file,
+    const aki::transfer::TransferId& transfer_id,
+    const std::filesystem::path& source_path) {
+    if (!transfers.start_transfer(to, transfer_id, file, source_path,
+            [&messages, &transfers, to, message_id, file, transfer_id](
+                std::string hash_hex) {
+                if (hash_hex.empty()) return;
+                auto with_hash = file;
+                with_hash.stored_sha256 = std::move(hash_hex);
+                if (!messages.send_file(to, message_id, with_hash, transfer_id)) {
+                    (void)transfers.cancel_transfer(transfer_id);
+                }
+            })) {
+        return messages.send_file(to, message_id, file, transfer_id, false)
+            ? ImageSendFlowResult::TransferAdmissionFailed
+            : ImageSendFlowResult::TransferAdmissionFailedRowLost;
+    }
+    return ImageSendFlowResult::Submitted;
+}
+
 }  // namespace aki::app

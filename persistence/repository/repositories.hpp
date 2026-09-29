@@ -41,6 +41,10 @@ public:
         std::size_t cache_capacity = 16);
 
     void upsert(const aki::device::DeviceIdentity& identity);
+    void set_display_name(const aki::device::DeviceId& device_id,
+        const std::string& name);
+    void set_remark(const aki::device::DeviceId& device_id,
+        const std::string& remark);
     [[nodiscard]] std::optional<aki::device::DeviceIdentity> find(
         const aki::device::DeviceId& device_id);
     [[nodiscard]] std::vector<aki::device::DeviceIdentity> load_all();

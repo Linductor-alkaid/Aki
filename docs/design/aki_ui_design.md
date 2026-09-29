@@ -164,12 +164,16 @@ Transfers / Settings。组件选型（`RISK-2026-002` 的盘点基线，M5 用 p
 | 左侧导航栏 | `rect` 点击面 + `text` 图标/标签组合（沿 `navbar` 的导航语义） | 64px 窄栏内图标和标签纵排；选中态用 primary 对比而非品牌填充；四图标按 §2.6 已登记的捆绑字体码点 |
 | 列表栏 | `scrollview` + `virtuallist` | 行高用 `ui-base` 节奏，悬停 `hover`/选中 `selected`（virtuallist 为固定行高模型——`rowHeight` 统一值，M5-01 实测确认；变高气泡列按第 5 节复审结论组合） |
 | 会话头部 | `text` + 徽标 | 元信息 `text-subtle`，路径/指纹 mono |
-| 消息气泡 | `card` + `text` 组合 | 一级容器 `rounded-xl`(12)，己方/对方区分靠 surface 层级 |
+| 消息气泡 | `card` + `text` 组合 | 一级容器 `rounded-xl`(12)，己方/对方区分靠 surface 层级；滚动视口内不设会裁切的阴影 |
 | 图片消息 | `image` + `dialog` | 预览弹窗属批准的 `rounded-xl` 例外 |
 | 文件卡片 | `card` + `progress` + `button` | 会话内与 Transfers 页复用同一组件 |
 | 输入区 | `input` + `button` | 主输入壳可用批准的 `rounded-2xl` 例外 |
 | 弹窗 / 右键菜单 / Toast | `dialog` / `contextmenu` / `toast` | 弹窗 `2xl`、菜单壳 `lg`、菜单项 `md`、Toast `2xl`+`shadow-lg` |
-| 设置页 | `segmented` / `switch` / `dropdown` | 主题三选（跟随系统/浅/深） |
+| 设置页 | `segmented` / `switch` / `dropdown` | 主题三选（跟随系统/浅/深），中文/英文切换 |
+
+设备页左栏列出对端名称（有备注时优先显示本机备注），右栏只显示选中设备
+的身份、连接和信任详情及备注编辑。会话列表的名称与时间、聊天头部名称与
+连接信息须分配独立空间；可变长中文标签按剩余宽度约束。
 
 缺口处理不变：优先原语组合；确需上游能力或贡献时按工程规范以决策记录确认，
 不得修改 pinned 依赖。

@@ -24,12 +24,17 @@
 #include "transfer/transfer/transfer_types.hpp"
 
 #include <cstdint>
+#include <string>
 #include <utility>
 
 namespace aki::persistence {
 
 // UpsertDevice → DEVICE 整行 upsert（presence 列不存在，天然不持久化）。
 [[nodiscard]] DbJob make_device_upsert_job(aki::device::DeviceIdentity device);
+[[nodiscard]] DbJob make_device_name_job(aki::device::DeviceId device,
+    std::string name);
+[[nodiscard]] DbJob make_device_remark_job(aki::device::DeviceId device,
+    std::string remark);
 
 // UpsertConversation → CONVERSATION 整行 upsert。
 [[nodiscard]] DbJob make_conversation_upsert_job(

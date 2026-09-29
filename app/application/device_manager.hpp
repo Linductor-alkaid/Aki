@@ -7,10 +7,8 @@
 // 本地状态机）。配对一次性结果（on_pairing_completed）→ PairingCompletedWork
 // → UpsertDevice 信任转移（成功 Pending→Trusted、失败保留 Pending 可重试，
 // 状态经 Store 快照可见，
-// 不新增 AppEvent 主路径类型）。M5-11 双认证修订：会话授权
-//（DeviceConnectedWork）对 Pending 行是「对端已通过本机口令校验」的 wire
-// 证据，自动推进 Pending→Trusted（advance_pending_trust）——口令由任一侧
-// 输入一次即可，另一侧设备行随之就绪。事件与命令经单飞有界排空泵串行处理
+// 不新增 AppEvent 主路径类型）。DEC-019 修订：会话连接不改变本机信任，
+// 只有本机输入对端口令后收到成功配对结果才推进 Trusted。事件与命令经单飞有界排空泵串行处理
 // （EXEC-02：业务不在 Adapter 回调线程），9 类事件中的 DeviceConnected /
 // DeviceDisconnected 由本 Manager 发布主路径事件（设计第 8.3 节路由表）。
 //
@@ -43,6 +41,17 @@ struct DeviceDiscoveredWork {
 struct DevicePresenceWork {
     aki::device::DeviceId device;
     aki::device::PresenceState presence = aki::device::PresenceState::Offline;
+};
+
+struct DeviceNamedWork {
+    aki::device::DeviceId device;
+    aki::device::PublicKey public_key;
+    std::string name;
+};
+
+struct SetDeviceRemarkWork {
+    aki::device::DeviceId device;
+    std::string remark;
 };
 
 struct DeviceConnectedWork {
@@ -101,6 +110,8 @@ struct PairingCompletedWork {
 
 using DeviceManagerWork = std::variant<DeviceDiscoveredWork,
     DevicePresenceWork,
+    DeviceNamedWork,
+    SetDeviceRemarkWork,
     DeviceConnectedWork,
     DeviceDisconnectedWork,
     ConnectionPathChangedWork,
@@ -145,6 +156,18 @@ public:
 
     [[nodiscard]] bool enqueue_disconnected(aki::device::DeviceId device) {
         return pump_.enqueue(DeviceDisconnectedWork{std::move(device)});
+    }
+
+    [[nodiscard]] bool enqueue_name(aki::device::DeviceId device,
+        aki::device::PublicKey public_key, std::string name) {
+        return pump_.enqueue(DeviceNamedWork{std::move(device),
+            std::move(public_key), std::move(name)});
+    }
+
+    [[nodiscard]] bool set_remark(aki::device::DeviceId device,
+        std::string remark) {
+        return pump_.enqueue(SetDeviceRemarkWork{
+            std::move(device), std::move(remark)});
     }
 
     [[nodiscard]] bool enqueue_connection_path_changed(aki::device::DeviceId device,
@@ -214,6 +237,22 @@ private:
         if (work.device.identity.id.empty()) {
             return false;  // 有界校验（EXEC-02 延续到 Manager 入口）。
         }
+        // Discovery is a whole-row upsert; keep local-only remarks and a
+        // previously verified name when the transport advertises no name.
+        executor::comm::Snapshot<AppState> snapshot;
+        if (state_owner_.try_load_snapshot(snapshot)) {
+            for (const auto& existing : snapshot.value.devices.devices) {
+                if (existing.id == work.device.identity.id) {
+                    work.device.identity.remark = existing.remark;
+                    if (!existing.display_name.empty()
+                        && existing.display_name
+                            != existing.id.value.substr(0, 16)) {
+                        work.device.identity.display_name = existing.display_name;
+                    }
+                    break;
+                }
+            }
+        }
         const bool posted = post_event(DeviceDiscoveredEvent{work.device});
         const bool applied = state_owner_.submit_update(UpsertDevice{work.device.identity});
         return posted && applied;
@@ -228,18 +267,27 @@ private:
             work.presence});
     }
 
+    bool handle(DeviceNamedWork& work) {
+        if (work.device.empty() || work.name.empty() || work.name.size() > 64
+            || work.public_key.bytes.size() != 32) return false;
+        return state_owner_.submit_update(SetDeviceName{
+            std::move(work.device), std::move(work.public_key),
+            std::move(work.name)});
+    }
+
+    bool handle(SetDeviceRemarkWork& work) {
+        if (work.device.empty() || work.remark.size() > 128) return false;
+        return state_owner_.submit_update(SetDeviceRemark{
+            std::move(work.device), std::move(work.remark)});
+    }
+
     bool handle(DeviceConnectedWork& work) {
         if (work.device.empty()) {
             return false;
         }
-        // 双认证统一推进点（M5-11 修订，设计 §8.1）：会话授权 = 对端已出示
-        // 本机签发的 trust grant（对端口令已在本机校验通过，本机口令只有
-        // 本机用户知道——出示即本机同意的 wire 证据）。Pending 行据此推进
-        // Trusted：无论口令由哪一侧输入（本机输对端口令 = 方式一；对端在其
-        // 设备输本机口令确认本机发出的连接请求 = 方式二），一次输入即双侧
-        // 就绪，无需第二台设备重复输入。只走合法边（Pending→Trusted）；
-        // Unknown 行不动（推进归 PairingReadyWork），终态行由 owner 拒绝。
-        (void)advance_pending_trust(work.device);
+        // 连接状态与本机信任决策分离。对端持有本机签发的 grant 仅证明
+        // 对端获得本机服务访问权，不代表本机已输入对端口令并信任对端。
+        // 本机 Pending→Trusted 只由本机 pair_peer 成功回报推进。
         // 主路径事件只由 DM 投递一次（设计第 8.3 节路由表）；初连即提交
         // 映射路径（DEC-015，删除宿主侧 Lan 硬编码）。
         const bool posted = post_event(DeviceConnectedEvent{work.device, work.path});
@@ -355,33 +403,6 @@ private:
         return false;  // 未知设备：可见拒绝。
     }
 
-    // 会话授权触发的信任推进（M5-11 双认证）：Pending → Trusted。快照无行
-    // 或非 Pending（Unknown/终态）时不动作（返回 false，不静默改状态）；
-    // owner 信任状态机复验转移合法性（RULE-08/09）。快照相对在途易失更新
-    // 的滞后窗口无害：随后提交的 SetPresence/SetDeviceConnectionPath 按序
-    // 覆盖易失字段，信任态以本快照读值为准。
-    [[nodiscard]] bool advance_pending_trust(const aki::device::DeviceId& device) {
-        executor::comm::Snapshot<AppState> snapshot;
-        int attempts = 0;
-        while (!state_owner_.try_load_snapshot(snapshot) && attempts < 64) {
-            ++attempts;
-        }
-        if (attempts >= 64) {
-            return false;
-        }
-        for (const auto& existing : snapshot.value.devices.devices) {
-            if (existing.id != device) {
-                continue;
-            }
-            if (existing.trust_state != aki::device::TrustState::Pending) {
-                return false;
-            }
-            return apply_trust_transition(device,
-                aki::device::TrustState::Trusted);
-        }
-        return false;
-    }
-
     bool handle(ConfirmPairingWork& work) {
         // wire 面先行（pair_peer 提交 admission）；信任状态推进经配对结果
         // 事件（on_pairing_completed → PairingCompletedWork）异步落地——
@@ -423,6 +444,13 @@ private:
         }
         const bool cleared = state_owner_.submit_update(
             SetPairingFailure{work.device, false});
+        executor::comm::Snapshot<AppState> snapshot;
+        if (state_owner_.try_load_snapshot(snapshot)) {
+            for (const auto& existing : snapshot.value.devices.devices)
+                if (existing.id == work.device
+                    && existing.trust_state == aki::device::TrustState::Trusted)
+                    return cleared;  // grant refreshed, trust state already terminal.
+        }
         return cleared && apply_trust_transition(work.device,
             aki::device::TrustState::Trusted);
     }

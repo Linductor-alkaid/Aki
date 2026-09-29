@@ -37,6 +37,9 @@ namespace aki::conversation::codec {
 // ---- 冻结常量（DEC-006 冻结常量扩展 / DEC-010 ①）----
 
 inline constexpr std::string_view kAkiImageEnvelopeType = "aki.image";
+// Ordinary files share the bounded metadata wire schema with images while
+// retaining a distinct envelope type and domain payload.
+inline constexpr std::string_view kAkiFileEnvelopeType = "aki.file";
 inline constexpr std::uint32_t kAkiImagePayloadSchemaVersion = 1;
 
 inline constexpr std::size_t kImageNameMaxBytes = 512;

@@ -73,10 +73,10 @@ int main() {
     // 就是该副本的版本（RULE-10：本 TU 不直接接触 sqlite3.h）。
     aki::persistence::Database db =
         aki::persistence::Database::open(":memory:");
-    if (aki::persistence::Migrator(aki::persistence::schema_v1_steps())
+    if (aki::persistence::Migrator(aki::persistence::schema_steps())
             .bring_up_to_date(db)
-        != 1) {
-        std::puts("[FAIL] v1 migration should apply exactly one step");
+        != 2) {
+        std::puts("[FAIL] current schema migration should apply two steps");
         return 1;
     }
     aki::persistence::Statement version =

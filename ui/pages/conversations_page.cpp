@@ -1,3 +1,4 @@
+#include "ui/i18n.hpp"
 // Conversations 页实现（语义见 conversations_page.hpp；aki_ui_design §3 状态
 // 视觉语义 / §4 组件映射：会话列表行=scrollview 行、消息气泡=card+text 组合
 //（M5-01 复核：virtuallist 固定行高模型，变高气泡列按卡片自绘 + scrollview
@@ -70,7 +71,9 @@ const aki::conversation::Conversation* conversation_of(
 std::string remote_label(const MainWindowModel& model,
     const aki::device::DeviceId& remote) {
     const models::DeviceView* device = device_view_of(model, remote);
-    return device != nullptr ? device->display_name : remote.value;
+    return device != nullptr
+        ? (device->remark.empty() ? device->display_name : device->remark)
+        : remote.value;
 }
 
 std::string path_label(aki::device::ConnectionPath path) {
@@ -135,6 +138,7 @@ core::Color delivery_color(const AkiSemanticPalette& semantic,
 }
 
 std::string time_label(std::chrono::system_clock::time_point timestamp) {
+    if (timestamp.time_since_epoch().count() == 0) return "--:--";
     const std::time_t time = std::chrono::system_clock::to_time_t(timestamp);
     std::tm local{};
 #if defined(_MSC_VER)
@@ -206,22 +210,22 @@ void send_draft(MainWindowModel& model, const aki::device::DeviceId& to) {
         return;
     }
     if (model.conversations.draft.empty()) {
-        set_feedback(model, "message is empty");
+        set_feedback(model, tr("message is empty"));
         return;
     }
     const auto message_id = model.actions->new_message_id();
     const bool admitted = model.actions->send_text(
         to, message_id, model.conversations.draft);
-    set_feedback(model, admitted ? "text send admitted (" + message_id.value
+    set_feedback(model, admitted ? tr("text send admitted (") + message_id.value
                                        + ")"
-                                 : "text send rejected (inbox admission)");
+                                 : tr("text send rejected (inbox admission)"));
     if (admitted) {
         model.conversations.draft.clear();
     }
 }
 
-void pick_and_send_image(MainWindowModel& model,
-    const aki::device::DeviceId& to) {
+void pick_and_send_media(MainWindowModel& model,
+    const aki::device::DeviceId& to, bool image) {
     if (!model.actions) {
         return;
     }
@@ -229,20 +233,25 @@ void pick_and_send_image(MainWindowModel& model,
     // 模态调用发生在主线程事件处理上下文（非 compose 树构建内）——compose
     // 三不纪律不破；模态期间帧更新暂停为本机 MVP 形态（如实登记）。
     eui::platform::FileDialogOptions options;
-    options.prompt = "Select an image to send";
-    options.filterName = "Images";
-    options.allowedExtensions = {"png", "jpg", "jpeg", "gif", "webp", "bmp"};
+    options.prompt = image ? tr("Select an image to send")
+                           : tr("Select a file to send");
+    if (image) {
+        options.filterName = tr("Images");
+        options.allowedExtensions = {"png", "jpg", "jpeg", "gif", "webp", "bmp"};
+    }
     const eui::platform::FileDialogResult picked =
         eui::platform::openFileDialog(options);
     if (!picked.selected()) {
-        set_feedback(model, "image pick cancelled");
+        set_feedback(model, picked.status == eui::platform::FileDialogStatus::Failed
+            ? tr("file picker failed: ") + picked.error
+            : tr("file pick cancelled"));
         return;
     }
     const std::filesystem::path source{picked.paths.front()};
     std::error_code error;
     const auto bytes = std::filesystem::file_size(source, error);
     if (error) {
-        set_feedback(model, "image stat failed: " + error.message());
+        set_feedback(model, tr("file stat failed: ") + error.message());
         return;
     }
     const std::string extension = source.extension().string();
@@ -267,11 +276,12 @@ void pick_and_send_image(MainWindowModel& model,
     // hash-first 发起链路（DEC-010/DEC-011）：先传输准入，消息等
     // stored_sha256 完成后经 TM 泵延续发出；false = 传输准入失败（消息行
     // 经编排补偿记 Failed）。
-    const bool admitted = model.actions->send_image(
-        to, message_id, media, transfer_id, source);
+    const bool admitted = image
+        ? model.actions->send_image(to, message_id, media, transfer_id, source)
+        : model.actions->send_file(to, message_id, media, transfer_id, source);
     set_feedback(model,
-        admitted ? "image transfer admitted (" + transfer_id.value + ")"
-                 : "image transfer admission failed");
+        admitted ? tr("transfer admitted (") + transfer_id.value + ")"
+                 : tr("transfer admission failed"));
     if (admitted
         && model.conversations.outbound_sources.size()
             < kOutboundSourceBudget) {
@@ -337,7 +347,7 @@ void compose_file_card(eui::Ui& ui, const ThemeColorTokens& tokens,
             if (message.type == aki::conversation::MessageType::Image) {
                 components::button(ui, id + ".preview")
                     .size(96.0f, metrics.control.menuItem)
-                    .text("Preview")
+                    .text(tr("Preview"))
                     .fontSize(metrics.typography.hint)
                     .theme(tokens, false)
                     .radius(metrics.radius.small)
@@ -401,6 +411,7 @@ void compose_message_row(eui::Ui& ui, const ThemeColorTokens& tokens,
                 .color(message.outbound ? semantic.accent : semantic.card)
                 .radius(metrics.radius.card)
                 .border(message.outbound ? 0.0f : 1.0f, tokens.border)
+                .shadow(core::Shadow{})
                 .content([&] {
                     ui.column(id + ".stack")
                         .width(inner_width)
@@ -510,8 +521,8 @@ void compose_preview_dialog(eui::Ui& ui, const ThemeColorTokens& tokens,
                 // 接收侧/无本地路径：显式不可用态（接收文件落接收根，Store
                 // 不持本地路径——如实呈现，不以占位图冒充）。
                 components::text(ui, "aki.chat.preview.unavailable")
-                    .text("local preview not available (received files land"
-                          " in the receive root; metadata only)")
+                    .text(tr("local preview not available (received files land"
+                             " in the receive root; metadata only)"))
                     .position(metrics.spacing.section, body_y)
                     .fontSize(metrics.typography.caption)
                     .wrap(true)
@@ -535,7 +546,7 @@ void compose_preview_dialog(eui::Ui& ui, const ThemeColorTokens& tokens,
                 .position(dialog_w - metrics.spacing.section - 120.0f,
                     dialog_h - metrics.control.field - metrics.spacing.section)
                 .size(120.0f, metrics.control.field)
-                .text("Close")
+                .text(tr("Close"))
                 .fontSize(metrics.typography.caption)
                 .theme(tokens, true)
                 .textColor(semantic.primary_foreground)
@@ -558,12 +569,12 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
     const auto& metrics = tokens.metrics;
     ConversationsPageModel& chat = model.conversations;
 
-    // 新建会话入口（Trusted 设备选择面；§3 Trusted → 可进入会话）。
+    // 聊天依赖已连接会话；Heyaki trust 单独承载更高权限能力。
     components::button(ui, "aki.convs.new")
         .position(x + metrics.spacing.content, y)
         .size(width - metrics.spacing.content * 2.0f,
             metrics.control.menuItem)
-        .text("New chat")
+        .text(tr("New chat"))
         .fontSize(metrics.typography.hint)
         .theme(tokens, false)
         .radius(metrics.radius.small)
@@ -576,7 +587,7 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
 
     if (model.state_view.conversations.empty()) {
         components::text(ui, "aki.convs.empty")
-            .text("No chats yet.\nPair a device first.")
+        .text(tr("No chats yet.\nConnect a device first."))
             .position(x + metrics.spacing.content, list_y)
             .fontSize(metrics.typography.caption)
             .wrap(true)
@@ -630,7 +641,8 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
                                 .fontSize(row_metrics.typography.body)
                                 .fontWeight(600)
                                 .maxWidth(row_width
-                                    - row_metrics.spacing.content * 2.0f)
+                                    - row_metrics.spacing.content * 2.0f
+                                    - 56.0f)
                                 .color(entry_disabled
                                         ? semantic.text_subtlest
                                         : tokens.text)
@@ -648,8 +660,8 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
                                 .build();
                             components::text(list_ui, row_id + ".preview")
                                 .text(conversation.last_message.has_value
-                                        ? conversation.last_message.preview
-                                        : "no messages yet")
+                                        ? tr_preview(conversation.last_message.preview)
+                                        : tr("no messages yet"))
                                 .position(row_metrics.spacing.content,
                                     row_metrics.spacing.compact
                                         + row_metrics.typography.body + 2.0f)
@@ -681,8 +693,7 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
                                 != aki::conversation::ConversationState::
                                     Active) {
                                 components::text(list_ui, row_id + ".state")
-                                    .text(std::string(
-                                        aki::conversation::to_string(
+                                    .text(tr(aki::conversation::to_string(
                                             conversation.state)))
                                     .position(row_metrics.spacing.content,
                                         kConvRowHeight
@@ -699,7 +710,7 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
                             }
                             if (entry_disabled && remote != nullptr) {
                                 components::text(list_ui, row_id + ".trust")
-                                    .text(trust_label(remote->trust_state))
+                                    .text(tr(trust_label(remote->trust_state)))
                                     .position(row_width
                                             - row_metrics.spacing.content
                                             - 70.0f,
@@ -719,7 +730,7 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
                                 components::button(list_ui, row_id + ".hit")
                                     .position(0.0f, 0.0f)
                                     .size(row_width, kConvRowHeight)
-                                    .text("")
+                                    .text(tr(""))
                                     .theme(tokens, false)
                                     .radius(row_metrics.radius.small)
                                     .colors(transparent,
@@ -746,7 +757,7 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
             .build();
     }
 
-    // ---- 新建会话弹窗（Trusted 设备选择；页面持有 open 态）----
+    // ---- 新建会话弹窗（已连接设备选择；页面持有 open 态）----
     if (!chat.new_chat_open) {
         return;
     }
@@ -761,14 +772,14 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
             [&model](bool open) { model.conversations.new_chat_open = open; })
         .content([&] {
             components::text(ui, "aki.convs.new_dialog.title")
-                .text("New conversation")
+                .text(tr("New conversation"))
                 .position(metrics.spacing.section, metrics.spacing.section)
                 .fontSize(metrics.typography.subtitle)
                 .fontWeight(600)
                 .color(tokens.text)
                 .build();
             components::text(ui, "aki.convs.new_dialog.hint")
-                .text("choose a trusted device")
+                .text(tr("choose a connected device"))
                 .position(metrics.spacing.section,
                     metrics.spacing.section + metrics.typography.subtitle
                         + metrics.spacing.tiny)
@@ -778,19 +789,22 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
             float device_y = metrics.spacing.section
                 + metrics.typography.subtitle + metrics.typography.caption
                 + metrics.spacing.content;
-            int trusted = 0;
+            int connected = 0;
             for (const models::DeviceView& device :
                 model.state_view.devices) {
-                if (device.trust_state != aki::device::TrustState::Trusted) {
+                if (device.id == model.state_view.local_device
+                    || device.connection_path
+                        == aki::device::ConnectionPath::Unknown) {
                     continue;
                 }
-                ++trusted;
+                ++connected;
                 components::button(ui,
                     "aki.convs.new_dialog.device." + device.id.value)
                     .position(metrics.spacing.section, device_y)
                     .size(420.0f - metrics.spacing.section * 2.0f,
                         metrics.control.menuItem)
-                    .text(device.display_name)
+                    .text(device.remark.empty() ? device.display_name
+                                                : device.remark)
                     .fontSize(metrics.typography.caption)
                     .theme(tokens, false)
                     .radius(metrics.radius.small)
@@ -799,8 +813,8 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
                             model.actions->ensure_conversation(
                                 model.state_view.local_device, remote);
                         set_feedback(model,
-                            admitted ? "conversation request admitted"
-                                     : "conversation request rejected");
+                            admitted ? tr("conversation request admitted")
+                                     : tr("conversation request rejected"));
                         model.conversations.new_chat_open = false;
                     })
                     .build();
@@ -812,10 +826,9 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
                             // 归 M5-06+ 通用列表形态）。
                 }
             }
-            if (trusted == 0) {
+            if (connected == 0) {
                 components::text(ui, "aki.convs.new_dialog.none")
-                    .text("no trusted devices yet — confirm pairing on the"
-                          " Devices page first")
+                    .text(tr("No connected devices yet. Connect one on the Devices page."))
                     .position(metrics.spacing.section, device_y)
                     .fontSize(metrics.typography.caption)
                     .wrap(true)
@@ -827,7 +840,7 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
                 .position(420.0f - metrics.spacing.section - 120.0f,
                     340.0f - metrics.control.field - metrics.spacing.section)
                 .size(120.0f, metrics.control.field)
-                .text("Cancel")
+                .text(tr("Cancel"))
                 .fontSize(metrics.typography.caption)
                 .theme(tokens, false)
                 .radius(metrics.radius.small)
@@ -853,7 +866,7 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
 
     if (conversation == nullptr) {
         components::text(ui, "aki.chat.empty")
-            .text("Choose a chat from the list to begin.")
+            .text(tr("Choose a chat from the list to begin."))
             .position(x + metrics.spacing.section, y + height * 0.5f)
             .fontSize(metrics.typography.body)
             .wrap(true)
@@ -869,6 +882,7 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
         .position(x + metrics.spacing.section, y + metrics.spacing.section)
         .fontSize(metrics.typography.subtitle)
         .fontWeight(600)
+        .maxWidth(width - metrics.spacing.section * 2.0f - 88.0f)
         .color(tokens.text)
         .build();
     const models::DeviceView* remote =
@@ -881,14 +895,16 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
             aki::conversation::to_string(conversation->state));
     components::text(ui, "aki.chat.meta")
         .text(chat_meta)
-        .position(x + metrics.spacing.section + 280.0f,
-            y + metrics.spacing.section + 3.0f)
+        .position(x + metrics.spacing.section,
+            y + metrics.spacing.section + metrics.typography.subtitle
+                + metrics.spacing.tiny)
         .fontSize(metrics.typography.caption)
+        .maxWidth(width - metrics.spacing.section * 2.0f)
         .color(semantic.text_subtle)
         .build();
     if (remote != nullptr) {
         components::text(ui, "aki.chat.trust")
-            .text(trust_label(remote->trust_state))
+            .text(tr(trust_label(remote->trust_state)))
             .position(x + width - metrics.spacing.section - 80.0f,
                 y + metrics.spacing.section + 3.0f)
             .fontSize(metrics.typography.caption)
@@ -897,6 +913,7 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
     }
 
     float history_y = y + metrics.spacing.section + metrics.typography.subtitle
+        + metrics.spacing.tiny + metrics.typography.caption
         + metrics.spacing.compact;
     // §3：Conversation Disconnected → 会话头部 warning 横条「连接断开，等待
     // 恢复」（恢复不新建会话）。
@@ -924,7 +941,7 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
     const float input_y =
         y + height - metrics.control.field - metrics.spacing.section;
     const float button_w = metrics.control.field;
-    const float buttons_row = button_w * 2.0f + metrics.spacing.compact * 2.0f;
+    const float buttons_row = button_w * 3.0f + metrics.spacing.compact * 3.0f;
     const float input_width =
         std::max(width - metrics.spacing.section * 2.0f - buttons_row
                 - metrics.spacing.compact,
@@ -934,7 +951,7 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
         .size(input_width, metrics.control.field)
         .theme(tokens)
         .value(chat.draft)
-        .placeholder("Message...")
+        .placeholder(tr("Message..."))
         .multiline(false)
         .onChange(
             [&model](const std::string& value) {
@@ -950,22 +967,35 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
                     + metrics.spacing.compact,
                 input_y)
             .size(button_w, metrics.control.field)
-            .text("")
+            .text(tr(""))
             .icon(eui::utf8(0xF03E))  // §2.6 图片
             .fontSize(metrics.typography.body)
             .theme(tokens, false)
             .radius(metrics.radius.small)
             .onClick([&model, to = conversation->remote_device] {
-                pick_and_send_image(model, to);
+                pick_and_send_media(model, to, true);
+            })
+            .build();
+        components::button(ui, "aki.chat.file")
+            .position(x + metrics.spacing.section + input_width
+                    + metrics.spacing.compact * 2.0f + button_w,
+                input_y)
+            .size(button_w, metrics.control.field)
+            .text(tr(""))
+            .icon(eui::utf8(0xF0C6))
+            .fontSize(metrics.typography.body)
+            .theme(tokens, false)
+            .radius(metrics.radius.small)
+            .onClick([&model, to = conversation->remote_device] {
+                pick_and_send_media(model, to, false);
             })
             .build();
         components::button(ui, "aki.chat.send")
             .position(x + metrics.spacing.section + input_width
-                    + metrics.spacing.compact + button_w
-                    + metrics.spacing.compact,
+                    + metrics.spacing.compact * 3.0f + button_w * 2.0f,
                 input_y)
             .size(button_w, metrics.control.field)
-            .text("")
+            .text(tr(""))
             .icon(eui::utf8(0xF1D8))  // §2.6 发送
             .fontSize(metrics.typography.body)
             .theme(tokens, true)

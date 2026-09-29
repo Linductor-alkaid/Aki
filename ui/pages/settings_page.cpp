@@ -1,3 +1,4 @@
+#include "ui/i18n.hpp"
 // Settings 页实现（语义见 settings_page.hpp；aki_ui_design §4 Settings 页
 // 组件映射：segmented 三选 + 只读设置项；§9.1 compose 三不纪律——
 // FollowSystem 的系统主题查询仅在点击回调上下文（有界注册表读取）执行，
@@ -42,18 +43,47 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
     const float segmented_width = std::min(420.0f, content_width);
 
     components::text(ui, "aki.settings.title")
-        .text("Settings")
+        .text(tr("Settings"))
         .position(pad_x, y + metrics.spacing.section)
         .fontSize(metrics.typography.title)
         .fontWeight(600)
         .color(tokens.text)
         .build();
+    const float language_x = pad_x + content_width - 186.0f;
+    components::text(ui, "aki.settings.language.label")
+        .text(tr("Language"))
+        .position(language_x, y + metrics.spacing.compact)
+        .fontSize(metrics.typography.caption)
+        .color(semantic.text_subtle).build();
+    for (int index = 0; index < 2; ++index) {
+        const auto selected = index == 0 ? Language::Chinese
+                                         : Language::English;
+        components::button(ui, "aki.settings.language." + std::to_string(index))
+            .position(language_x + index * 94.0f,
+                y + metrics.spacing.compact + metrics.typography.caption
+                    + metrics.spacing.tiny)
+            .size(88.0f, metrics.control.menuItem)
+            .text(tr(index == 0 ? "Chinese" : "English"))
+            .theme(tokens, model.language == selected)
+            .textColor(model.language == selected
+                ? semantic.primary_foreground : tokens.text)
+            .onClick([&model, selected] {
+                if (model.actions && model.actions->set_language
+                    && model.actions->set_language(
+                        selected == Language::Chinese ? "zh-CN" : "en")) {
+                    model.language = selected;
+                    set_language(selected);
+                } else {
+                    model.last_action_feedback = tr("Language save failed");
+                }
+            }).build();
+    }
 
     // ---- 主题三选（§4 segmented 映射；页面持有 UI 态）----
     float row_y = y + metrics.spacing.section + metrics.typography.title
         + metrics.spacing.section;
     components::text(ui, "aki.settings.theme.label")
-        .text("Theme")
+        .text(tr("Theme"))
         .position(pad_x, row_y)
         .fontSize(metrics.typography.body)
         .fontWeight(600)
@@ -66,8 +96,8 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
         .content([&] {
             components::segmented(ui, "aki.settings.theme.segmented")
                 .size(segmented_width, metrics.control.field)
-                .items({kThemeSegments[0], kThemeSegments[1],
-                    kThemeSegments[2]})
+                .items({tr(kThemeSegments[0]), tr(kThemeSegments[1]),
+                    tr(kThemeSegments[2])})
                 .selected(static_cast<int>(model.theme_setting))
                 .fontSize(metrics.typography.caption)
                 // 上游 SegmentedStyle 深色档的选中文字与 indicator 同为
@@ -106,7 +136,7 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
         .build();
     row_y += metrics.control.field + metrics.spacing.compact;
     components::text(ui, "aki.settings.theme.disclosure")
-        .text("Follow system uses Windows settings.\nOther systems use Light.\nTheme choice lasts this session.")
+        .text(tr("Follow system uses Windows settings.\nOther systems use Light.\nTheme choice lasts this session."))
         .position(pad_x, row_y)
         .fontSize(metrics.typography.caption)
         .wrap(true)
@@ -117,7 +147,7 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
     // ---- 最小设置项（只读展示）----
     row_y += metrics.typography.caption * 3.0f + metrics.spacing.section;
     components::text(ui, "aki.settings.data.label")
-        .text("Data directory")
+        .text(tr("Data directory"))
         .position(pad_x, row_y)
         .fontSize(metrics.typography.body)
         .fontWeight(600)
@@ -126,7 +156,7 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
     row_y += metrics.typography.body + metrics.spacing.tiny;
     components::text(ui, "aki.settings.data.value")
         .text(model.data_directory.empty()
-                ? "(data directory unavailable)"
+                ? tr("(data directory unavailable)")
                 : model.data_directory)
         .position(pad_x, row_y)
         .fontSize(metrics.typography.caption)
@@ -138,7 +168,7 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
 
     row_y += metrics.typography.caption * 3.0f + metrics.spacing.content;
     components::text(ui, "aki.settings.identity.label")
-        .text("Local device")
+        .text(tr("Local device"))
         .position(pad_x, row_y)
         .fontSize(metrics.typography.body)
         .fontWeight(600)
@@ -147,7 +177,7 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
     row_y += metrics.typography.body + metrics.spacing.tiny;
     components::text(ui, "aki.settings.identity.value")
         .text(model.state_view.local_device.empty()
-                ? "(identity unavailable)"
+                ? tr("(identity unavailable)")
                 : model.state_view.local_device.value)
         .position(pad_x, row_y)
         .fontSize(metrics.typography.caption)
@@ -162,7 +192,7 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
         components::button(ui, "aki.settings.password.open")
             .position(pad_x, row_y)
             .size(std::min(260.0f, content_width), metrics.control.field)
-            .text("Change local pairing password")
+            .text(tr("Change local pairing password"))
             .theme(tokens, false)
             .onClick([&model] {
                 model.password_feedback.clear();
@@ -178,13 +208,13 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
             .size(dialog_width, 330.0f)
             .content([&] {
                 components::text(ui, "aki.settings.password.title")
-                    .text("Change local pairing password")
+                    .text(tr("Change local pairing password"))
                     .position(metrics.spacing.section,
                         metrics.spacing.section)
                     .fontSize(metrics.typography.subtitle).fontWeight(600)
                     .color(tokens.text).build();
                 components::text(ui, "aki.settings.password.help")
-                    .text("Other devices will need the new password when pairing.")
+                    .text(tr("Other devices will need the new password when pairing."))
                     .position(metrics.spacing.section, 63.0f)
                     .fontSize(metrics.typography.caption)
                     .color(semantic.text_subtle).build();
@@ -192,15 +222,15 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
                     model.local_password_draft, tokens,
                     metrics.spacing.section, 105.0f,
                     dialog_width - metrics.spacing.section * 2.0f,
-                    metrics.control.field, "New password (8+ characters)");
+                    metrics.control.field, tr("New password (8+ characters)"));
                 secureInput(ui, "aki.settings.password.confirm",
                     model.local_password_confirm, tokens,
                     metrics.spacing.section, 165.0f,
                     dialog_width - metrics.spacing.section * 2.0f,
-                    metrics.control.field, "Confirm new password");
+                    metrics.control.field, tr("Confirm new password"));
                 if (!model.password_feedback.empty()) {
                     components::text(ui, "aki.settings.password.error")
-                        .text(model.password_feedback)
+                        .text(tr(model.password_feedback))
                         .position(metrics.spacing.section, 219.0f)
                         .fontSize(metrics.typography.caption)
                         .color(semantic.destructive).build();
@@ -208,7 +238,7 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
                 components::button(ui, "aki.settings.password.save")
                     .position(metrics.spacing.section, 260.0f)
                     .size(160.0f, metrics.control.field)
-                    .text("Save password")
+                    .text(tr("Save password"))
                     .theme(tokens, true)
                     .textColor(semantic.primary_foreground)
                     .onClick([&model] {
@@ -231,14 +261,14 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
                         clear_secret(model.local_password_confirm);
                         model.password_feedback = saved ? "" : error;
                         if (saved) model.last_action_feedback =
-                            "Local pairing password updated";
+                            tr("Local pairing password updated");
                         if (saved) model.password_change_open = false;
                     }).build();
                 components::button(ui, "aki.settings.password.cancel")
                     .position(dialog_width - metrics.spacing.section - 140.0f,
                         260.0f)
                     .size(140.0f, metrics.control.field)
-                    .text("Cancel").theme(tokens, false)
+                    .text(tr("Cancel")).theme(tokens, false)
                     .onClick([&model] {
                         model.password_change_open = false;
                         model.password_feedback.clear();

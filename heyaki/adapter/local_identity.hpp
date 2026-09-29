@@ -26,6 +26,7 @@
 #include <heyaki/password.hpp>
 #include <heyaki/profile_store.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -113,6 +114,7 @@ public:
             }
             profile.set_pairing_password(initial_password);
         }
+        profile.converge_pairing_policy();
         profile.refresh_identity();
         return profile;
     }
@@ -202,7 +204,7 @@ private:
                 + std::string(error->safe_detail()));
         }
         hh::PairingPolicy pairing;
-        pairing.default_scopes = {"message.send"};  // DEC-006 冻结配对 scope
+        pairing.default_scopes = {"message.send", "file.push:inbox"};
         hh::LocalProfileInitialization initialization{
             .application_id = kAkiApplicationId,
             .password_verifier = std::move(*verifier.value_if()),
@@ -216,6 +218,26 @@ private:
                 std::string("local identity: initialize_local failed: ")
                 + std::string(hh::error_code_name(error->code())) + ": "
                 + std::string(error->safe_detail()));
+        }
+    }
+
+    void converge_pairing_policy() {
+        auto current = store_.pairing_policy();
+        if (!current) {
+            throw std::runtime_error("local identity: pairing policy unreadable");
+        }
+        auto policy = *current.value_if();
+        if (std::find(policy.default_scopes.begin(), policy.default_scopes.end(),
+                "file.push:inbox") != policy.default_scopes.end()) {
+            return;
+        }
+        if (policy.generation == std::numeric_limits<std::uint64_t>::max()) {
+            throw std::runtime_error("local identity: pairing policy generation exhausted");
+        }
+        policy.default_scopes.push_back("file.push:inbox");
+        ++policy.generation;
+        if (!store_.set_pairing_policy(policy)) {
+            throw std::runtime_error("local identity: pairing policy update failed");
         }
     }
 

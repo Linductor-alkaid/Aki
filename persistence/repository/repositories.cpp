@@ -207,14 +207,15 @@ void DeviceRepository::upsert(const DeviceIdentity& identity) {
     // presence 为易失状态，不持久化（设计第 11.1 节 ①；恢复后默认 Offline）。
     run_cached(cache_,
         "INSERT INTO device (device_id, display_name, device_class, os_name,"
-        " public_key, capabilities, trust_state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+        " public_key, capabilities, trust_state, remark) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
         " ON CONFLICT (device_id) DO UPDATE SET"
         " display_name = excluded.display_name,"
         " device_class = excluded.device_class,"
         " os_name = excluded.os_name,"
         " public_key = excluded.public_key,"
         " capabilities = excluded.capabilities,"
-        " trust_state = excluded.trust_state;",
+        " trust_state = excluded.trust_state,"
+        " remark = excluded.remark;",
         [&](Statement& statement) {
             statement.bind(1, identity.id.value);
             statement.bind(2, identity.display_name);
@@ -223,6 +224,33 @@ void DeviceRepository::upsert(const DeviceIdentity& identity) {
             bind_blob_or_null(statement, 5, identity.public_key);
             statement.bind(6, capabilities_to_int(identity.capabilities));
             statement.bind(7, to_int(identity.trust_state));
+            statement.bind(8, identity.remark);
+            (void)statement.step();
+        });
+}
+
+void DeviceRepository::set_display_name(const DeviceId& device_id,
+    const std::string& name) {
+    run_cached(cache_,
+        "UPDATE device SET display_name = ?2 WHERE device_id = ?1 RETURNING device_id;",
+        [&](Statement& statement) {
+            statement.bind(1, device_id.value);
+            statement.bind(2, name);
+            if (!statement.step())
+                throw std::runtime_error("device name target not found");
+            (void)statement.step();
+        });
+}
+
+void DeviceRepository::set_remark(const DeviceId& device_id,
+    const std::string& remark) {
+    run_cached(cache_,
+        "UPDATE device SET remark = ?2 WHERE device_id = ?1 RETURNING device_id;",
+        [&](Statement& statement) {
+            statement.bind(1, device_id.value);
+            statement.bind(2, remark);
+            if (!statement.step())
+                throw std::runtime_error("device remark target not found");
             (void)statement.step();
         });
 }
@@ -231,7 +259,7 @@ std::optional<DeviceIdentity> DeviceRepository::find(
     const DeviceId& device_id) {
     return run_cached(cache_,
         "SELECT device_id, display_name, device_class, os_name, public_key,"
-        " capabilities, trust_state FROM device WHERE device_id = ?1;",
+        " capabilities, trust_state, remark FROM device WHERE device_id = ?1;",
         [&](Statement& statement) -> std::optional<DeviceIdentity> {
             statement.bind(1, device_id.value);
             if (!statement.step()) {
@@ -248,6 +276,7 @@ std::optional<DeviceIdentity> DeviceRepository::find(
         static_cast<int>(statement.column_int64(5)));
     identity.trust_state = trust_state_from(
         static_cast<int>(statement.column_int64(6)));
+    identity.remark = statement.column_text(7);
     identity.presence = PresenceState::Offline;  // 易失状态：恢复后默认离线
             return identity;
         });
@@ -256,7 +285,7 @@ std::optional<DeviceIdentity> DeviceRepository::find(
 std::vector<DeviceIdentity> DeviceRepository::load_all() {
     return run_cached(cache_,
         "SELECT device_id, display_name, device_class, os_name, public_key,"
-        " capabilities, trust_state FROM device ORDER BY rowid;",
+        " capabilities, trust_state, remark FROM device ORDER BY rowid;",
         [&](Statement& statement) {
     std::vector<DeviceIdentity> result;
     while (statement.step()) {
@@ -271,6 +300,7 @@ std::vector<DeviceIdentity> DeviceRepository::load_all() {
             static_cast<int>(statement.column_int64(5)));
         identity.trust_state = trust_state_from(
             static_cast<int>(statement.column_int64(6)));
+        identity.remark = statement.column_text(7);
         identity.presence = PresenceState::Offline;
         result.push_back(std::move(identity));
     }

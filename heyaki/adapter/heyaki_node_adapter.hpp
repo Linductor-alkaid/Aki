@@ -44,6 +44,7 @@
 
 #include <atomic>
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -227,6 +228,9 @@ public:
         message.id = id;
         message.sender = peer;
         message.receiver = local_id_;
+        // Heyaki's envelope has no wall-clock field. Stamp arrival at this
+        // boundary so both the live view and persisted history have a time.
+        message.timestamp = std::chrono::system_clock::now();
         message.state = aki::conversation::DeliveryState::Sent;  // MM 强制 Delivered
         if (type == "aki.text") {
             message.type = aki::conversation::MessageType::Text;
@@ -242,6 +246,17 @@ public:
             }
             message.type = aki::conversation::MessageType::Image;
             message.payload = std::move(*decoded.value);
+        } else if (type == aki::conversation::codec::kAkiFileEnvelopeType) {
+            const auto* data = reinterpret_cast<const std::byte*>(payload.data());
+            const auto decoded = aki::conversation::codec::decode_image_payload(
+                std::span<const std::byte>(data, payload.size()));
+            if (!decoded.value) {
+                inbound_rejections_.fetch_add(1);
+                return;
+            }
+            message.type = aki::conversation::MessageType::File;
+            message.payload = aki::conversation::FilePayload{
+                decoded.value->media, decoded.value->transfer_id};
         } else {
             inbound_rejections_.fetch_add(1);  // 未知信封 type：同上可见拒绝
             return;
@@ -304,6 +319,15 @@ public:
             return false;  // 有界校验（EXEC-02 出站面）
         }
         return options_.session->send_image(to, message_id, file, transfer_id);
+    }
+
+    [[nodiscard]] bool send_file_message(const aki::device::DeviceId& to,
+        const aki::conversation::MessageId& message_id,
+        const aki::transfer::FileMetadata& file,
+        const aki::transfer::TransferId& transfer_id) override {
+        if (to.empty() || message_id.empty() || file.name.empty()
+            || transfer_id.empty()) return false;
+        return options_.session->send_file(to, message_id, file, transfer_id);
     }
 
     // 传输出站（M4-04 接线，DEC-006 映射 7/§7.1⑤）：start_file_transfer →

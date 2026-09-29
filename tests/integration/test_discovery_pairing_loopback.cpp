@@ -196,8 +196,8 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
     // :memory: 库无内建 schema——迁移必须显式先行（同 test_database_worker
     // 的启动纪律），否则每个 device upsert 作业以 no-such-table 失败。
     auto database = aki::persistence::Database::open(":memory:");
-    REQUIRE(aki::persistence::Migrator(aki::persistence::schema_v1_steps())
-                .bring_up_to_date(database) == 1);
+    REQUIRE(aki::persistence::Migrator(aki::persistence::schema_steps())
+                .bring_up_to_date(database) == 2);
     auto control = std::make_shared<aki::persistence::DatabaseWorkerControl>(
         std::make_unique<aki::persistence::Repositories>(
             std::move(database)));

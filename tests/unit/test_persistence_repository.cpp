@@ -61,9 +61,9 @@ using aki::transfer::TransferState;
 
 Database migrated_memory_db() {
     Database db = Database::open(":memory:");
-    REQUIRE(aki::persistence::schema_v1_steps().size() == 1);
-    REQUIRE(Migrator(aki::persistence::schema_v1_steps()).bring_up_to_date(db)
-        == 1);
+    REQUIRE(aki::persistence::schema_steps().size() == 2);
+    REQUIRE(Migrator(aki::persistence::schema_steps()).bring_up_to_date(db)
+        == 2);
     return db;
 }
 
@@ -158,12 +158,18 @@ TEST_CASE("Device repository round-trips identity without presence",
     aki::persistence::DeviceRepository repository(db);
 
     DeviceIdentity identity = make_device("alpha-01", TrustState::Trusted);
+    identity.remark = "我的服务器";
     repository.upsert(identity);
 
     const auto loaded = repository.find(DeviceId{"alpha-01"});
     REQUIRE(loaded.has_value());
     REQUIRE(loaded->id == DeviceId{"alpha-01"});
     REQUIRE(loaded->display_name == "device-alpha-01");
+    REQUIRE(loaded->remark == "我的服务器");
+    repository.set_display_name(DeviceId{"alpha-01"}, "另一名称");
+    repository.set_remark(DeviceId{"alpha-01"}, "新备注");
+    REQUIRE(repository.find(DeviceId{"alpha-01"})->display_name == "另一名称");
+    REQUIRE(repository.find(DeviceId{"alpha-01"})->remark == "新备注");
     REQUIRE(loaded->device_class == DeviceClass::Server);
     REQUIRE(loaded->os_name == "Linux");
     REQUIRE(loaded->public_key.bytes == identity.public_key.bytes);
@@ -177,6 +183,7 @@ TEST_CASE("Device repository round-trips identity without presence",
     repository.upsert(trusted);
     const auto reloaded = repository.find(DeviceId{"alpha-01"});
     REQUIRE(reloaded->trust_state == TrustState::Revoked);
+    REQUIRE(reloaded->remark.empty());
 
     // 全部 trust 值逐一遍历（CHECK 集合与枚举一一对应）。
     for (const int raw : {0, 1, 2, 3, 4}) {

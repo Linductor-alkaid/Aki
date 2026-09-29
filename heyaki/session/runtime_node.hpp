@@ -506,6 +506,26 @@ public:
         return sent.has_value();
     }
 
+    [[nodiscard]] bool send_file(const aki::device::DeviceId& peer,
+        const aki::conversation::MessageId& message_id,
+        const aki::transfer::FileMetadata& media,
+        const aki::transfer::TransferId& transfer_id) {
+        auto key = endpoint_key_of(peer);
+        auto wire_id = to_heyaki_message_id(message_id);
+        if (!key || !wire_id || !to_heyaki_transfer_id(transfer_id)) return false;
+        auto payload = aki::conversation::codec::encode_image_payload(
+            aki::conversation::ImagePayload{media, transfer_id});
+        if (!payload) return false;
+        ::heyaki::MessageEnvelope envelope;
+        envelope.message_id = *wire_id;
+        envelope.type = std::string(aki::conversation::codec::kAkiFileEnvelopeType);
+        envelope.schema_version =
+            aki::conversation::codec::kAkiImagePayloadSchemaVersion;
+        envelope.delivery_mode = ::heyaki::MessageDeliveryMode::peer_acked;
+        envelope.payload = std::move(*payload);
+        return node_.send_message(*key, std::move(envelope)).has_value();
+    }
+
     // 入站与投递回报（DEC-006 映射 4；Node 上下文回调，消费方有界处理 +
     // 投递，EXEC-02）：
     //   inbound：协议层已去重 + ACK 应答后的信封——payload 为信封原始字节，

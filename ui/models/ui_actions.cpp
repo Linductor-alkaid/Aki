@@ -35,6 +35,16 @@ UiActions make_ui_actions(aki::app::DeviceManager& devices,
                 to, message_id, media, transfer_id, std::move(source_path))
                 == aki::app::ImageSendFlowResult::Submitted;
         };
+    actions.send_file =
+        [&transfers, &messages](aki::device::DeviceId to,
+            aki::conversation::MessageId message_id,
+            aki::transfer::FileMetadata media,
+            aki::transfer::TransferId transfer_id,
+            std::filesystem::path source_path) {
+            return aki::app::send_file_message_with_hash(transfers, messages,
+                to, message_id, media, transfer_id, source_path)
+                == aki::app::ImageSendFlowResult::Submitted;
+        };
     actions.start_transfer =
         [&transfers](aki::device::DeviceId to,
             aki::transfer::TransferId transfer_id,
@@ -69,6 +79,10 @@ UiActions make_ui_actions(aki::app::DeviceManager& devices,
     };
     actions.revoke_device = [&devices](aki::device::DeviceId device) {
         return devices.revoke_device(std::move(device));
+    };
+    actions.set_device_remark = [&devices](aki::device::DeviceId device,
+        std::string remark) {
+        return devices.set_remark(std::move(device), std::move(remark));
     };
     actions.ensure_conversation =
         [&conversations](aki::device::DeviceId local, aki::device::DeviceId remote) {

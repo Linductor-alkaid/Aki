@@ -2,11 +2,19 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-09-28
+> 更新日期：2026-09-29
 > 设计依据：[Aki 设计方案](../design/aki_design.md)
 > 协作约束：[AGENTS.md](../../AGENTS.md)、[项目管理与工程规范](../project/project-standards.md)
 
 ## 当前状态
+
+- 2026-09-29：用户同网双端实测后立项 `M5-12`~`M5-17`（入站时间、媒体
+  发送、输入法与布局、连接/单向信任、发现时名称与备注、中文默认与语言设置）。
+  [DEC-019](../decisions/DEC-019-directional-trust-and-chat-scopes.md) 冻结
+  连接与方向性 grant，[DEC-020](../decisions/DEC-020-signed-lan-device-name.md)
+  冻结签名局域网名称报文。代码与本机验证进行中；双设备同版复测、Windows
+  输入法和 CI 结果取得前均保持 In Progress，证据登记于
+  [M5 记录](m5-eui-neo-ui-mvp.md)。
 
 - 2026-09-28：`M5-11` 本机配对口令与主动设备认证进入 In Progress：
   [DEC-018](../decisions/DEC-018-user-pairing-password.md) 替代旧固定口令决策；

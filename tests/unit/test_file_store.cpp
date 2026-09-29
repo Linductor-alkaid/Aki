@@ -229,9 +229,9 @@ TEST_CASE("Completed job group renames with SHA-256 and writes back",
     const auto root = temp_root("complete");
     FileStore store(root);
     Database db = Database::open(":memory:");
-    REQUIRE(aki::persistence::Migrator(aki::persistence::schema_v1_steps())
+    REQUIRE(aki::persistence::Migrator(aki::persistence::schema_steps())
                 .bring_up_to_date(db)
-        == 1);
+        == 2);
     auto control = std::make_shared<DatabaseWorkerControl>(
         std::make_unique<Repositories>(std::move(db)));
     auto& transfers = control->repositories().transfers;
@@ -290,9 +290,9 @@ TEST_CASE("Completed job group fails explicitly when the part is missing",
     const auto root = temp_root("missing");
     FileStore store(root);
     Database db = Database::open(":memory:");
-    REQUIRE(aki::persistence::Migrator(aki::persistence::schema_v1_steps())
+    REQUIRE(aki::persistence::Migrator(aki::persistence::schema_steps())
                 .bring_up_to_date(db)
-        == 1);
+        == 2);
     auto control = std::make_shared<DatabaseWorkerControl>(
         std::make_unique<Repositories>(std::move(db)));
     auto& transfers = control->repositories().transfers;
@@ -332,9 +332,9 @@ TEST_CASE("Failed and Cancelled terminal states discard the part idempotently",
     store.write_part("t-cancel", bytes_of("partial"));
 
     Database db = Database::open(":memory:");
-    REQUIRE(aki::persistence::Migrator(aki::persistence::schema_v1_steps())
+    REQUIRE(aki::persistence::Migrator(aki::persistence::schema_steps())
                 .bring_up_to_date(db)
-        == 1);
+        == 2);
     auto control = std::make_shared<DatabaseWorkerControl>(
         std::make_unique<Repositories>(std::move(db)));
     auto& transfers = control->repositories().transfers;
@@ -371,9 +371,9 @@ TEST_CASE("Startup sweep removes orphans and keeps active transfers",
     }
 
     Database db = Database::open(":memory:");
-    REQUIRE(aki::persistence::Migrator(aki::persistence::schema_v1_steps())
+    REQUIRE(aki::persistence::Migrator(aki::persistence::schema_steps())
                 .bring_up_to_date(db)
-        == 1);
+        == 2);
     aki::persistence::TransferRepository transfers(db);
     Transfer active = make_transfer_for("t-active", "a.bin");
     active.state = TransferState::Transferring;   // 活动 → .part 保留
