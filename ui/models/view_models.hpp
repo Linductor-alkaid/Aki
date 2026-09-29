@@ -10,7 +10,7 @@
 // 派生语义：
 //   - 设备列表 = DeviceStore × presence/逐设备连接路径（DEC-015：路径为
 //     DeviceStore 级易失集合，按设备键 join；无条目即 Unknown）× 信任操作
-//     可用性（§4 固定转移边：仅 Pending 可确认/拒绝、仅 Trusted 可撤销）；
+//     可用性（§4：Pending 可输入对端密码；本机持有或签发 grant 可撤销）；
 //   - 会话列表 = ConversationStore × 最后消息摘要（MessageStore 按会话端点
 //     归属过滤后取最新一条；DEC-009 ② 的会话解析约定：消息属于其
 //     {sender, receiver} == {local, remote} 的会话）；
@@ -39,7 +39,7 @@ struct DeviceView {
     aki::device::DeviceClass device_class = aki::device::DeviceClass::Other;
     aki::device::TrustState trust_state = aki::device::TrustState::Unknown;
     aki::device::PresenceState presence = aki::device::PresenceState::Offline;
-    // 对端→本机方向信任（DEC-021 四态）：本机已签发有效 grant。
+    // Heyaki issued grant：本机签发给对端，表示本机信任对端。
     bool inbound_trust = false;
     // 逐设备连接路径（DEC-015：DeviceStore.connection_paths 按设备键 join；
     // 无条目 = Unknown——M5-04 退役全局单值摘要）。
@@ -72,26 +72,30 @@ struct DeviceView {
             && fingerprint_available;
     }
     [[nodiscard]] bool can_reject() const noexcept {
-        return trust_state == aki::device::TrustState::Pending;
+        return trust_state == aki::device::TrustState::Pending
+            && !inbound_trust;
     }
     [[nodiscard]] bool can_revoke() const noexcept {
-        return trust_state == aki::device::TrustState::Trusted;
+        return trust_state == aki::device::TrustState::Trusted
+            || inbound_trust;
     }
 
-    // 四态信任显示键（DEC-021；配对流程中间态优先于稳态四态）：
-    // Unknown/Trusted 稳态按（本机→对端, 对端→本机）二元组显示
+    // 四态信任显示键（DEC-022）：已有 grant 的事实优先于配对流程状态，
+    // 避免本机已签发授权后仍只显示 Pending。
+    // Trusted = 本机持有对端 grant，表示对端信任本机；
+    // inbound_trust = 本机签发 grant，表示本机信任对端。
     // 互信/单向/互不信任；Pending/Rejected/Revoked 显示流程状态词。
     [[nodiscard]] const char* trust_relation_key() const noexcept {
+        if (trust_state == aki::device::TrustState::Trusted) {
+            return inbound_trust ? "Mutual trust" : "Trusted this device";
+        }
+        if (inbound_trust) return "Trusted by this device";
         switch (trust_state) {
             case aki::device::TrustState::Pending: return "Pending";
             case aki::device::TrustState::Rejected: return "Rejected";
             case aki::device::TrustState::Revoked: return "Revoked";
             case aki::device::TrustState::Unknown:
-                return inbound_trust ? "Trusted this device"
-                                     : "No trust established";
-            case aki::device::TrustState::Trusted:
-                return inbound_trust ? "Mutual trust"
-                                     : "Trusted by this device";
+            case aki::device::TrustState::Trusted: break;
         }
         return "No trust established";
     }

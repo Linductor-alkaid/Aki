@@ -8,6 +8,12 @@
 
 ## 当前状态
 
+- 2026-09-29：`M5-25`~`M5-28` 处理“在线先建链、授权方向、设置弹窗中心”
+  的第三轮验证，依据 [DEC-022](../decisions/DEC-022-link-before-trust-and-grant-direction.md)。
+  无密码“对方点允许”受 pinned Heyaki API 阻塞，记录为
+  [HEY-20260929-001](../heyaki_feedback/ledger.md)；其余项先行实现并交付
+  同版 deb 供双端实测，验收前保持 In Progress。
+
 - 2026-09-29：用户同网双端实测后立项 `M5-12`~`M5-17`（入站时间、媒体
   发送、输入法与布局、连接/单向信任、发现时名称与备注、中文默认与语言设置）。
   [DEC-019](../decisions/DEC-019-directional-trust-and-chat-scopes.md) 冻结

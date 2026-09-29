@@ -139,6 +139,50 @@ TEST_CASE("Peer session diff reports a newly restricted pairing session once",
     CHECK(ready.size() == 1);
 }
 
+TEST_CASE("Restricted link connects before authorization and stays connected",
+    "[unit][peer_sessions][connection_trust]") {
+    using aki::device::ConnectionPath;
+    using aki::heyaki::NodeSession;
+    int connected = 0;
+    int disconnected = 0;
+    int authorized = 0;
+    std::vector<ConnectionPath> paths;
+    aki::heyaki::PeerSessionEvents events;
+    events.on_connected = [&](const aki::device::DeviceId&,
+        ConnectionPath path) {
+        ++connected;
+        paths.push_back(path);
+    };
+    events.on_disconnected = [&](const aki::device::DeviceId&) {
+        ++disconnected;
+    };
+    events.on_authorized = [&](const aki::device::DeviceId&) {
+        ++authorized;
+    };
+    events.on_connection_path_changed = [&](const aki::device::DeviceId&,
+        ConnectionPath path) { paths.push_back(path); };
+
+    auto handshake = std::vector<NodeSession::PeerSessionView>{
+        make_view("peer-a", 2, 0, 0)};
+    auto restricted = std::vector<NodeSession::PeerSessionView>{
+        make_view("peer-a", 3, 0, 0)};
+    aki::heyaki::diff_peer_sessions(handshake, restricted, events);
+    REQUIRE(connected == 1);
+    REQUIRE(paths == std::vector<ConnectionPath>{ConnectionPath::Lan});
+    REQUIRE(authorized == 0);
+
+    auto authenticated = std::vector<NodeSession::PeerSessionView>{
+        make_view("peer-a", 4, 1, 0)};
+    aki::heyaki::diff_peer_sessions(restricted, authenticated, events);
+    REQUIRE(connected == 1);
+    REQUIRE(disconnected == 0);
+    REQUIRE(authorized == 1);
+    REQUIRE(paths.size() == 1);
+
+    aki::heyaki::diff_peer_sessions(authenticated, {}, events);
+    REQUIRE(disconnected == 1);
+}
+
 TEST_CASE("Peer session diff ignores non-authenticated churn",
     "[unit][peer_sessions]") {
     using aki::heyaki::NodeSession;

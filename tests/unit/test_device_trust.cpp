@@ -406,6 +406,37 @@ TEST_CASE("Connected work calibrates inbound trust from the adapter query (DEC-0
     REQUIRE(report.fully_stopped());
 }
 
+TEST_CASE("Authorization calibrates the grant issuer without a second connect",
+    "[unit][device_trust][dec022]") {
+    TrustStack stack;
+    REQUIRE(stack.state.submit_update(
+        UpsertDevice{make_device("alpha", aki::device::TrustState::Pending)}));
+    stack.settle();
+    REQUIRE_FALSE(stack.inbound_of("alpha"));
+
+    // Peer entered this device's password: this device issued the grant.
+    REQUIRE(stack.devices.enqueue_trust_calibration(
+        aki::device::DeviceId{"alpha"}));
+    stack.settle();
+    REQUIRE(stack.inbound_of("alpha"));
+    REQUIRE(stack.trust_of("alpha") == aki::device::TrustState::Pending);
+    REQUIRE(stack.path_of("alpha")
+        == aki::device::ConnectionPath::Unknown);
+
+    // The issuer may revoke its own grant while the reverse direction is
+    // still Pending. This must not invent a Pending -> Revoked transition.
+    REQUIRE(stack.devices.revoke_device(aki::device::DeviceId{"alpha"}));
+    stack.settle();
+    REQUIRE_FALSE(stack.inbound_of("alpha"));
+    REQUIRE(stack.trust_of("alpha") == aki::device::TrustState::Pending);
+
+    const auto report = stack.owner.shutdown([&stack] {
+        (void)stack.devices.flush(2s);
+        stack.state.close();
+    });
+    REQUIRE(report.fully_stopped());
+}
+
 // ---- DEC-021：撤销收回本机签发授权，对向信任随之归零。
 
 TEST_CASE("Revoke clears inbound trust along the local Revoked edge (DEC-021)",

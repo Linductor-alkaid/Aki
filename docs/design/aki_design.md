@@ -141,19 +141,23 @@ Trusted -> Revoked
 [DEC-021](../decisions/DEC-021-bidirectional-trust-and-repair.md)）。
 新增状态或转移必须先更新本节，不允许代码私有状态。
 
-`Trusted` 表示本机输入对端口令、取得对端签发的 Heyaki grant；对端输入
-本机口令建立的连接不自动推进本机信任状态。`ConnectionPath` 和 presence
-独立表达通信连接；**会话入口与发送路径按连接事实门控，不按信任状态裁剪**
+`Trusted` 表示本机输入对端口令、取得对端签发的 Heyaki grant，因此对端
+已信任本机；对端输入本机口令建立的连接不自动推进本机 `TrustState`。
+`ConnectionPath` 和 presence 独立表达通信连接；受限会话已建链但消息发送
+仍须 Heyaki 授权。**会话入口按连接事实门控，不按信任状态裁剪**
 ——被拒绝/撤销的设备在已连接或会话活跃时仍可打开会话通信
 （[DEC-019](../decisions/DEC-019-directional-trust-and-chat-scopes.md)、
 [DEC-021](../decisions/DEC-021-bidirectional-trust-and-repair.md)）。
 终端、屏幕控制、机器人控制等能力需要继续经过
 capability 和 permission 判断，避免把设备信任直接等同于控制权限。
 
-信任是双向语义（DEC-021）：`TrustState` 描述本机→对端方向；设备记录的
-`inbound_trust` 描述对端→本机方向（本机已向对端签发有效 Heyaki grant，
-以本机 TrustStore 查询为权威，启动、会话连接、撤销时校准）。UI 按二元
+信任是双向语义（[DEC-022](../decisions/DEC-022-link-before-trust-and-grant-direction.md)）：
+`TrustState::Trusted` 描述对端→本机签发 grant，即对端信任本机；设备记录的
+`inbound_trust` 是历史字段名，描述本机→对端签发有效 Heyaki grant，即本机
+信任对端（本机 TrustStore 查询为权威，启动、会话授权、撤销时校准）。UI 按二元
 组合显示互相信任 / 本机已信任对方 / 对方已信任本机 / 未建立信任四态。
+已有 grant 的方向事实优先于 `Pending` 流程词显示；仅本机签发 grant 的
+设备也可撤销该授权，清除 `inbound_trust` 而不伪造信任状态机转移。
 已信任会话被裁定落入 restricted（双向有效 grant 均不存在）时，本机信任
 降级 `Trusted -> Revoked` 并归零对向信任——这是对端撤销/授权过期的可
 观测信号（协议无撤销推送，限制见 DEC-021）。断线重连循环预算耗尽后由
@@ -661,27 +665,24 @@ LAN 广播/监听随 Node 常驻）。因此 `start_discovery` / `stop_discovery
   表不跨会话累积扫描残留；其重新在网时经发现观察管道以真实存活状态再次
   进入。`Pending`（在途确认）与 `Rejected` / `Revoked`（用户决策终态）原值
   恢复。
-- 主动建链与设备认证（M5-11，DEC-006 映射 3 落地）：宿主组合根装配即常驻
+- 主动建链与设备认证（M5-11；DEC-022 修订连接事实）：宿主组合根装配即常驻
   启动 peer_sessions 观察管道（`PeerSessionPipeline`，200ms diff）——主动
   `begin_pairing`（UI Connect，仅对 presence Online 的非本机行渲染）经
   `connect_lan` 建链、会话进入 `pairing_restricted` → `on_pairing_ready` →
-  `Unknown -> Pending`；被动入站连接同样受限会话驱动 `Pending` 行（无需先
-  扫描）。认证有两种等价方式（DEC-018；heyaki 语义：口令由口令持有方输入、
-  由对端以其 verifier 校验并签发 grant，会话在两侧同时授权——一次输入即
-  双向可用）：
-  - 方式一「输入对端口令」：本机在确认弹窗输入对方设备口令 →
+  `Unknown -> Pending`，同时发出已连接事件并显示 LAN/Relay 信令路径；
+  `pairing_restricted -> authenticated` 只校准授权方向与数据路径，不重复
+  发出连接事件。被动入站连接同样受限会话驱动 `Pending` 行（无需先
+  扫描）。当前 pinned Heyaki 只提供输入**对端口令**的认证方式：
+  - 本机在密码验证弹窗输入对方设备口令 →
     `confirm_pairing` → `pair_peer` → 对端校验并签发 grant → 本机行经
     `on_pairing_completed` → `Trusted`；
-  - 方式二「对方确认连接请求」：对方在其设备行点击确认并输入本机口令 →
-    同一 wire 机制反向完成；
-  - 两侧统一推进点：会话授权（`on_device_connected`）对 `Pending` 行是
-    「对端已通过本机口令校验」的 wire 证据，DM 自动推进
-    `Pending -> Trusted`（`advance_pending_trust`）——口令由任一侧输入
-    一次即可，另一侧设备行随之就绪，无需第二台设备重复输入。`Unknown`
-    行不自动推进（入口归 `PairingReadyWork`），终态行由 owner 状态机拒绝；
-    错误口令会话被拒（`pairing_denied`），不会进入授权态。grant 单侧持有
-    时重连由持有方发起（断线双方各自的重连循环竞争，持有方建链成功后对端
-    会话随之授权）。
+  - 对方在其设备行输入本机口令，是反向配对，表示本机已信任对方；
+    不是“对方点允许，无需密码”。后者所需 Heyaki 接口见
+    [HEY-20260929-001](../heyaki_feedback/ledger.md)，当前不可验收；
+  - 本机 `on_pairing_completed(success)` 才推进本机 `Pending -> Trusted`，
+    表示对端已信任本机；对端输入本机口令只校准本机 `inbound_trust`，
+    表示本机已信任对端。错误口令保持 Pending 并可重试。单向 grant 足以
+    使 Heyaki 会话授权，但消息与文件发送仍按实际 scope 判定。
 - 邀请链接与手动输入：M3 分期（范围与补做条件见里程碑范围条款）；接入时经
   同一 `on_device_discovered` 入口以对应 `DiscoveryMethod` 合成，触发语义与
   本节一致。

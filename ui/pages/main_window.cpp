@@ -90,7 +90,8 @@ std::string device_class_label(aki::device::DeviceClass device_class) {
 }
 
 core::Color trust_color(const AkiSemanticPalette& semantic,
-    aki::device::TrustState trust_state) {
+    aki::device::TrustState trust_state, bool inbound_trust) {
+    if (inbound_trust) return semantic.success;
     using aki::device::TrustState;
     switch (trust_state) {
     case TrustState::Pending: return semantic.warning;      // §3 warning
@@ -449,6 +450,9 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 // 行 connect_lan 无目录端点必然被拒，不渲染无效按钮。
                 const bool connectable = device.can_begin()
                     && device.presence == aki::device::PresenceState::Online
+                    && (device.connection_path
+                            == aki::device::ConnectionPath::Unknown
+                        || device.can_rebegin())
                     && device.id != model.state_view.local_device;
                 const std::string row_id =
                     "aki.devices.row." + device.id.value;
@@ -529,7 +533,8 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                             : row_y + row_height - metrics.spacing.compact
                                 - metrics.typography.caption)
                     .fontSize(metrics.typography.caption)
-                    .color(trust_color(semantic, device.trust_state))
+                    .color(trust_color(semantic, device.trust_state,
+                        device.inbound_trust))
                     .build();
                 // 指纹列（mono；缺公钥显示显式不可用态——不以 id 冒充）。
                 const std::string fingerprint = device.fingerprint_available
@@ -564,8 +569,8 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                             : semantic.destructive)
                     .build();
 
-                // 信任操作按钮（可用性按 §4 转移边派生：仅 Pending 可确认/
-                // 拒绝、仅 Trusted 可撤销）。确认走弹窗（指纹核对）。
+                // 信任操作按钮：Pending 可验证对端密码；本机持有或签发
+                // grant 可撤销。密码操作走指纹核对弹窗。
                 const float action_button_width = compact_rows
                     ? (row_width - metrics.spacing.compact * 3.0f) * 0.5f
                     : 132.0f;
@@ -602,7 +607,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                         .position(button_x, button_y)
                         .size(action_button_width, metrics.control.menuItem)
                         .text(tr(device.can_renew() ? "Renew file access"
-                                                    : "Confirm"))
+                                                    : "Verify password"))
                         .fontSize(metrics.typography.caption)
                         .theme(tokens, true)
                         .textColor(semantic.primary_foreground)
@@ -637,7 +642,8 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 }
                 if (device.can_revoke() && model.actions) {
                     components::button(ui, row_id + ".revoke")
-                        .position(button_x + (device.can_renew()
+                        .position(button_x + ((connectable
+                                || device.can_confirm() || device.can_renew())
                             ? action_button_width + metrics.spacing.compact
                             : 0.0f), button_y)
                         .size(action_button_width, metrics.control.menuItem)
@@ -788,8 +794,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                         .height(std::max(height, 600.0f))
                         .content([&] {
                             composeSettingsPage(content, tokens, semantic,
-                                0.0f, 0.0f, scroll_width, height,
-                                width, height, model);
+                                0.0f, 0.0f, scroll_width, height, model);
                         }).build();
                 }).build();
         } else {
@@ -836,7 +841,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 .size(dialog_width, 330.0f)
                 .content([&] {
                     components::text(ui, "aki.devices.confirm.title")
-                        .text(tr("Confirm pairing"))
+                        .text(tr("Verify with peer password"))
                         .position(metrics.spacing.section,
                             metrics.spacing.section)
                         .fontSize(metrics.typography.subtitle)
@@ -885,7 +890,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                             330.0f - metrics.control.field
                                 - metrics.spacing.section)
                         .size(180.0f, metrics.control.field)
-                        .text(tr("Confirm pairing"))
+                        .text(tr("Verify password"))
                         .fontSize(metrics.typography.caption)
                         .theme(tokens, true)
                         .textColor(semantic.primary_foreground)
@@ -936,6 +941,8 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 })
                 .build();
         }
+        composeSettingsPasswordDialog(ui, tokens, semantic,
+            width, height, model);
     }).build();
 }
 

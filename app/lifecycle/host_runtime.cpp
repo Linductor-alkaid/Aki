@@ -578,8 +578,7 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
                             };
                         ReconnectCoordinator::RecoveryCheck is_auth =
                             [node_for_reconnect, peer]() {
-                                return node_for_reconnect
-                                    ->session_authenticated(peer);
+                                return node_for_reconnect->session_linked(peer);
                             };
                         ReconnectCoordinator::PerPeerHooks hooks{
                             std::move(try_conn), std::move(is_auth)};
@@ -603,7 +602,11 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
                         }
                         (void)router_for_hooks->on_pairing_ready(peer,
                             std::move(key));
-                    }});
+                    },
+                .on_authorized = [&devices = *impl.devices](
+                    const DeviceId& peer) {
+                    (void)devices.enqueue_trust_calibration(peer);
+                }});
 
     // 首帧播种快照即刻可读（装配完成即恢复结果可见，§11.1 ② 播种断言先例
     // 由 console 驱动承载）。
@@ -669,7 +672,7 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
                             continue;
                         }
                         if (!node_for_sweep->endpoint_visible(device.id)
-                            || node_for_sweep->session_authenticated(
+                            || node_for_sweep->session_linked(
                                 device.id)) {
                             continue;
                         }
@@ -678,7 +681,7 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
                                 return node_for_sweep->connect_lan(id);
                             },
                             [node_for_sweep, id = device.id] {
-                                return node_for_sweep->session_authenticated(
+                                return node_for_sweep->session_linked(
                                     id);
                             }};
                         (void)reconnect_for_sweep->start(device.id, hooks);

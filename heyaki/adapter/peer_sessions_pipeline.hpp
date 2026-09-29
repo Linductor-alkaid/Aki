@@ -7,7 +7,7 @@
 //     `map_connection_path(data_path, signaling_route)` → aki ConnectionPath
 //     （DEC-006 映射 5：direct+lan→Lan、direct_srflx→P2p、turn_*→Relay、
 //     unknown→Unknown）；`diff_peer_sessions(prev, curr, events)` →
-//     authenticated↔closed 变化合成 connected/disconnected + 路径变化合成
+//     pairing_restricted/authenticated↔closed 变化合成 connected/disconnected + 路径变化合成
 //     connection_path_changed。
 //   - 管道层：executor timer 周期轮询 NodeSession::peer_session_views()，
 //     diff 后经事件回调投递（EXEC-02：消费方有界校验 + 投递）；TimerHandle
@@ -59,6 +59,22 @@ namespace aki::heyaki {
     }
 }
 
+[[nodiscard]] inline bool has_peer_link(
+    const NodeSession::PeerSessionView& view) noexcept {
+    return view.pairing_restricted || view.authenticated;
+}
+
+// Restricted sessions have a verified control channel but no data path yet.
+[[nodiscard]] inline aki::device::ConnectionPath session_connection_path(
+    const NodeSession::PeerSessionView& view) noexcept {
+    if (view.pairing_restricted) {
+        return view.signaling_route == 1
+            ? aki::device::ConnectionPath::Relay
+            : aki::device::ConnectionPath::Lan;
+    }
+    return map_connection_path(view.data_path, view.signaling_route);
+}
+
 // 会话事件（DEC-008 双 Manager 扇出的入口面：connected/disconnected 由
 // DM+CM 双扇出，connection_path 变化/初连路径落 DM 的逐设备 Store 字段
 // ——DEC-015）。
@@ -73,12 +89,13 @@ struct PeerSessionEvents {
         aki::device::ConnectionPath)>
         on_connection_path_changed;
     std::function<void(const aki::device::DeviceId&)> on_pairing_ready;
+    std::function<void(const aki::device::DeviceId&)> on_authorized;
 };
 
-// 纯函数 diff：prev → curr 的 authenticated↔closed 变化与路径变化。
-//   - 新 authenticated → on_connected（含映射路径）；
-//   - 原 authenticated 现缺失/closed/非 authenticated → on_disconnected；
-//   - 两侧均 authenticated 且 data_path/signaling_route 变化 →
+// 纯函数 diff：prev → curr 的已建链↔closed 变化与路径变化。
+//   - 新 restricted 或 authenticated → on_connected（含映射路径）；
+//   - 原已建链现缺失/closed/握手态 → on_disconnected；
+//   - 两侧均已建链且路径变化 →
 //     on_connection_path_changed（映射后比较，RULE-06：仅路径摘要，不新建
 //     会话记录——记录语义归应用层状态边界）。
 inline void diff_peer_sessions(
@@ -96,38 +113,42 @@ inline void diff_peer_sessions(
 
     for (const auto& [key, view] : curr_by_key) {
         const auto previous = prev_by_key.find(key);
-        const bool was_authenticated =
-            previous != prev_by_key.end() && previous->second.authenticated;
+        const bool was_linked =
+            previous != prev_by_key.end() && has_peer_link(previous->second);
         if (view.pairing_restricted
             && (previous == prev_by_key.end()
                 || !previous->second.pairing_restricted)
             && events.on_pairing_ready) {
             events.on_pairing_ready(view.device_id);
         }
-        if (view.authenticated && !was_authenticated) {
+        if (has_peer_link(view) && !was_linked) {
             if (events.on_connected) {
                 events.on_connected(view.device_id,
-                    map_connection_path(
-                        view.data_path, view.signaling_route));
+                    session_connection_path(view));
             }
         }
-        if (view.authenticated && was_authenticated) {
+        if (view.authenticated
+            && (previous == prev_by_key.end()
+                || !previous->second.authenticated)
+            && events.on_authorized) {
+            events.on_authorized(view.device_id);
+        }
+        if (has_peer_link(view) && was_linked) {
             const auto& old = previous->second;
-            if (old.data_path != view.data_path
-                || old.signaling_route != view.signaling_route) {
+            if (session_connection_path(old)
+                != session_connection_path(view)) {
                 if (events.on_connection_path_changed) {
                     events.on_connection_path_changed(view.device_id,
-                        map_connection_path(
-                            view.data_path, view.signaling_route));
+                        session_connection_path(view));
                 }
             }
         }
     }
     for (const auto& [key, view] : prev_by_key) {
         const auto current = curr_by_key.find(key);
-        const bool still_authenticated =
-            current != curr_by_key.end() && current->second.authenticated;
-        if (view.authenticated && !still_authenticated) {
+        const bool still_linked =
+            current != curr_by_key.end() && has_peer_link(current->second);
+        if (has_peer_link(view) && !still_linked) {
             if (events.on_disconnected) {
                 events.on_disconnected(view.device_id);
             }

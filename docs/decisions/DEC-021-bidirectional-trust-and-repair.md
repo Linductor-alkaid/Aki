@@ -1,6 +1,7 @@
 # DEC-021：双向信任四态、终态重建与连接事实通信
 
 > 状态：Accepted
+> 修订：连接事件与信任方向解释由 [DEC-022](DEC-022-link-before-trust-and-grant-direction.md) 更新
 > 日期：2026-09-29
 > 负责人：Linductor
 > 前置：[DEC-019](DEC-019-directional-trust-and-chat-scopes.md)、

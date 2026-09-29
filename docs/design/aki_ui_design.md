@@ -146,12 +146,18 @@ Tailwind 默认调色板取值（hex→归一化在实现时完成）：
 | Presence Online / Offline | 实心/空心圆点（`full`），Online `success`，Offline `subtlest`，旁注 Last seen |
 | Trust Unknown / Pending | `subtlest`/`warning` 徽标；Unknown 行提供连接入口，进入 pairing_restricted 后转 Pending；确认弹窗以 mono 展示公钥指纹（DeviceId 规范串）并以掩码输入对端设备的本机配对口令（DEC-018） |
 | Trust Trusted | `success` 徽标，可进入会话 |
-| Trust Rejected / Revoked | `destructive` 徽标，会话入口禁用 |
+| Trust Rejected / Revoked | `destructive` 徽标；会话入口按连接事实开放（DEC-021） |
 | Delivery Queued/Sending/Sent/Delivered/Failed | 时钟 / 单勾（中性）/ 双勾 `success` / `destructive` + 重试 |
 | Conversation Disconnected | 会话头部 `warning` 横条"连接断开，等待恢复"（恢复不新建会话） |
 | Transfer 各态 | 文件卡片 + 进度条：Transferring `brand`，Paused `warning`，Failed `destructive`+重试，Completed `success`，Cancelled/Queued 中性 |
 | 媒体消息无传输行（§6.1 单侧到达边角，M5-05） | 文件卡片以 `warning` 文案 "no transfer row (single-side arrival)" 兜底态显式呈现，无进度条——不猜测进度、不以占位冒充（DEC-010/DEC-013）；重启恢复后非终态传输行降级 Paused（DEC-013），按 Paused `warning` 呈现 |
 | 连接路径 LAN / P2P / Relay | `caption` 中性徽标，路径切换不产生新会话 |
+
+受限会话已有控制连接，应显示实际 LAN/Relay 信令路径；其消息发送仍受
+Heyaki 授权约束。四态文案按 grant 签发方解释：本机输入对端口令后显示
+「对方已信任本机」，本机签发 grant 后显示「本机已信任对方」
+（[DEC-022](../decisions/DEC-022-link-before-trust-and-grant-direction.md)）。
+Settings 修改本设备密码弹窗以**整个窗口**为定位容器，滚动页面不改变中心。
 
 ## 4. 页面与 EUI-NEO 组件映射
 
@@ -237,8 +243,8 @@ Transfers / Settings。组件选型（`RISK-2026-002` 的盘点基线，M5 用 p
     唤醒重组拾取（M5-01 waker 契约）在预览/新建会话弹窗复验成立。
   - 会话头部断连横幅（§3 Conversation Disconnected）以 `warning` 底色 +
     三角叹号图标 + 「连接断开，等待恢复」文案落地；信任徽标 Trusted
-    `success` / Rejected·Revoked `destructive`，Rejected/Revoked 的会话
-    行无点击面（§3 会话入口禁用）。
+    `success` / Rejected·Revoked `destructive`。此处“会话入口禁用”为
+    M5-05 历史落地记录；现行契约按 DEC-021/DEC-022 的连接事实门控。
 
 - **M5-06 落地记录（2026-09-27，Transfers 页；组件复用契约兑现）**：
   - §4「文件卡片 | card + progress + button | 会话内与 Transfers 页复用
