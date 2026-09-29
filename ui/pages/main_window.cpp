@@ -448,11 +448,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 // Connect 门控（M5-11）：仅对**当前在广播**（presence Online，
                 // LAN 目录租约内存活 = 正在运行 Aki）的非本机行可发起——离线
                 // 行 connect_lan 无目录端点必然被拒，不渲染无效按钮。
-                const bool connectable = device.can_begin()
-                    && device.presence == aki::device::PresenceState::Online
-                    && (device.connection_path
-                            == aki::device::ConnectionPath::Unknown
-                        || device.can_rebegin())
+                const bool connectable = device.can_connect()
                     && device.id != model.state_view.local_device;
                 const std::string row_id =
                     "aki.devices.row." + device.id.value;
@@ -587,9 +583,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                     components::button(ui, row_id + ".begin")
                         .position(button_x, button_y)
                         .size(action_button_width, metrics.control.menuItem)
-                        .text(tr(device.trust_state
-                                     == aki::device::TrustState::Unknown
-                            ? "Connect" : "Re-pair"))
+                        .text(tr(device.can_rebegin() ? "Re-pair" : "Connect"))
                         .fontSize(metrics.typography.caption)
                         .theme(tokens, true)
                         .textColor(semantic.primary_foreground)
@@ -906,13 +900,17 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                                     aki::device::DeviceId{
                                         model.pending_confirm_device},
                                     std::move(model.peer_password_draft));
+                            clear_secret(model.peer_password_draft);
+                            if (!admitted) {
+                                model.peer_password_feedback =
+                                    "Connection unavailable; connect and retry";
+                                return;
+                            }
                             model.last_action_feedback =
-                                admitted ? tr("Pairing submitted for ")
-                                       + model.pending_confirm_device
-                                         : tr("Pairing request rejected");
+                                tr("Pairing submitted for ")
+                                + model.pending_confirm_device;
                             model.pending_confirm_device.clear();
                             model.peer_password_feedback.clear();
-                            clear_secret(model.peer_password_draft);
                         })
                         .build();
                     components::button(ui, "aki.devices.confirm.no")

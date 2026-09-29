@@ -140,6 +140,9 @@ TEST_CASE("Device views expose the four-state trust relation key and the re-begi
     auto no_fingerprint = make_device("no-key",
         aki::device::TrustState::Revoked);
     store.devices.push_back(no_fingerprint);
+    store.connection_paths.push_back({
+        aki::device::DeviceId{"pending-with-grant"},
+        aki::device::ConnectionPath::Lan});
 
     const auto views = derive_device_views(store);
     REQUIRE(views.size() == 9);
@@ -177,6 +180,32 @@ TEST_CASE("Device views expose the four-state trust relation key and the re-begi
     REQUIRE_FALSE(views[8].can_rebegin());
     REQUIRE_FALSE(views[8].can_begin());
     REQUIRE_FALSE(views[0].can_begin());  // Trusted 非发起态。
+}
+
+TEST_CASE("Online peers connect before password verification",
+    "[unit][ui_models][dec022]") {
+    DeviceView pending;
+    pending.id = aki::device::DeviceId{"peer"};
+    pending.trust_state = aki::device::TrustState::Pending;
+    pending.presence = aki::device::PresenceState::Online;
+    pending.fingerprint_available = true;
+    REQUIRE(pending.can_connect());
+    REQUIRE_FALSE(pending.can_confirm());
+
+    pending.connection_path = aki::device::ConnectionPath::Lan;
+    REQUIRE_FALSE(pending.can_connect());
+    REQUIRE(pending.can_confirm());
+
+    pending.trust_state = aki::device::TrustState::Trusted;
+    pending.connection_path = aki::device::ConnectionPath::Unknown;
+    REQUIRE(pending.can_connect());
+    REQUIRE_FALSE(pending.can_confirm());
+
+    pending.presence = aki::device::PresenceState::Offline;
+    REQUIRE_FALSE(pending.can_connect());
+    pending.presence = aki::device::PresenceState::Online;
+    pending.fingerprint_available = false;
+    REQUIRE_FALSE(pending.can_connect());
 }
 
 TEST_CASE("Conversation views carry last-message summary per endpoints",

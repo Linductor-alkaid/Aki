@@ -109,6 +109,7 @@ inline std::string tr(std::string_view english) {
         {"Stop request rejected", "停止扫描请求未被接收"},
         {"Pairing submitted for ", "已提交配对请求："},
         {"Pairing request rejected", "配对请求未被接收"},
+        {"Connection unavailable; connect and retry", "连接不可用；请先连接设备后重试"},
         {"Language save failed", "语言设置保存失败"},
         {"Device name updated", "设备名已更新"},
         {"Device name save failed", "设备名保存失败"},

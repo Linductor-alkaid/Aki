@@ -50,6 +50,18 @@ Aki 在线并可互通 TCP，执行 M5-25~27 的验收动作。
 同日补充：修正 Pending 已在线但未建链时的重连对账判定；
 `cmake --build build/debug --target aki test_reconnect_loop test_host_runtime -j4`
 通过，`test_reconnect_loop` 8/8、`test_host_runtime` 4/4 用例通过。
+双机首轮验证：CI 产物 `aki-0.1.0-Linux.deb` 的 SHA-256 为
+`a867dd6a8817363fd7bf5b418595b8143dc4483dadd19c2d912ed20ed6e16fcc`，
+目标机 `ybt@192.168.1.206` 所安装包哈希一致，运行于 Ubuntu 22.04
+amd64。目标机发现本机 Active、待确认，但点击「验证密码」后无可见反馈；
+本机会话显示连接断开等待恢复。双向 TCP 监听端口可达；两端 Heyaki
+TrustStore 中旧 grant 方向/撤销状态不一致。复验前修正断连时错误开放的
+验证入口、未接纳请求的弹窗反馈，并给在线未建链设备提供连接入口。
+连接、授权和消息实测仍未通过，M5-25~26 保持未完成；负责人 Linductor，
+补跑条件为两端安装上述交互修正包并重新执行连接→口令→消息步骤。
+交互修正的本机验证：`cmake --build build/debug --target aki test_ui_models
+-j4` 通过，`test_ui_models` 12/12 用例、168/168 断言通过；双端复验
+尚待新版安装。
 
 ## M5-12~M5-17：双端实测后的修复与设备体验
 

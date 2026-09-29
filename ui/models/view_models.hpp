@@ -53,7 +53,13 @@ struct DeviceView {
     // 信任操作可用性（§4 固定转移边；M5-04 信任操作面）。
     [[nodiscard]] bool can_confirm() const noexcept {
         return trust_state == aki::device::TrustState::Pending
-            && fingerprint_available;
+            && fingerprint_available
+            && connection_path != aki::device::ConnectionPath::Unknown;
+    }
+    [[nodiscard]] bool can_connect() const noexcept {
+        return fingerprint_available
+            && presence == aki::device::PresenceState::Online
+            && connection_path == aki::device::ConnectionPath::Unknown;
     }
     [[nodiscard]] bool can_renew() const noexcept {
         return trust_state == aki::device::TrustState::Trusted
