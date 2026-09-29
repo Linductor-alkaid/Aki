@@ -647,9 +647,9 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
             });
     }
 
-    // 周期重连对账（DEC-021）：重连循环 30s 预算耗尽后不 re-arm，对端
-    // 稍后恢复时无人再触发连接——本 sweep 对「离线 + 目录重新可见 + 未
-    // 认证」的已知设备重启单飞重连循环；connected diff 事件链随后自动
+    // 周期重连对账（DEC-022）：Pending 设备可能已由 LAN 发现标为
+    // Online，但尚未建链；以「已进入配对/信任轮 + 目录可见 + 未建链」
+    // 而非 presence 判定。终态只允许用户显式重新配对。connected 事件链随后自动
     // 恢复 presence/路径/会话状态。句柄在关闭钩子 ① 取消。
     {
         auto* owner_for_sweep = &*impl.state_owner;
@@ -666,9 +666,8 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
                     }
                     for (const auto& device :
                         snapshot.value.devices.devices) {
-                        if (device.id.value == local_for_sweep
-                            || device.presence
-                                != aki::device::PresenceState::Offline) {
+                        if (!should_reconnect_known_device(device,
+                                aki::device::DeviceId{local_for_sweep})) {
                             continue;
                         }
                         if (!node_for_sweep->endpoint_visible(device.id)

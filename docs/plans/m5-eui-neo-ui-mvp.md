@@ -37,6 +37,8 @@
 双端验收、包安装与 GUI 定位由用户配合实测，未执行前保持未完成。
 用户随后明确“对方确认”为对方点允许且无需输入密码；此项单列
 `M5-28`，当前不得以密码配对替代验收。
+审查重连时补充发现：Pending 设备可能已被 LAN 发现标为 Online，但仍未
+建链；M5-25 纳入该状态的周期重连验证，终态不自动重新配对。
 
 2026-09-29 本机验证（Ubuntu Linux x86_64，GCC Debug）：
 `cmake --build build/debug -j4` 通过；针对性测试 12/12、11/11、
@@ -45,6 +47,9 @@
 UI 文件返回 `[]`。受限建链、授权方向与弹窗位置尚需双设备/GUI 复验，
 负责人 Linductor 与设备操作者；条件为目标设备安装同版 deb、两端
 Aki 在线并可互通 TCP，执行 M5-25~27 的验收动作。
+同日补充：修正 Pending 已在线但未建链时的重连对账判定；
+`cmake --build build/debug --target aki test_reconnect_loop test_host_runtime -j4`
+通过，`test_reconnect_loop` 8/8、`test_host_runtime` 4/4 用例通过。
 
 ## M5-12~M5-17：双端实测后的修复与设备体验
 

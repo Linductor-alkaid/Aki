@@ -161,7 +161,7 @@ capability 和 permission 判断，避免把设备信任直接等同于控制权
 已信任会话被裁定落入 restricted（双向有效 grant 均不存在）时，本机信任
 降级 `Trusted -> Revoked` 并归零对向信任——这是对端撤销/授权过期的可
 观测信号（协议无撤销推送，限制见 DEC-021）。断线重连循环预算耗尽后由
-周期对账任务重启：离线且重新出现在 LAN 目录、尚未认证的已知设备触发
+周期对账任务重启：Pending/Trusted 且重新出现在 LAN 目录、尚未建链的已知设备触发
 单飞重连，恢复仍由 connected 事件链承载。
 
 ## 5. Conversation
