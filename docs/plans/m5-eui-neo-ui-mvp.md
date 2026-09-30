@@ -16,10 +16,10 @@
 
 ## M5-29~M5-30：历史会话恢复与基础通信权限
 
-> 状态：In Progress；负责人：Linductor；依据：DEC-008、
+> 状态：Completed；负责人：Linductor；依据：DEC-008、
 > [DEC-023](../decisions/DEC-023-basic-communication-policy.md)。
 
-- [ ] `M5-29` 启动恢复的 Conversation 参与连接/断开事件推进，保留原 ID、
+- [x] `M5-29` 启动恢复的 Conversation 参与连接/断开事件推进，保留原 ID、
   端点和历史；验收：恢复后重连/断开、重复 ensure、Archived 不复活单测，
   HostRuntime 实际播种接线，CI 与双设备聊天页状态复验。
 - [x] `M5-30` 核对并向 Heyaki 提出免设备信任的基础消息/文件能力；
@@ -43,6 +43,7 @@ GUI 双端状态复验由用户配合，负责人 Linductor，条件为两端新
 上游基础通信需求已提交 Heyaki #4，反馈 HEY-20260930-003；不改 pinned
 依赖。本机正常关闭/重启新版 Debug 后，原 1 条历史会话从 Disconnected 恢复
 Active，原 6 条消息仍在；该证据不代替目标机 GUI 验收。
+后续双端同版 GUI 复验已通过，见 M5-32 验收记录。
 CI run 36671067469 / head 580d989：Debug、ASAN、UBSAN、Windows Debug 与
 Ubuntu 20.04 deb 通过；TSAN 因上游回调重置竞争失败（42/43），记录为
 HEY-20260930-004 / Heyaki #5。沿现有 vendor-only 纪律只增加精确符号
@@ -52,9 +53,9 @@ HEY-20260930-004 / Heyaki #5。沿现有 vendor-only 纪律只增加精确符号
 
 ## M5-31：传输完成与暂停确认的竞态
 
-> 状态：In Progress；负责人：Linductor；依据：DEC-011/DEC-012、设计 §7.1。
+> 状态：Completed；负责人：Linductor；依据：DEC-011/DEC-012、设计 §7.1。
 
-- [ ] `M5-31` wire committed 后完成本地归档并收敛 Completed，迟到暂停
+- [x] `M5-31` wire committed 后完成本地归档并收敛 Completed，迟到暂停
   确认不能使完成闸门停摆；保留 Cancelled/Failed 终态不复活、未知行拒绝。
   验收：确定性暂停/恢复/迟到暂停/committed 回归、归档闸门与取消回归，
   Debug/ASAN 本地目标测试、CI 七项全绿及新版包交付。
@@ -76,6 +77,7 @@ Debug 完整构建通过，全量 ctest 43/43 无失败（34.78s）；发送路�
 ASAN 目标构建与四个测试目标无失败（19.86s），发送路径同样 11/279。
 本机完整文件回环在 Debug/ASAN 均因握手限制 skip，Debug 断线恢复回环
 也 skip，不计网络验收；本轮 CI 尚待新提交结果，负责人 Linductor。
+后续七项 CI 与新版包交付已满足，见 M5-32 续验记录。
 
 续验：CI run 36675887002 / head 78684a9ece0ee141d56e4adda412622a91fd7520
 七项均 completed/success：Linux Debug、ASAN、UBSAN、TSAN、Windows
@@ -85,9 +87,9 @@ Debug、Ubuntu 20.04 deb、Windows setup。TSAN 仍包含前述上游符号豁�
 
 ## M5-32：重连快照中的历史关闭记录
 
-> 状态：In Progress；负责人：Linductor；依据：DEC-006/DEC-022、设计 §8.1。
+> 状态：Completed；负责人：Linductor；依据：DEC-006/DEC-022、设计 §8.1。
 
-- [ ] `M5-32` 当前连接不被同设备的历史 closed 会话覆盖；验收：
+- [x] `M5-32` 当前连接不被同设备的历史 closed 会话覆盖；验收：
   不同快照顺序、restricted/authenticated 与旧 closed 共存、完整退出/
   重开事件序列和双设备重启复验，相关单测与 CI。
 
@@ -117,6 +119,33 @@ Disconnected，目标机 DB 恢复 Active。修复验收待补。
 也恢复 Active；原 6 条消息保留并新增 1 条消息。目标机仍运行本轮补丁
 之前的包，需要同版更新后反向重启复验；新版 CI 与 deb 交付待完成。
 
+续验：run 36681973343 / head b31b567634b770e89aaeb927fea020b536bec907
+七项 CI completed/success。Ubuntu 20.04 artifact 11082685644 的 archive
+SHA-256 为 6dd5559814c24e22ac9a2de86dd4b7cc4022cf35ca3a1032c4713def95a4c5ec，
+deb 为 9e155a81cae145acaea75668e800dd75f418aea5b28d353cc5b794ca404354a9，
+已上传 `/home/ybt/aki-0.1.0-b31b567-amd64.deb`，远端哈希与格式检查
+通过。首轮 scp 文件哈希异常未计交付，改为 SSH 流式传输到 staging，
+核对后原子替换。M5-31 的 CI/新版包交付退出条件满足，状态 Completed。
+用户安装并重开目标机后，运行进程与安装文件均为 CI 二进制 SHA-256
+5a2be316455c6ea0f3c655e2881d6f35e98d897f4c60b9b610c18adebe59ac89；
+目标历史 Conversation 为 Active，原 4 条消息保留。反向重连 GUI 复验
+已由用户确认：本机正常退出后目标显示断开、重开后恢复；两端 DB 均
+为 Active。但本机重开后运行 `/opt/aki/aki` 的 2026-09-29 旧安装版
+（SHA-256 7ade718f0d49a4e05fcc89dd1af0075263a48e4a165c7ea8e935bfeb9611aeee），
+此前本机修复验证运行 Debug。为确保日常启动也使用修复版，已将同一
+CI deb 放到本机 `下载/aki-0.1.0-b31b567-amd64.deb`，待用户安装/重开
+并核对运行二进制；负责人 Linductor 与设备操作者。
+上一轮手动安装包 21eafb49... 已完整核对与 run 36675887002 / head
+78684a9 的 CI deb 哈希一致，不仅以构建时间推断。
+
+本机安装/重开后实际运行程序也匹配同一 CI 二进制 SHA-256
+5a2be316455c6ea0f3c655e2881d6f35e98d897f4c60b9b610c18adebe59ac89；
+目标机仍运行同版，两个历史 Conversation 均 Active，本机 9 条、目标
+4 条消息。用户已分别确认目标机重启后本机自动恢复，以及本机退出后
+目标机显示中断、重开恢复。M5-29/M5-32 双端会话恢复验收 Completed。
+该结果仅证明连接/会话推进；基础消息/文件的免信任策略仍受 Heyaki #4
+阻塞，密码授权及无密码批准的已登记问题未由本项解决。
+
 ## M5-25~M5-28：连接与信任语义复验
 
 > 状态：In Progress；负责人：Linductor；设计依据：
@@ -128,12 +157,17 @@ Disconnected，目标机 DB 恢复 Active。修复验收待补。
 - [ ] `M5-26` 信任方向显示按 grant 签发方解释；验收：A 输入 B 口令后
   A 显示「对方已信任本机」，B 显示「本机已信任对方」，反向操作得到互信；
   双端文本、图片、普通文件与失败反馈实际验证。
-- [ ] `M5-27` Settings 修改本机密码弹窗位于整个窗口中央；验收：
+- [x] `M5-27` Settings 修改本机密码弹窗位于整个窗口中央；验收：
   不同窗口尺寸、设置页滚动位置和中英文界面下弹窗中心与窗口中心一致。
 - [ ] `M5-28` 对端直接点击“允许”建立授权（双方无需输入密码）；
   阻塞：pinned Heyaki 无接收方批准 API，证据与最小能力见
   [HEY-20260929-001](../heyaki_feedback/ledger.md)。负责人 Linductor；
   上游固定 API 并授权更新 pinned 依赖后接入和双端验证。
+
+2026-09-30 M5-27 验收 Completed：两台设备均运行本轮 CI deb，用户
+确认修改本设备密码弹窗在中英文界面、不同窗口尺寸下始终位于整个
+窗口中央；缩小窗口使设置页可滚动后，再滚动并打开弹窗仍居中。
+本次只观察布局，未改动设备口令。
 
 2026-09-29：用户要求按连接→信任→通信顺序修正并在另一台设备上配合
 验证，同时将更新 deb 交付 `ybt@192.168.1.206:~/`。本机单测与编译先行；

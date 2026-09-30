@@ -10,7 +10,10 @@
 
 - 2026-09-30：M5-32 双端交换重启顺序复现当前连接被历史关闭会话覆盖。
   Heyaki 快照同时包含当前与 finished 记录，Aki Adapter 按设备归并时
-  旧 closed 覆盖当前 linked；修复与复验见 M5 记录，保持 In Progress。
+  旧 closed 覆盖当前 linked。现已在 Adapter 修复并完成双端重启复验，
+  两端运行同一 CI deb，历史会话恢复 Active；M5-29/31/32 验收 Completed，
+  M5-27 也通过双端中英文、窗口尺寸和设置页滚动位置的居中复验；
+  证据见 M5 记录。
 
 - 2026-09-30：M5-31 跟进 CI ASAN 的文件传输终态断言失败，修复 wire
   committed 与暂停/恢复确认交错时的归档停摆和 Paused 收尾；复用既有
@@ -21,7 +24,7 @@
   [DEC-023](../decisions/DEC-023-basic-communication-policy.md)。M5-30
   已核对 pinned Heyaki 的业务通道/服务门控并提交
   [Heyaki #4](https://github.com/Linductor-alkaid/heyaki/issues/4)，上游独立管理，
-  当前免信任消息/文件尚未实现。会话状态修复等待双设备新版复验。
+  当前免信任消息/文件尚未实现。会话状态修复已完成双设备同版复验。
 
 - 2026-09-29：`M5-25`~`M5-28` 处理“在线先建链、授权方向、设置弹窗中心”
   的第三轮验证，依据 [DEC-022](../decisions/DEC-022-link-before-trust-and-grant-direction.md)。
