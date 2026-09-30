@@ -101,3 +101,26 @@
 - **负责人及验收**：Linductor；Heyaki 独立实现并固定公开策略 API 后接入，
   补无 grant 双端消息/图片/inbox 文件、拒绝策略、身份/路径攻击、配额/
   背压、断连、取消与 shutdown；基础通道不得打开高级控制能力。
+
+## HEY-20260930-004：关闭会话时回调重置竞争
+
+- **状态**：TSAN 实际复现，已提交
+  [Heyaki #5](https://github.com/Linductor-alkaid/heyaki/issues/5)，未修改依赖。
+- **版本与复现**：Heyaki `e114508`，libdatachannel v0.23.2 @ `9e6a13a`。
+  Aki run `36671067469`、head `580d989`、TSAN job `109745963853`；
+  `test_discovery_pairing_loopback` 53 个断言通过、双端 authenticated，
+  关闭时 TSAN 报同地址两次 2 字节写，全量 42/43，故此轮 CI 失败。
+- **竞争路径**：T20 从 PeerConnection::closeDataChannels 经 DataChannel::close
+  调用 Channel::resetCallbacks；T29 从 Heyaki transport Channel::close 调用
+  rtc::Channel::resetCallbacks。共同顶帧为 utils.hpp:105 的
+  `rtc::synchronized_stored_callback<>::operator=(const&)`。依据实现推断：
+  派生类隐式赋值在基类赋值的锁释放后复制 mutable optional stored，导致
+  同一无参数回调对象并发重置。需上游核对公开 close/reset 的调用纪律。
+- **影响与最小修复**：会话 fail/关闭时存在真实数据竞争；核对 Heyaki 显式
+  reset 与 libdatachannel 内部 close 的责任，避免并发重置或上游补齐赋值
+  同步。不能由 Aki 创建新线程/队列或业务 mutex 代替传输内部同步。
+- **临时边界**：沿现有 cmake/tsan-suppressions.supp 的 vendor-only 纪律，
+  仅登记 `rtc::synchronized_stored_callback<>::operator=`，不豁免 Aki 或
+  Heyaki 的其他路径、不关闭测试/插桩。此豁免不表示竞态已修复。
+- **负责人及移除条件**：Linductor；上游补并发 close、远端 close、fail、
+  取消、超时和 Node shutdown 的 TSAN 回归，升级 pinned 后移除精确条目。
