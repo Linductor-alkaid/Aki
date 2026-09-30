@@ -266,8 +266,31 @@ M5-25~28 均保持未完成；非对称旧授权修复由 Heyaki 独立处理，
 - [ ] `M5-22` 掉线恢复：周期重连对账 re-arm，presence/会话状态随 connected 恢复。
 - [ ] `M5-23` 图片/文件选取按存在性过滤（zenity stderr 诊断行不再致 stat 失败）。
 - [ ] `M5-24` 24.04 图标：desktop StartupWMClass 已落；Wayland app_id
-  不改 pinned 依赖，已登记 EUI-NEO 反馈台账并报上游
-  （#77），随依赖升级跟进。
+  按 [DEC-024](../decisions/DEC-024-linux-desktop-window-identity.md)
+  在 Aki 平台适配层补齐窗口创建参数；不改 pinned 依赖，上游 #77 继续
+  独立跟踪。真实 Wayland/X11 标识检查通过；状态 In Progress，等待 CI
+  与安装版 Dock 验收。
+
+2026-09-30 M5-24：用户在安装版再次复现 Dock 图标缺失。图标与 desktop
+布局正确，pinned runner 缺窗口身份；按 DEC-024 在 Aki 平台层设置三个
+GLFW 字符串 hint，非 Linux 无操作，不改 third_party/后端/并发设施。
+Debug `aki` 构建成功，`desktop-file-validate` 和 `git diff --check` 通过。
+最初本机 Debug 缓存仅编译 X11，原生 Wayland 探针初始化失败，未计成功；
+将 Ubuntu `libxkbcommon-dev 1.6.0-1build1` 解包至 `/tmp`，通过
+`PKG_CONFIG_PATH` 提供缺失开发头文件，重配置 GLFW 双后端后构建成功。
+真实 GNOME Wayland 探针连续创建两个窗口，协议各发送
+`xdg_toplevel.set_app_id("aki")`；同一公开 API 的 X11 探针两个窗口
+`WM_CLASS=aki,aki`。GDB 对真实 Aki 在 `glfwCreateWindow` 前断点核实
+两种后端的三个 hint 均为 `aki`（Wayland platform=393219，X11=393220），
+证明配置首次查询落在 GLFW 初始化后、窗口创建前，后端未覆盖 hint。
+不使用仅校验调用次数的 mock 测试替代真实桌面行为。
+日志：`/tmp/aki-dock-identity-build.log`、
+`/tmp/aki-dock-identity-wayland-build.log`、
+`/tmp/aki-dock-wayland-protocol.log`、
+`/tmp/aki-dock-identity-gdb.log`、
+`/tmp/aki-dock-identity-wayland-gdb.log`；诊断源码和二进制仅在 `/tmp`，
+不进入分发或仓库。CI、deb 交付及安装版 Dock 观察仍待执行；负责人
+Linductor/设备操作者，补跑条件为 Ubuntu 24.04 正常退出旧版后安装新包。
 
 2026-09-29：用户第二轮双端实测发现上述七类问题，归入本维护批；
 双端复验需分别测试撤销方向、重建配对与断线恢复时序。
