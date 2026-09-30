@@ -51,6 +51,27 @@ bool wait_until_local(const std::function<bool()>& predicate,
 
 }  // namespace
 
+TEST_CASE("Reconnect sweep admits online Pending peers but excludes terminals",
+    "[unit][reconnect][dec022]") {
+    aki::device::DeviceIdentity device;
+    device.id = DeviceId{"peer-a"};
+    const DeviceId local{"local"};
+    device.presence = aki::device::PresenceState::Online;
+    device.trust_state = aki::device::TrustState::Pending;
+    REQUIRE(aki::app::should_reconnect_known_device(device, local));
+    device.trust_state = aki::device::TrustState::Trusted;
+    REQUIRE(aki::app::should_reconnect_known_device(device, local));
+    for (const auto state : {aki::device::TrustState::Unknown,
+             aki::device::TrustState::Rejected,
+             aki::device::TrustState::Revoked}) {
+        device.trust_state = state;
+        REQUIRE_FALSE(aki::app::should_reconnect_known_device(device, local));
+    }
+    device.id = local;
+    device.trust_state = aki::device::TrustState::Pending;
+    REQUIRE_FALSE(aki::app::should_reconnect_known_device(device, local));
+}
+
 TEST_CASE("Reconnect loop recovers and settles cleanly (DOD-02 normal)",
     "[unit][reconnect][dod02]") {
     ExecutorOwner owner;

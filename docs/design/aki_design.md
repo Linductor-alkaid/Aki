@@ -141,23 +141,30 @@ Trusted -> Revoked
 [DEC-021](../decisions/DEC-021-bidirectional-trust-and-repair.md)）。
 新增状态或转移必须先更新本节，不允许代码私有状态。
 
-`Trusted` 表示本机输入对端口令、取得对端签发的 Heyaki grant；对端输入
-本机口令建立的连接不自动推进本机信任状态。`ConnectionPath` 和 presence
-独立表达通信连接；**会话入口与发送路径按连接事实门控，不按信任状态裁剪**
+`Trusted` 表示本机输入对端口令、取得对端签发的 Heyaki grant，因此对端
+已信任本机；对端输入本机口令建立的连接不自动推进本机 `TrustState`。
+`ConnectionPath` 和 presence 独立表达通信连接；受限会话已建链但消息发送
+仍须 Heyaki 授权。**会话入口按连接事实门控，不按信任状态裁剪**
 ——被拒绝/撤销的设备在已连接或会话活跃时仍可打开会话通信
 （[DEC-019](../decisions/DEC-019-directional-trust-and-chat-scopes.md)、
 [DEC-021](../decisions/DEC-021-bidirectional-trust-and-repair.md)）。
+用户已明确基础消息/文件只需身份已验证的连接，设备信任用于后续控制
+授权；该产品策略见 [DEC-023](../decisions/DEC-023-basic-communication-policy.md)。
+当前 pinned Heyaki 尚无此策略，未实现的免信任通信不得宣称可用。
 终端、屏幕控制、机器人控制等能力需要继续经过
 capability 和 permission 判断，避免把设备信任直接等同于控制权限。
 
-信任是双向语义（DEC-021）：`TrustState` 描述本机→对端方向；设备记录的
-`inbound_trust` 描述对端→本机方向（本机已向对端签发有效 Heyaki grant，
-以本机 TrustStore 查询为权威，启动、会话连接、撤销时校准）。UI 按二元
+信任是双向语义（[DEC-022](../decisions/DEC-022-link-before-trust-and-grant-direction.md)）：
+`TrustState::Trusted` 描述对端→本机签发 grant，即对端信任本机；设备记录的
+`inbound_trust` 是历史字段名，描述本机→对端签发有效 Heyaki grant，即本机
+信任对端（本机 TrustStore 查询为权威，启动、会话授权、撤销时校准）。UI 按二元
 组合显示互相信任 / 本机已信任对方 / 对方已信任本机 / 未建立信任四态。
+已有 grant 的方向事实优先于 `Pending` 流程词显示；仅本机签发 grant 的
+设备也可撤销该授权，清除 `inbound_trust` 而不伪造信任状态机转移。
 已信任会话被裁定落入 restricted（双向有效 grant 均不存在）时，本机信任
 降级 `Trusted -> Revoked` 并归零对向信任——这是对端撤销/授权过期的可
 观测信号（协议无撤销推送，限制见 DEC-021）。断线重连循环预算耗尽后由
-周期对账任务重启：离线且重新出现在 LAN 目录、尚未认证的已知设备触发
+周期对账任务重启：Pending/Trusted 且重新出现在 LAN 目录、尚未建链的已知设备触发
 单飞重连，恢复仍由 connected 事件链承载。
 
 ## 5. Conversation
@@ -419,7 +426,11 @@ IO **不经 DatabaseWorker 通道**（M4-01 硬结论维持且更干净：DB dra
 DatabaseWorker 通道，批上限维持 64×2≤256 不变、drain 预算（2s）不受影响。
 终态闸门：`CompleteTransfer(Completed)` 仅在归档 `.part` 写完后放行入队
 （M2-06 终态作业组对不完整 `.part` 按契约明确失败）；`Failed`/`Cancelled`
-终态不等待归档（在飞块结束后幂等清理）。**废除形态**（M4-04 定案）：池上
+终态不等待归档（在飞块结束后幂等清理）。wire committed 已确认传输
+完成后，归档解除暂停抑制并继续单飞分块；held committed 后迟到 paused
+不阻止归档。已知 Negotiating/Paused 行在放行 Completed 前经既有合法边
+推进 Transferring，无须等待不存在的下一次进度。未知行与 Failed/Cancelled
+仍拒绝复活（DEC-012 的 M5-31 修订）。**废除形态**（M4-04 定案）：池上
 `submit_cancellable` 会话长任务内联写 + `sleep_for` 轮询（M1/M4-02 骨架）——
 每会话停占一个池 worker，2 核设备 ≥2 并发传输即饥饿 Manager 泵（M4-03
 观察③ CI 实证）。hash-first 排序（④ 的发送前 SHA-256）：hash 分块作业流
@@ -661,27 +672,29 @@ LAN 广播/监听随 Node 常驻）。因此 `start_discovery` / `stop_discovery
   表不跨会话累积扫描残留；其重新在网时经发现观察管道以真实存活状态再次
   进入。`Pending`（在途确认）与 `Rejected` / `Revoked`（用户决策终态）原值
   恢复。
-- 主动建链与设备认证（M5-11，DEC-006 映射 3 落地）：宿主组合根装配即常驻
+- 会话快照归并（M5-32、DEC-022）：Heyaki 同时提供当前会话和 finished
+  closed 历史。Adapter 的 device 级 diff 在上一轮和本轮均排除 closed
+  记录，并在多条当前端点记录中优先 authenticated，其次 pairing_restricted，
+  最后握手态。只要仍有当前建链就不发断开；历史记录不能覆盖当前连接、
+  路径、配对就绪或授权事件。所有当前建链消失才发一次断开。
+- 主动建链与设备认证（M5-11；DEC-022 修订连接事实）：宿主组合根装配即常驻
   启动 peer_sessions 观察管道（`PeerSessionPipeline`，200ms diff）——主动
   `begin_pairing`（UI Connect，仅对 presence Online 的非本机行渲染）经
   `connect_lan` 建链、会话进入 `pairing_restricted` → `on_pairing_ready` →
-  `Unknown -> Pending`；被动入站连接同样受限会话驱动 `Pending` 行（无需先
-  扫描）。认证有两种等价方式（DEC-018；heyaki 语义：口令由口令持有方输入、
-  由对端以其 verifier 校验并签发 grant，会话在两侧同时授权——一次输入即
-  双向可用）：
-  - 方式一「输入对端口令」：本机在确认弹窗输入对方设备口令 →
+  `Unknown -> Pending`，同时发出已连接事件并显示 LAN/Relay 信令路径；
+  `pairing_restricted -> authenticated` 只校准授权方向与数据路径，不重复
+  发出连接事件。被动入站连接同样受限会话驱动 `Pending` 行（无需先
+  扫描）。当前 pinned Heyaki 只提供输入**对端口令**的认证方式：
+  - 本机在密码验证弹窗输入对方设备口令 →
     `confirm_pairing` → `pair_peer` → 对端校验并签发 grant → 本机行经
     `on_pairing_completed` → `Trusted`；
-  - 方式二「对方确认连接请求」：对方在其设备行点击确认并输入本机口令 →
-    同一 wire 机制反向完成；
-  - 两侧统一推进点：会话授权（`on_device_connected`）对 `Pending` 行是
-    「对端已通过本机口令校验」的 wire 证据，DM 自动推进
-    `Pending -> Trusted`（`advance_pending_trust`）——口令由任一侧输入
-    一次即可，另一侧设备行随之就绪，无需第二台设备重复输入。`Unknown`
-    行不自动推进（入口归 `PairingReadyWork`），终态行由 owner 状态机拒绝；
-    错误口令会话被拒（`pairing_denied`），不会进入授权态。grant 单侧持有
-    时重连由持有方发起（断线双方各自的重连循环竞争，持有方建链成功后对端
-    会话随之授权）。
+  - 对方在其设备行输入本机口令，是反向配对，表示本机已信任对方；
+    不是“对方点允许，无需密码”。后者所需 Heyaki 接口见
+    [HEY-20260929-001](../heyaki_feedback/ledger.md)，当前不可验收；
+  - 本机 `on_pairing_completed(success)` 才推进本机 `Pending -> Trusted`，
+    表示对端已信任本机；对端输入本机口令只校准本机 `inbound_trust`，
+    表示本机已信任对端。错误口令保持 Pending 并可重试。单向 grant 足以
+    使 Heyaki 会话授权，但消息与文件发送仍按实际 scope 判定。
 - 邀请链接与手动输入：M3 分期（范围与补做条件见里程碑范围条款）；接入时经
   同一 `on_device_discovered` 入口以对应 `DiscoveryMethod` 合成，触发语义与
   本节一致。
@@ -758,9 +771,10 @@ Store 所有权：
   （`start_file_transfer` / `pause_transfer` / `resume_transfer` / `cancel_transfer`）
   归 TransferManager。ConversationManager 显式提供
   `ensure_conversation(local, remote)`，由宿主 / 用户流程调用，不从事件隐式建会话；
-  其自建会话的 id/端点记录仅用于 connected/disconnected 事件的状态推导（创建记录，
-  不复制 owner 权威状态），消息或连接事件先于 `ensure_conversation` 到达时，会话
-  推导为幂等空操作。
+  其新建及启动恢复会话的 id/端点记录仅用于 connected/disconnected 事件的状态推导（创建记录，
+  不复制 owner 权威状态），消息或连接事件到达时若既无恢复记录也未
+  `ensure_conversation`，会话推导为幂等空操作。宿主在启动网络事件源前播种历史会话原 ID/端点；
+  重连复用历史会话，不清空消息，Archived 终态仍由 owner 拒绝复活。
 
 11 类 Sink 事件（9 类主路径 + 出站失败面 `on_message_send_failed` + 传输暂停面
 `on_transfer_paused`，均不产新增主路径事件类型）由 `app/application` 内单一 `RouterSink`（实现 `HeyakiAdapterSink`）
@@ -777,7 +791,7 @@ Store 所有权：
 | `on_message_delivered` | MM：`SetDeliveryState(Delivered)` | MessageDelivered |
 | `on_message_send_failed`（M3-05） | MM：`SetDeliveryState(Failed)` | —（Failed 为终态，RULE-08；无主路径事件） |
 | `on_transfer_started` | TM：`UpsertTransfer`（建行与状态推进——发送行由 `StartTransferWork` 先建、发送端专属的 `probing`/`offered` 事件推进；接收行由**首个 `transferring`/`verifying`** 事件承担（pinned heyaki 接收端无 probing/offered，首个事件即 transferring）——接收行 `file.name`=剥根段 wire `logical_name`、`size`=`bytes_total`、sender=peer/receiver=local；同态重复幂等去重，§7.1⑤） | TransferStarted |
-| `on_transfer_progress` | TM：首个进度事件整行 upsert 推进 `Negotiating/Paused → Transferring`，后续 `UpdateTransferProgress` | TransferProgress |
+| `on_transfer_progress` | TM：发送与接收路径的首个网络进度均整行 upsert 推进 `Negotiating/Paused → Transferring`，随后按有界聚合写 `UpdateTransferProgress`；本地归档进度不能替代网络状态转换 | TransferProgress |
 | `on_transfer_completed` | TM：`CompleteTransfer(final_state)`（接收侧无会话直达；发送侧经终态闸门，§7.1③） | TransferCompleted |
 | `on_transfer_paused`（M4-05） | TM：`UpsertTransfer`（`Paused`；对端驱动与本地暂停确认同此映射；发送会话归档续接抑制） | —（不新增主路径事件类型，状态经 Store 快照可见，§8.1） |
 | `on_connection_path_changed` | DM：`SetDeviceConnectionPath{device, to}`（M5-04 起，[DEC-015](../decisions/DEC-015-per-device-connection-path.md)；`from` 为诊断信息） | ConnectionPathChanged |

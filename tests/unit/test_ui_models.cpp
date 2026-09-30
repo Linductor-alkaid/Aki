@@ -131,6 +131,8 @@ TEST_CASE("Device views expose the four-state trust relation key and the re-begi
     store.devices.push_back(
         row("pending", aki::device::TrustState::Pending, false));
     store.devices.push_back(
+        row("pending-with-grant", aki::device::TrustState::Pending, true));
+    store.devices.push_back(
         row("rejected", aki::device::TrustState::Rejected, false));
     store.devices.push_back(
         row("revoked", aki::device::TrustState::Revoked, false));
@@ -138,36 +140,72 @@ TEST_CASE("Device views expose the four-state trust relation key and the re-begi
     auto no_fingerprint = make_device("no-key",
         aki::device::TrustState::Revoked);
     store.devices.push_back(no_fingerprint);
+    store.connection_paths.push_back({
+        aki::device::DeviceId{"pending-with-grant"},
+        aki::device::ConnectionPath::Lan});
 
     const auto views = derive_device_views(store);
-    REQUIRE(views.size() == 8);
+    REQUIRE(views.size() == 9);
 
     REQUIRE(std::string{views[0].trust_relation_key()} == "Mutual trust");
     REQUIRE(std::string{views[1].trust_relation_key()}
-        == "Trusted by this device");
-    REQUIRE(std::string{views[2].trust_relation_key()}
         == "Trusted this device");
+    REQUIRE(std::string{views[2].trust_relation_key()}
+        == "Trusted by this device");
     REQUIRE(std::string{views[3].trust_relation_key()}
         == "No trust established");
-    // 配对流程中间态优先于稳态四态（原词直显）。
+    // 已有 grant 优先于配对流程词；对端签发后的 Pending 行可见方向。
     REQUIRE(std::string{views[4].trust_relation_key()} == "Pending");
-    REQUIRE(std::string{views[5].trust_relation_key()} == "Rejected");
-    REQUIRE(std::string{views[6].trust_relation_key()} == "Revoked");
+    REQUIRE(std::string{views[5].trust_relation_key()}
+        == "Trusted by this device");
+    REQUIRE(std::string{views[6].trust_relation_key()} == "Rejected");
+    REQUIRE(std::string{views[7].trust_relation_key()} == "Revoked");
 
     // 重建入口（DEC-021）：终态 + 完整指纹可用；其余状态不可用。
-    REQUIRE(views[5].can_rebegin());
     REQUIRE(views[6].can_rebegin());
+    REQUIRE(views[7].can_rebegin());
     REQUIRE_FALSE(views[0].can_rebegin());
     REQUIRE_FALSE(views[2].can_rebegin());
     REQUIRE_FALSE(views[4].can_rebegin());
+    REQUIRE_FALSE(views[5].can_rebegin());
+    REQUIRE(views[5].can_confirm());
+    REQUIRE_FALSE(views[5].can_reject());
+    REQUIRE(views[5].can_revoke());
     // can_begin 扩展：Unknown（首轮）与终态（重建轮）都可发起配对；
     // 无指纹一律不可。
     REQUIRE(views[2].can_begin());
-    REQUIRE(views[5].can_begin());
     REQUIRE(views[6].can_begin());
-    REQUIRE_FALSE(views[7].can_rebegin());
-    REQUIRE_FALSE(views[7].can_begin());
+    REQUIRE(views[7].can_begin());
+    REQUIRE_FALSE(views[5].can_begin());
+    REQUIRE_FALSE(views[8].can_rebegin());
+    REQUIRE_FALSE(views[8].can_begin());
     REQUIRE_FALSE(views[0].can_begin());  // Trusted 非发起态。
+}
+
+TEST_CASE("Online peers connect before password verification",
+    "[unit][ui_models][dec022]") {
+    DeviceView pending;
+    pending.id = aki::device::DeviceId{"peer"};
+    pending.trust_state = aki::device::TrustState::Pending;
+    pending.presence = aki::device::PresenceState::Online;
+    pending.fingerprint_available = true;
+    REQUIRE(pending.can_connect());
+    REQUIRE_FALSE(pending.can_confirm());
+
+    pending.connection_path = aki::device::ConnectionPath::Lan;
+    REQUIRE_FALSE(pending.can_connect());
+    REQUIRE(pending.can_confirm());
+
+    pending.trust_state = aki::device::TrustState::Trusted;
+    pending.connection_path = aki::device::ConnectionPath::Unknown;
+    REQUIRE(pending.can_connect());
+    REQUIRE_FALSE(pending.can_confirm());
+
+    pending.presence = aki::device::PresenceState::Offline;
+    REQUIRE_FALSE(pending.can_connect());
+    pending.presence = aki::device::PresenceState::Online;
+    pending.fingerprint_available = false;
+    REQUIRE_FALSE(pending.can_connect());
 }
 
 TEST_CASE("Conversation views carry last-message summary per endpoints",

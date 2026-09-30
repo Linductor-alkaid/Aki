@@ -89,9 +89,9 @@ struct DeviceIdentity {
     DeviceCapabilities capabilities;
     TrustState trust_state = TrustState::Unknown;
     PresenceState presence = PresenceState::Offline;
-    // 对向信任（DEC-021）：本机已向该设备签发有效 Heyaki grant（对端持有
-    // 本机口令授权）。trust_state 描述本机→对端方向；本字段描述对端→本机
-    // 方向，二者组合成四态信任显示。不从 wire 广播，由本机 TrustStore
+    // 历史字段名（DEC-022）：本机已向该设备签发有效 Heyaki grant，
+    // UI 语义为“本机已信任对方”；trust_state == Trusted 表示本机持有
+    // 对端签发的 grant，UI 语义为“对方已信任本机”。不从 wire 广播，由本机 TrustStore
     // 查询与会话裁定事件维护。
     bool inbound_trust = false;
 

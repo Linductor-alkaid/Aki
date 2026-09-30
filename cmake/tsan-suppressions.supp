@@ -11,3 +11,10 @@
 # （test_message_loopback 双节点 DTLS/SCTP 会话建立路径）。
 race:sctp_
 race:usrsctp_
+
+# libdatachannel v0.23.2 @ 9e6a13a（HEY-20260930-004，Heyaki #5）：
+# PeerConnection 内部 close 与 Heyaki 显式 resetCallbacks 并发写同一
+# synchronized_stored_callback<> 的 stored 字段（隐式派生赋值在基类锁外）。
+# CI run 36671067469 / TSAN job 109745963853；仅此无参数回调赋值符号，
+# 不添加 Channel::close 或 Heyaki/Aki 的匹配模式。上游修复并升级 pinned 后移除。
+race:rtc::synchronized_stored_callback<>::operator=

@@ -99,8 +99,25 @@ const std::vector<std::string>& expected_hook_sequence() {
 TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order",
     "[unit][host_runtime][dod02]") {
     const std::filesystem::path data_root = make_temp_data_root();
+    // M5-29：真实 DB 恢复行，验证组合根将同一 ID/端点播种到 CM。
+    aki::conversation::Conversation restored;
+    restored.id = aki::conversation::ConversationId{"historical-conversation"};
+    restored.local_device = aki::device::DeviceId{"historical-local"};
+    restored.remote_device = aki::device::DeviceId{"historical-peer"};
+    restored.state = aki::conversation::ConversationState::Disconnected;
+    {
+        auto seeded = aki::persistence::perform_startup_recovery(data_root.string());
+        REQUIRE(seeded.diagnostics.migrations_applied == 3);
+        for (const auto& id : {restored.local_device, restored.remote_device}) {
+            aki::device::DeviceIdentity row;
+            row.id = id;
+            row.display_name = id.value;
+            seeded.repositories->devices.upsert(row);
+        }
+        seeded.repositories->conversations.upsert(restored);
+    }
 
-    // ---- 装配（§8.3 七步；空根 → 0 恢复 + 新建身份；M5-03 唤醒回调注入）----
+    // ---- 装配（§8.3 七步；历史会话恢复 + 新建身份；M5-03 唤醒回调注入）----
     HostRuntime& host = HostRuntime::instance();
     // M5-16：未装配（默认构造单例）set_device_name 显式拒绝。
     REQUIRE_FALSE(host.set_device_name("pre-assembly-name"));
@@ -115,8 +132,8 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     REQUIRE(host.set_language("en"));
     REQUIRE(assembly.ok);
     REQUIRE(assembly.failure_reason.empty());
-    REQUIRE(assembly.recovered_devices == 0);
-    REQUIRE(assembly.recovered_conversations == 0);
+    REQUIRE(assembly.recovered_devices == 2);
+    REQUIRE(assembly.recovered_conversations == 1);
     REQUIRE(assembly.recovered_messages == 0);
     std::string password_error;
     REQUIRE(host.set_local_pairing_password("rotated-password",
@@ -132,9 +149,8 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     REQUIRE(matched.has_value());
     REQUIRE(*matched.value_if());
     REQUIRE(assembly.recovered_transfers == 0);
-    // 空根首开：v1 schema 引导迁移全量应用（DEC-021 后为三步：er-v1-core +
-    // device-local-remark + device-inbound-trust）；tmp 清扫零孤儿。
-    REQUIRE(assembly.migrations_applied == 3);
+    // DB 已由恢复夹具完成三步迁移；装配重开零迁移、tmp 清扫零孤儿。
+    REQUIRE(assembly.migrations_applied == 0);
     REQUIRE(assembly.tmp_orphans_removed == 0);
     REQUIRE(assembly.identity_created);
     REQUIRE_FALSE(assembly.local_device_id.empty());
@@ -169,6 +185,19 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     REQUIRE(snapshot.devices.devices.size() == 1);
     REQUIRE(snapshot.devices.devices.front().id.value
         == assembly.local_device_id);
+    REQUIRE(snapshot.conversations.conversations.size() == 1);
+    REQUIRE(snapshot.conversations.conversations.front().id == restored.id);
+    REQUIRE(snapshot.conversations.conversations.front().state == restored.state);
+    REQUIRE(host.conversation_manager().enqueue_peer_connected(restored.remote_device));
+    host.quiesce();
+    REQUIRE(host.load_state_snapshot(snapshot));
+    REQUIRE(snapshot.conversations.conversations.front().state
+        == aki::conversation::ConversationState::Active);
+    REQUIRE(snapshot.conversations.conversations.front().id == restored.id);
+    REQUIRE(host.conversation_manager().enqueue_peer_disconnected(restored.remote_device));
+    host.quiesce();
+    REQUIRE(host.load_state_snapshot(snapshot));
+    REQUIRE(snapshot.conversations.conversations.front().state == restored.state);
 
     // ---- M5-16：Settings 改本机设备名（set_device_name；广播热更新为
     //      DEC-020 尽力而为元数据，本用例锁定快照/DB 权威面）----
@@ -381,6 +410,9 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
         }
         REQUIRE(recovered_local != nullptr);
         REQUIRE(recovered_local->display_name == "aki-renamed");
+        REQUIRE(reopened.state.conversations.size() == 1);
+        REQUIRE(reopened.state.conversations.front().id == restored.id);
+        REQUIRE(reopened.state.conversations.front().state == restored.state);
     }
 
     // 幂等：重复关闭返回同一报告。

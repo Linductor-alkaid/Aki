@@ -35,8 +35,7 @@ void set_feedback(MainWindowModel& model, std::string text) {
 
 void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
     const AkiSemanticPalette& semantic, float x, float y, float width,
-    float height, float screen_width, float screen_height,
-    MainWindowModel& model) {
+    float height, MainWindowModel& model) {
     (void)height;  // 纵向自然布局，无底部锚定元素（M5-07 形态）。
     const auto& metrics = tokens.metrics;
     const float pad_x = x + metrics.spacing.section;
@@ -262,7 +261,14 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
             .build();
     }
 
-    if (model.password_change_open && model.actions) {
+}
+
+void composeSettingsPasswordDialog(eui::Ui& ui,
+    const ThemeColorTokens& tokens, const AkiSemanticPalette& semantic,
+    float screen_width, float screen_height, MainWindowModel& model) {
+    if (model.page == NavPage::Settings && model.password_change_open
+        && model.actions) {
+        const auto& metrics = tokens.metrics;
         const float dialog_width = std::min(560.0f, screen_width - 32.0f);
         components::dialog(ui, "aki.settings.password.dialog")
             .open(true).theme(tokens).screen(screen_width, screen_height)

@@ -3,8 +3,8 @@
 // 只写 conversations Store：connected/disconnected 扇出事件按自建会话记录推导
 // UpsertConversation（Active <-> Disconnected，RULE-06 路径无关）；会话建立经
 // 显式 ensure_conversation(local, remote)（宿主/用户流程调用，不从事件隐式建
-// 会话）。自建记录只含 id 与端点（创建记录，不复制 owner 权威状态）；消息或
-// 连接事件先于 ensure_conversation 到达时，会话推导为幂等空操作。
+// 会话）。新建/恢复记录只含 id 与端点（不复制 owner 权威状态）；消息或
+// 连接事件到达时若既无恢复记录也未 ensure_conversation，会话推导为幂等空操作。
 //
 // M1 会话 id 由本 Manager 确定性派生（prefix + remote，RULE-08 稳定 id）；
 // M2 引入持久化后改为存储分配。生命周期（EXEC-07）同 DeviceManager。
@@ -21,6 +21,7 @@
 #include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace aki::app {
 
@@ -46,6 +47,8 @@ using ConversationManagerWork = std::variant<PeerConnectedWork,
 struct ConversationManagerOptions {
     ManagerPumpOptions pump{};
     std::string conversation_id_prefix = "conv-";
+    // 组合根在网络事件源启动前传入 owner 同批恢复的会话。
+    std::vector<aki::conversation::Conversation> seeded_rows;
 };
 
 class ConversationManager {
@@ -57,7 +60,13 @@ public:
         : options_(std::move(options)),
           state_owner_(state_owner),
           pump_(executor, options_.pump,
-              [this](ConversationManagerWork& work) { return handle(work); }) {}
+              [this](ConversationManagerWork& work) { return handle(work); }) {
+        for (const auto& row : options_.seeded_rows) {
+            created_.emplace(row.remote_device.value,
+                ConversationRecord{row.id, row.local_device, row.remote_device});
+        }
+        options_.seeded_rows.clear();
+    }
 
     ConversationManager(const ConversationManager&) = delete;
     ConversationManager& operator=(const ConversationManager&) = delete;

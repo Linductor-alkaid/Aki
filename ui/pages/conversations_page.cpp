@@ -84,7 +84,8 @@ std::string path_label(aki::device::ConnectionPath path) {
 }
 
 core::Color trust_color(const AkiSemanticPalette& semantic,
-    aki::device::TrustState trust) {
+    aki::device::TrustState trust, bool inbound_trust) {
+    if (inbound_trust) return semantic.success;
     using aki::device::TrustState;
     switch (trust) {
     case TrustState::Pending: return semantic.warning;      // §3 warning
@@ -723,7 +724,8 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
                                             - row_metrics.typography.micro)
                                     .fontSize(row_metrics.typography.micro)
                                     .color(trust_color(semantic,
-                                        remote->trust_state))
+                                        remote->trust_state,
+                                        remote->inbound_trust))
                                     .build();
                             }
                             // 行点击面（透明按钮；入口按连接/会话事实
@@ -912,7 +914,8 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
             .position(x + width - metrics.spacing.section - 80.0f,
                 y + metrics.spacing.section + 3.0f)
             .fontSize(metrics.typography.caption)
-            .color(trust_color(semantic, remote->trust_state))
+            .color(trust_color(semantic, remote->trust_state,
+                remote->inbound_trust))
             .build();
     }
 

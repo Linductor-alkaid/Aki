@@ -29,7 +29,13 @@ struct MainWindowModel;  // settings_page.cpp 消费完整定义（main_window.h
 void composeSettingsPage(eui::Ui& ui,
     const components::theme::ThemeColorTokens& tokens,
     const AkiSemanticPalette& semantic, float x, float y, float width,
-    float height, float screen_width, float screen_height,
-    MainWindowModel& model);
+    float height, MainWindowModel& model);
+
+// Overlay belongs to the window root so the dialog centers in the window,
+// independently of the Settings scroll position and content-column offset.
+void composeSettingsPasswordDialog(eui::Ui& ui,
+    const components::theme::ThemeColorTokens& tokens,
+    const AkiSemanticPalette& semantic, float screen_width,
+    float screen_height, MainWindowModel& model);
 
 }  // namespace aki::ui

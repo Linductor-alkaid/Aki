@@ -7,8 +7,8 @@
 // 本地状态机）。配对一次性结果（on_pairing_completed）→ PairingCompletedWork
 // → UpsertDevice 信任转移（成功 Pending→Trusted、失败保留 Pending 可重试，
 // 状态经 Store 快照可见，
-// 不新增 AppEvent 主路径类型）。DEC-019 修订：会话连接不改变本机信任，
-// 只有本机输入对端口令后收到成功配对结果才推进 Trusted。事件与命令经单飞有界排空泵串行处理
+// 不新增 AppEvent 主路径类型）。DEC-022：会话连接不改变 grant 状态，
+// 本机取得对端签发 grant 后推进 Trusted，表示对端已信任本机。事件与命令经单飞有界排空泵串行处理
 // （EXEC-02：业务不在 Adapter 回调线程），9 类事件中的 DeviceConnected /
 // DeviceDisconnected 由本 Manager 发布主路径事件（设计第 8.3 节路由表）。
 //
@@ -57,6 +57,10 @@ struct SetDeviceRemarkWork {
 struct DeviceConnectedWork {
     aki::device::DeviceId device;
     aki::device::ConnectionPath path = aki::device::ConnectionPath::Unknown;
+};
+
+struct TrustCalibrationWork {
+    aki::device::DeviceId device;
 };
 
 struct DeviceDisconnectedWork {
@@ -113,6 +117,7 @@ using DeviceManagerWork = std::variant<DeviceDiscoveredWork,
     DeviceNamedWork,
     SetDeviceRemarkWork,
     DeviceConnectedWork,
+    TrustCalibrationWork,
     DeviceDisconnectedWork,
     ConnectionPathChangedWork,
     StartDiscoveryWork,
@@ -152,6 +157,10 @@ public:
     [[nodiscard]] bool enqueue_connected(
         aki::device::DeviceId device, aki::device::ConnectionPath path) {
         return pump_.enqueue(DeviceConnectedWork{std::move(device), path});
+    }
+
+    [[nodiscard]] bool enqueue_trust_calibration(aki::device::DeviceId device) {
+        return pump_.enqueue(TrustCalibrationWork{std::move(device)});
     }
 
     [[nodiscard]] bool enqueue_disconnected(aki::device::DeviceId device) {
@@ -285,9 +294,8 @@ private:
         if (work.device.empty()) {
             return false;
         }
-        // 连接状态与本机信任决策分离。对端持有本机签发的 grant 仅证明
-        // 对端获得本机服务访问权，不代表本机已输入对端口令并信任对端。
-        // 本机 Pending→Trusted 只由本机 pair_peer 成功回报推进。
+        // 连接状态与 grant 方向分离。对端持有本机签发的 grant 对应
+        // inbound_trust；本机取得对端签发 grant 才推进 Trusted。
         // 主路径事件只由 DM 投递一次（设计第 8.3 节路由表）；初连即提交
         // 映射路径（DEC-015，删除宿主侧 Lan 硬编码）。
         const bool posted = post_event(DeviceConnectedEvent{work.device, work.path});
@@ -298,11 +306,20 @@ private:
         // 对向信任校准（DEC-021）：会话（重）裁定通过，本机 TrustStore 的
         // 双向 grant 有效性可能已变。有界本地查询后字段级落库；查询失败
         // （对端无 endpoint/会话上下文）不阻塞连接事实。
-        if (auto directions = adapter_.trust_directions(work.device)) {
-            (void)state_owner_.submit_update(
-                SetDeviceInboundTrust{work.device, directions->issued});
-        }
+        (void)calibrate_trust(work.device);
         return posted && presence && path;
+    }
+
+    bool handle(TrustCalibrationWork& work) {
+        return calibrate_trust(work.device);
+    }
+
+    bool calibrate_trust(const aki::device::DeviceId& device) {
+        if (device.empty()) return false;
+        auto directions = adapter_.trust_directions(device);
+        if (!directions) return false;
+        return state_owner_.submit_update(
+            SetDeviceInboundTrust{device, directions->issued});
     }
 
     bool handle(DeviceDisconnectedWork& work) {
@@ -433,6 +450,9 @@ private:
         if (work.password.empty()
             || !adapter_.confirm_pairing(work.device,
                 std::move(work.password))) {
+            // UI 入队成功不等于 adapter 接纳；同步拒绝也必须进入可见结果。
+            (void)state_owner_.submit_update(
+                SetPairingFailure{work.device, true});
             return false;
         }
         return state_owner_.submit_update(SetPairingFailure{work.device, false});
@@ -447,17 +467,32 @@ private:
     }
 
     bool handle(RevokeDeviceWork& work) {
-        // wire 面撤销全部有效 grant（无 grant 时 false 可见）+ 本地
-        // Trusted → Revoked；撤销收回本机签发授权，对向信任随之归零
-        // （DEC-021 四态）。
+        // wire 面撤销全部有效 grant（无 grant 时 false 可见）。本机持有
+        // 对端 grant 时 Trusted→Revoked；仅本机签发 grant 时清除
+        // inbound_trust，不伪造 Unknown/Pending→Revoked 边。
+        executor::comm::Snapshot<AppState> snapshot;
+        if (!state_owner_.try_load_snapshot(snapshot)) return false;
+        const aki::device::DeviceIdentity* existing = nullptr;
+        for (const auto& device : snapshot.value.devices.devices) {
+            if (device.id == work.device) {
+                existing = &device;
+                break;
+            }
+        }
+        if (existing == nullptr
+            || (existing->trust_state != aki::device::TrustState::Trusted
+                && !existing->inbound_trust)) return false;
         if (!adapter_.revoke_trust(work.device)) {
             return false;
         }
-        const bool transitioned = apply_trust_transition(work.device,
-            aki::device::TrustState::Revoked);
-        (void)state_owner_.submit_update(
+        const bool transitioned = existing->trust_state
+                == aki::device::TrustState::Trusted
+            ? apply_trust_transition(work.device,
+                aki::device::TrustState::Revoked)
+            : true;
+        const bool cleared = state_owner_.submit_update(
             SetDeviceInboundTrust{work.device, false});
-        return transitioned;
+        return transitioned && cleared;
     }
 
     bool handle(PairingCompletedWork& work) {

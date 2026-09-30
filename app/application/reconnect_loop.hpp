@@ -38,6 +38,17 @@
 
 namespace aki::app {
 
+// Reconnect only devices that already entered a pairing/trust round.
+// Discovery may mark a Pending peer Online before its session is linked, so
+// presence alone cannot decide whether the reconciliation sweep should run.
+[[nodiscard]] inline bool should_reconnect_known_device(
+    const aki::device::DeviceIdentity& device,
+    const aki::device::DeviceId& local) noexcept {
+    return device.id != local
+        && (device.trust_state == aki::device::TrustState::Pending
+            || device.trust_state == aki::device::TrustState::Trusted);
+}
+
 // 构造选项置于命名空间作用域（同仓库既有处理，GCC 纪律）。
 struct ReconnectCoordinatorOptions {
     std::chrono::milliseconds retry_interval{500};   // 重试间隔（可中断切片等待）

@@ -12,7 +12,239 @@
 > 真实 Adapter、NodeSession、发现/消息/图片/传输/presence/重连管道与恢复
 > 语义均已就绪
 > 建议发布点：v0.5.0（MVP）
-> 更新日期：2026-09-29（M5-12~17 双端实测修复进行中）
+> 更新日期：2026-09-30（M5-29~31 修复、CI 与双设备复验）
+
+## M5-29~M5-30：历史会话恢复与基础通信权限
+
+> 状态：Completed；负责人：Linductor；依据：DEC-008、
+> [DEC-023](../decisions/DEC-023-basic-communication-policy.md)。
+
+- [x] `M5-29` 启动恢复的 Conversation 参与连接/断开事件推进，保留原 ID、
+  端点和历史；验收：恢复后重连/断开、重复 ensure、Archived 不复活单测，
+  HostRuntime 实际播种接线，CI 与双设备聊天页状态复验。
+- [x] `M5-30` 核对并向 Heyaki 提出免设备信任的基础消息/文件能力；
+  验收：公开 API、通道与服务权限证据、反馈台账、上游 issue。
+  状态 Completed（本项范围为能力核对与 issue）；实现接入待 Heyaki 独立提供策略 API 后另行验证，不以 Aki 放开 UI 代替。
+
+2026-09-30：用户要求优先修复设备页在线而聊天页断开的状态不一致，
+并将消息/文件通信与未来 shell 等设备控制的信任授权分开。已定位恢复
+会话只播种 AppStateOwner、未播种 ConversationManager 的创建记录，导致
+后续 connected/disconnected 被当成未建会话空操作。修复复用既有
+ManagerPump，不新增线程、队列或调度器。实际绿点来自 presence，仍须
+真实建链事件才推进 Active，不能把发现在线直接作为已连接。
+
+本机 Debug 全量构建通过；`ctest --test-dir build/debug --verbose
+--output-on-failure -j4` 43/43 无失败（37.18s）。其中断线恢复回环因
+close_lan 后未收到 disconnect 事件而 skip，不能计为真实恢复验收；
+GUI 双端状态复验由用户配合，负责人 Linductor，条件为两端新版启动、
+实际路径建立后查看同一历史 Conversation。新增恢复回归 1 用例/77 断言
+通过；最终 Manager 单测 19 用例/921 断言、宿主单测 4 用例/149 断言通过。
+宿主真实 DB 夹具验证恢复记录参与连接/断开并保留原 ID。
+上游基础通信需求已提交 Heyaki #4，反馈 HEY-20260930-003；不改 pinned
+依赖。本机正常关闭/重启新版 Debug 后，原 1 条历史会话从 Disconnected 恢复
+Active，原 6 条消息仍在；该证据不代替目标机 GUI 验收。
+后续双端同版 GUI 复验已通过，见 M5-32 验收记录。
+CI run 36671067469 / head 580d989：Debug、ASAN、UBSAN、Windows Debug 与
+Ubuntu 20.04 deb 通过；TSAN 因上游回调重置竞争失败（42/43），记录为
+HEY-20260930-004 / Heyaki #5。沿现有 vendor-only 纪律只增加精确符号
+豁免后重跑，不把竞态宣称为已修复。首轮 deb 已下载并核对 archive digest，
+包 SHA-256 为 e9436226a343840136e88091410a7152b124e2f74bc91f2732f0218cbea80c10，
+目标机 SSH 密码窗口仍等待用户输入；尚未上传，未冒充交付/安装完成。
+
+## M5-31：传输完成与暂停确认的竞态
+
+> 状态：Completed；负责人：Linductor；依据：DEC-011/DEC-012、设计 §7.1。
+
+- [x] `M5-31` wire committed 后完成本地归档并收敛 Completed，迟到暂停
+  确认不能使完成闸门停摆；保留 Cancelled/Failed 终态不复活、未知行拒绝。
+  验收：确定性暂停/恢复/迟到暂停/committed 回归、归档闸门与取消回归，
+  Debug/ASAN 本地目标测试、CI 七项全绿及新版包交付。
+
+2026-09-30：run 36672794896 / head c7d2f1c 仅 Linux ASAN 失败，其余六项
+成功，TSAN 上游精确符号豁免生效。失败为 test_transfer_full_loopback:406
+的 terminal_seen 断言（无 ASAN 内存报告）：对端 committed 且本体哈希通过，
+本机 Paused、owner 拒绝 1 次、TM handler 拒绝 1 次。小文件的最后进度可能
+早于暂停确认；resume 仅解除归档抑制，未必还有 wire progress 能推进状态。
+明确 committed 是 wire 完成事实：归档不再等待网络 resume，持有终态时
+迟到 paused 不阻止本地归档；归档完毕后经既有 Transferring 合法边结算。
+不增加线程/调度器，不放宽 Cancelled/Failed 或未知行的状态校验。
+
+确定性回归在旧代码上失败两处：held committed 后归档 advance=0、
+归档完整但行仍 Paused；修复后覆盖 committed 早/晚于归档、迟到 pause
+控制/确认、Negotiating 无最后进度、取消 held 完成及迟到 IO/wire 事件。
+Debug 完整构建通过，全量 ctest 43/43 无失败（34.78s）；发送路径
+11 用例/279 断言，Manager 19/921、接收路径 4/80、宿主 4/149。
+ASAN 目标构建与四个测试目标无失败（19.86s），发送路径同样 11/279。
+本机完整文件回环在 Debug/ASAN 均因握手限制 skip，Debug 断线恢复回环
+也 skip，不计网络验收；本轮 CI 尚待新提交结果，负责人 Linductor。
+后续七项 CI 与新版包交付已满足，见 M5-32 续验记录。
+
+续验：CI run 36675887002 / head 78684a9ece0ee141d56e4adda412622a91fd7520
+七项均 completed/success：Linux Debug、ASAN、UBSAN、TSAN、Windows
+Debug、Ubuntu 20.04 deb、Windows setup。TSAN 仍包含前述上游符号豁免，
+不表示 Heyaki #5 已解决。目标机新版包交付与聊天页复验尚未完成，
+负责人 Linductor 与设备操作者；条件为两端新版运行并检查同一历史会话。
+
+## M5-32：重连快照中的历史关闭记录
+
+> 状态：Completed；负责人：Linductor；依据：DEC-006/DEC-022、设计 §8.1。
+
+- [x] `M5-32` 当前连接不被同设备的历史 closed 会话覆盖；验收：
+  不同快照顺序、restricted/authenticated 与旧 closed 共存、完整退出/
+  重开事件序列和双设备重启复验，相关单测与 CI。
+
+2026-09-30：用户手动安装并启动新 deb 后报告：后启动一端识别对端，
+先启动一端的历史聊天仍等待恢复；交换重启顺序则症状交换。目标机
+安装包 SHA-256 为 21eafb49a39185d19c039321ec64ebfd49f5ee1f7d367a8065a9364a708ba4bc，
+运行二进制 SHA-256 为 3d72bd938b00d3d47d2ddf414e70a806e86b6e91d4b0eaf3edc4859235f59d93，
+`dpkg -V aki` 无差异；包构建时间为 14:13。本轮自动下载超时，未由
+Agent 上传，交付/安装来源为用户手动操作。
+本机启动后 DB 为 Active、6 条历史消息，目标机仍 Disconnected、4 条
+历史消息；目标正常退出后本机 DB 转为 Disconnected，底层活动会话归零。
+已核对 pinned Heyaki `publish_peer_sessions()` 将当前 attempts 放在
+前面、finished closed 历史追加在后；Aki diff 用 device ID 无条件覆盖，
+同设备的历史关闭行会覆盖新会话。该问题在 Aki Adapter 中归并修正，
+不改 pinned 依赖、不新建并发路径。目标机重开后的现场已复现：本机底层当前 attempt 为 authenticated、
+PeerSession active，同时保留一条 finished closed；本机 DB 仍
+Disconnected，目标机 DB 恢复 Active。修复验收待补。
+
+修复在 diff 两端排除 closed 记录，再按 authenticated/restricted/握手态
+选择设备代表；不修改 Node 生命周期或自建监控。新确定性测试在旧代码
+2 个用例/27 条断言中失败 5 条，修复后 Debug 与 ASAN Adapter 单测
+均 14 用例/143 断言通过；覆盖历史顺序、冷启动、重排、路径变化、
+重复断开及同设备多个端点。Debug 全量构建、verbose ctest 43/43
+无失败（41.96s），文件完整回环实际通过；断线恢复回环因 close_lan
+后未收到断开事件 skip，不计该回环验收。本机已正常关闭/重启修复版，
+用户已配合目标机再次退出/重开并确认本机自动恢复连接。本机 DB
+也恢复 Active；原 6 条消息保留并新增 1 条消息。目标机仍运行本轮补丁
+之前的包，需要同版更新后反向重启复验；新版 CI 与 deb 交付待完成。
+
+续验：run 36681973343 / head b31b567634b770e89aaeb927fea020b536bec907
+七项 CI completed/success。Ubuntu 20.04 artifact 11082685644 的 archive
+SHA-256 为 6dd5559814c24e22ac9a2de86dd4b7cc4022cf35ca3a1032c4713def95a4c5ec，
+deb 为 9e155a81cae145acaea75668e800dd75f418aea5b28d353cc5b794ca404354a9，
+已上传 `/home/ybt/aki-0.1.0-b31b567-amd64.deb`，远端哈希与格式检查
+通过。首轮 scp 文件哈希异常未计交付，改为 SSH 流式传输到 staging，
+核对后原子替换。M5-31 的 CI/新版包交付退出条件满足，状态 Completed。
+用户安装并重开目标机后，运行进程与安装文件均为 CI 二进制 SHA-256
+5a2be316455c6ea0f3c655e2881d6f35e98d897f4c60b9b610c18adebe59ac89；
+目标历史 Conversation 为 Active，原 4 条消息保留。反向重连 GUI 复验
+已由用户确认：本机正常退出后目标显示断开、重开后恢复；两端 DB 均
+为 Active。但本机重开后运行 `/opt/aki/aki` 的 2026-09-29 旧安装版
+（SHA-256 7ade718f0d49a4e05fcc89dd1af0075263a48e4a165c7ea8e935bfeb9611aeee），
+此前本机修复验证运行 Debug。为确保日常启动也使用修复版，已将同一
+CI deb 放到本机 `下载/aki-0.1.0-b31b567-amd64.deb`，待用户安装/重开
+并核对运行二进制；负责人 Linductor 与设备操作者。
+上一轮手动安装包 21eafb49... 已完整核对与 run 36675887002 / head
+78684a9 的 CI deb 哈希一致，不仅以构建时间推断。
+
+本机安装/重开后实际运行程序也匹配同一 CI 二进制 SHA-256
+5a2be316455c6ea0f3c655e2881d6f35e98d897f4c60b9b610c18adebe59ac89；
+目标机仍运行同版，两个历史 Conversation 均 Active，本机 9 条、目标
+4 条消息。用户已分别确认目标机重启后本机自动恢复，以及本机退出后
+目标机显示中断、重开恢复。M5-29/M5-32 双端会话恢复验收 Completed。
+该结果仅证明连接/会话推进；基础消息/文件的免信任策略仍受 Heyaki #4
+阻塞，密码授权及无密码批准的已登记问题未由本项解决。
+
+## M5-25~M5-28：连接与信任语义复验
+
+> 状态：In Progress；负责人：Linductor；设计依据：
+> [DEC-022](../decisions/DEC-022-link-before-trust-and-grant-direction.md)、
+> [Aki 设计](../design/aki_design.md)及 [UI 规范](../design/aki_ui_design.md)。
+
+- [ ] `M5-25` 在线设备可先进入受限连接，连接/断开与授权分别可观测；
+  验收：两端无 grant 时连接路径出现，授权转换不重复连接事件，断线可恢复。
+- [ ] `M5-26` 信任方向显示按 grant 签发方解释；验收：A 输入 B 口令后
+  A 显示「对方已信任本机」，B 显示「本机已信任对方」，反向操作得到互信；
+  双端文本、图片、普通文件与失败反馈实际验证。
+- [x] `M5-27` Settings 修改本机密码弹窗位于整个窗口中央；验收：
+  不同窗口尺寸、设置页滚动位置和中英文界面下弹窗中心与窗口中心一致。
+- [ ] `M5-28` 对端直接点击“允许”建立授权（双方无需输入密码）；
+  阻塞：pinned Heyaki 无接收方批准 API，证据与最小能力见
+  [HEY-20260929-001](../heyaki_feedback/ledger.md)。负责人 Linductor；
+  上游固定 API 并授权更新 pinned 依赖后接入和双端验证。
+
+2026-09-30 M5-27 验收 Completed：两台设备均运行本轮 CI deb，用户
+确认修改本设备密码弹窗在中英文界面、不同窗口尺寸下始终位于整个
+窗口中央；缩小窗口使设置页可滚动后，再滚动并打开弹窗仍居中。
+本次只观察布局，未改动设备口令。
+
+2026-09-29：用户要求按连接→信任→通信顺序修正并在另一台设备上配合
+验证，同时将更新 deb 交付 `ybt@192.168.1.206:~/`。本机单测与编译先行；
+双端验收、包安装与 GUI 定位由用户配合实测，未执行前保持未完成。
+用户随后明确“对方确认”为对方点允许且无需输入密码；此项单列
+`M5-28`，当前不得以密码配对替代验收。
+审查重连时补充发现：Pending 设备可能已被 LAN 发现标为 Online，但仍未
+建链；M5-25 纳入该状态的周期重连验证，终态不自动重新配对。
+
+2026-09-29 本机验证（Ubuntu Linux x86_64，GCC Debug）：
+`cmake --build build/debug -j4` 通过；针对性测试 12/12、11/11、
+10/10 用例通过；最终全量 `ctest --test-dir build/debug
+--output-on-failure -j4` 43/43 通过；Impeccable 机械扫描对变更的
+UI 文件返回 `[]`。受限建链、授权方向与弹窗位置尚需双设备/GUI 复验，
+负责人 Linductor 与设备操作者；条件为目标设备安装同版 deb、两端
+Aki 在线并可互通 TCP，执行 M5-25~27 的验收动作。
+同日补充：修正 Pending 已在线但未建链时的重连对账判定；
+`cmake --build build/debug --target aki test_reconnect_loop test_host_runtime -j4`
+通过，`test_reconnect_loop` 8/8、`test_host_runtime` 4/4 用例通过。
+双机首轮验证：CI 产物 `aki-0.1.0-Linux.deb` 的 SHA-256 为
+`a867dd6a8817363fd7bf5b418595b8143dc4483dadd19c2d912ed20ed6e16fcc`，
+目标机 `ybt@192.168.1.206` 所安装包哈希一致，运行于 Ubuntu 22.04
+amd64。目标机发现本机 Active、待确认，但点击「验证密码」后无可见反馈；
+本机会话显示连接断开等待恢复。双向 TCP 监听端口可达；两端 Heyaki
+TrustStore 中旧 grant 方向/撤销状态不一致。复验前修正断连时错误开放的
+验证入口、未接纳请求的弹窗反馈，并给在线未建链设备提供连接入口。
+连接、授权和消息实测仍未通过，M5-25~26 保持未完成；负责人 Linductor，
+补跑条件为两端安装上述交互修正包并重新执行连接→口令→消息步骤。
+交互修正的本机验证：`cmake --build build/debug --target aki test_ui_models
+-j4` 通过，`test_ui_models` 12/12 用例、168/168 断言通过；双端复验
+尚待新版安装。
+
+2026-09-30 续验：`be3e4e8` 的七项 CI 均在 `test_device_trust` 失败；
+测试仍使用旧的“Pending 即可验证”前置条件。补入真实连接事件后复验。
+同时修正 UI 通道已接纳而 Adapter 拒绝时未发布失败状态的问题；
+NodeSession 提交前核对受限会话快照，相关上游完成契约缺口登记为
+[HEY-20260930-001](../heyaki_feedback/ledger.md)。回环测试统一单侧口令
+提交，并验证发起方结果与双端 authenticated，避免交叉配对使结果失效。
+单侧配对后的实跑暴露 `test_transfer_full_loopback` 旧前置缺陷：等待
+未赋值的标志、未建立 Conversation、未连接 RouterSink。补齐测试装配，
+改为消息哈希和 wire 终态实测，删除终态注入，并在失败时先停 worker。
+断线恢复回环仍可能输出环境降级，必须按实际日志记录，不能由退出码
+推断真实断线恢复已验收。
+实跑同时发现发送归档会话未按网络进度推进 Transferring，导致后续
+Completed 被拒。修正 TM 的发送会话路径，单测改用真实进度事件完成
+状态链；全链路回环补数据库 worker，使完成后的归档、DB 哈希与文件
+本体一致性能够实际执行。
+本机最终 Debug 构建通过；`ctest --test-dir build/debug --verbose
+--output-on-failure -j4` 43/43 无失败（24.24s），其中完整文件回环实际
+通过 31 个断言，发送路径单测 11 用例/177 断言，设备信任单测
+11 用例/81 断言，UI 模型 12 用例/168 断言。连接状态与断线恢复回环
+（test_peer_sessions_loopback、test_disconnect_recovery_loopback）输出
+握手失败 skip，不计为真实验收。上述文件回环只证明受控关闭后的传输
+落库和消息快照保持，不宣称进程重启恢复。ASAN/UBSAN/TSAN、Windows
+以及 Ubuntu 20.04 打包检查由本轮 CI 承载，尚待结果；双机补跑负责人
+Linductor 和设备操作者，条件为两端使用新包、在线且 TCP 可互通。
+用户明确本轮先验证连接与密码授权；Heyaki 独立管理，通过台账向上游
+提出能力/缺陷 issue，不在 Aki 内直接修改依赖。上游
+[Heyaki #2](https://github.com/Linductor-alkaid/heyaki/issues/2) 跟踪无密码
+接收方允许，[Heyaki #1](https://github.com/Linductor-alkaid/heyaki/issues/1)
+跟踪配对 strand 校验失败终态反馈，分别关联上述两个反馈编号。
+本轮 CI 回填：run `36659102913`、head
+`ef23c78c784b99ea73356e6aa138b62cb5872198`，Linux debug/asan/ubsan/tsan、
+Windows MSVC debug、Ubuntu 20.04 deb 和 Windows setup 七项全绿。
+目标机已由用户手动安装并打开新版；deb SHA-256 为
+`05c6dfd24f1d9de7da89d902d1fbe94e288685ac2263a34b480a7a113c783fa8`，
+安装二进制与包内容 SHA-256 同为
+`34f169e485f220e4e88e369525cf96edbbeef7f8f447811256b84d88a93dab76`，
+`dpkg -V aki` 无差异。本机命令行下载存储地址失败，未冒充上传成功；
+用户手动下载的包已通过 LAN 取回核对。
+双机复验再次失败：目标机截图显示在线、LAN、待确认；验证口令后弹窗
+关闭且无结果。本机调试器取证确认已 authenticated 并收到了配对请求，
+Heyaki 却不发配对结果，详见
+[HEY-20260930-002](../heyaki_feedback/ledger.md#hey-20260930-002非对称授权状态下接收端静默忽略密码请求)
+及 [Heyaki #3](https://github.com/Linductor-alkaid/heyaki/issues/3)。
+M5-25~28 均保持未完成；非对称旧授权修复由 Heyaki 独立处理，不能用
+首次配对测试或 CI 全绿替代双机验收。
 
 ## M5-12~M5-17：双端实测后的修复与设备体验
 

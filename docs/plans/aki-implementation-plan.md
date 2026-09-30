@@ -2,11 +2,35 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-09-29
+> 更新日期：2026-09-30
 > 设计依据：[Aki 设计方案](../design/aki_design.md)
 > 协作约束：[AGENTS.md](../../AGENTS.md)、[项目管理与工程规范](../project/project-standards.md)
 
 ## 当前状态
+
+- 2026-09-30：M5-32 双端交换重启顺序复现当前连接被历史关闭会话覆盖。
+  Heyaki 快照同时包含当前与 finished 记录，Aki Adapter 按设备归并时
+  旧 closed 覆盖当前 linked。现已在 Adapter 修复并完成双端重启复验，
+  两端运行同一 CI deb，历史会话恢复 Active；M5-29/31/32 验收 Completed，
+  M5-27 也通过双端中英文、窗口尺寸和设置页滚动位置的居中复验；
+  证据见 M5 记录。
+
+- 2026-09-30：M5-31 跟进 CI ASAN 的文件传输终态断言失败，修复 wire
+  committed 与暂停/恢复确认交错时的归档停摆和 Paused 收尾；复用既有
+  Manager/IO 单飞承载，确定性回归与取消终态约束见 M5 维护记录。
+
+- 2026-09-30：M5-29 修复历史会话恢复后遗漏连接事件的问题，保留原 ID/
+  端点及消息；基础通信与设备控制授权分离按用户要求冻结
+  [DEC-023](../decisions/DEC-023-basic-communication-policy.md)。M5-30
+  已核对 pinned Heyaki 的业务通道/服务门控并提交
+  [Heyaki #4](https://github.com/Linductor-alkaid/heyaki/issues/4)，上游独立管理，
+  当前免信任消息/文件尚未实现。会话状态修复已完成双设备同版复验。
+
+- 2026-09-29：`M5-25`~`M5-28` 处理“在线先建链、授权方向、设置弹窗中心”
+  的第三轮验证，依据 [DEC-022](../decisions/DEC-022-link-before-trust-and-grant-direction.md)。
+  无密码“对方点允许”受 pinned Heyaki API 阻塞，记录为
+  [HEY-20260929-001](../heyaki_feedback/ledger.md)；其余项先行实现并交付
+  同版 deb 供双端实测，验收前保持 In Progress。
 
 - 2026-09-29：用户同网双端实测后立项 `M5-12`~`M5-17`（入站时间、媒体
   发送、输入法与布局、连接/单向信任、发现时名称与备注、中文默认与语言设置）。
