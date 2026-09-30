@@ -61,10 +61,6 @@ struct DeviceView {
             && presence == aki::device::PresenceState::Online
             && connection_path == aki::device::ConnectionPath::Unknown;
     }
-    [[nodiscard]] bool can_renew() const noexcept {
-        return trust_state == aki::device::TrustState::Trusted
-            && connection_path != aki::device::ConnectionPath::Unknown;
-    }
     // 重新配对入口（DEC-021）：终态（Rejected/Revoked）设备可由用户显式
     // 发起全新配对轮，状态机边 Rejected/Revoked→Pending。
     [[nodiscard]] bool can_rebegin() const noexcept {

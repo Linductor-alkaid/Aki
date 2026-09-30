@@ -280,6 +280,9 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
     REQUIRE(discovered_b->public_key == identity_b.public_key);
     // M5-11：配对前快照里的发现行即在线存活（目录条目 = 正在广播）。
     REQUIRE(discovered_b->presence == PresenceState::Online);
+    // Directory discovery alone cannot admit a password attempt: the
+    // snapshot guard avoids Heyaki's silent strand validation rejection.
+    REQUIRE_FALSE(side_a.pair_peer(identity_b.id, "test-local-password"));
 
     // DEC-006 映射 3：pairing_restricted 会话出现 → Unknown→Pending。
     REQUIRE(side_a.connect_lan(identity_b.id));
@@ -450,11 +453,8 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
     REQUIRE(state_owner.stats().updates_rejected
         == rejected_before_revive_b + 1);
 
-    // 重复配对不重复（RULE-09）：Node::pair_peer 是 strand 异步投递——返回值
-    // 只反映投递受理（恒 true），已认证会话上的重复提交在 strand 侧被拒后
-    // 结果被丢弃（不产生观察器事件，pending 未建立），公开面无可观测返回值。
-    // 故此处断言稳态：重复提交既不改变会话状态（双侧保持 authenticated），
-    // 也不产生新的 pairing 观察器结果（paired_a 已置位且无失败详情新增）。
+    // HEY-20260930-001：Aki 快照前置校验拒绝已认证会话上的重复提交；
+    // 不改变双侧会话，也不产生新的 pairing observer 结果。
     {
         const bool duplicate_submitted =
             side_a.pair_peer(identity_b.id, "test-local-password");
@@ -462,7 +462,7 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
         const bool b_auth_before = side_b.session_authenticated(identity_a.id);
         const auto failures_before = pairing_failure_counter.load();
         std::this_thread::sleep_for(300ms);
-        REQUIRE(duplicate_submitted);  // 异步投递受理（非执行结果）。
+        REQUIRE_FALSE(duplicate_submitted);
         REQUIRE(side_a.session_authenticated(identity_b.id));
         REQUIRE(side_b.session_authenticated(identity_a.id));
         REQUIRE(a_auth_before);

@@ -455,7 +455,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 const float row_height = compact_rows
                     ? ((connectable || device.can_confirm()
                             || device.can_reject()
-                            || device.can_revoke() || device.can_renew())
+                            || device.can_revoke())
                         ? 112.0f : 80.0f)
                     : kDeviceRowHeight;
                 if (row_y + row_height > action_y
@@ -517,7 +517,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                     .build();
                 // 信任徽标（§3 语义色）。
                 components::text(ui, row_id + ".trust")
-                    .text(tr(device.pairing_failed && device.can_confirm()
+                    .text(tr(device.pairing_failed
                         ? "Pairing failed - retry"
                         : device.trust_relation_key()))
                     .position(content_x + metrics.spacing.section
@@ -550,7 +550,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                                 - metrics.typography.hint
                                 - (connectable || device.can_confirm()
                                     || device.can_reject()
-                                    || device.can_revoke() || device.can_renew()
+                                    || device.can_revoke()
                                        ? metrics.control.menuItem
                                            + metrics.spacing.compact
                                            + metrics.spacing.tiny
@@ -596,12 +596,11 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                                 : tr("Connection request rejected");
                         }).build();
                 }
-                if ((device.can_confirm() || device.can_renew()) && model.actions) {
+                if (device.can_confirm() && model.actions) {
                     components::button(ui, row_id + ".confirm")
                         .position(button_x, button_y)
                         .size(action_button_width, metrics.control.menuItem)
-                        .text(tr(device.can_renew() ? "Renew file access"
-                                                    : "Verify password"))
+                        .text(tr("Verify password"))
                         .fontSize(metrics.typography.caption)
                         .theme(tokens, true)
                         .textColor(semantic.primary_foreground)
@@ -637,7 +636,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 if (device.can_revoke() && model.actions) {
                     components::button(ui, row_id + ".revoke")
                         .position(button_x + ((connectable
-                                || device.can_confirm() || device.can_renew())
+                                || device.can_confirm())
                             ? action_button_width + metrics.spacing.compact
                             : 0.0f), button_y)
                         .size(action_button_width, metrics.control.menuItem)
@@ -903,7 +902,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                             clear_secret(model.peer_password_draft);
                             if (!admitted) {
                                 model.peer_password_feedback =
-                                    "Connection unavailable; connect and retry";
+                                    "Pairing request rejected";
                                 return;
                             }
                             model.last_action_feedback =

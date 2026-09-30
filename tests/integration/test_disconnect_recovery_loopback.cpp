@@ -160,13 +160,11 @@ TEST_CASE("Disconnect recovery: reconnect loop restores the session (SCOPE-11)",
         [&](const DeviceId& peer, bool ok, const std::string&) {
             if (ok && peer == identity_b.id) paired.store(true);
         });
-    side_b.set_pairing_observer(
-        [&](const DeviceId&, bool ok, const std::string&) {
-            if (ok) paired.store(true);
-        });
     REQUIRE(side_a.pair_peer(identity_b.id, "test-local-password"));
-    REQUIRE(side_b.pair_peer(identity_a.id, "test-local-password"));
-    if (!wait_until([&] { return paired.load(); }, 20s)) {
+    if (!wait_until([&] {
+            return paired.load() && side_a.session_authenticated(identity_b.id)
+                && side_b.session_authenticated(identity_a.id);
+        }, 20s)) {
         // 环境受限降级（沿 M3-04/05/06 纪律，不冒充已验证）：会话已到
         // pairing_restricted 但握手未在预算内完成（CI 偶发停滞，run
         // 35956052751 asan 已过/tsan-ubsan-Windows 实测时序敏感）。打印

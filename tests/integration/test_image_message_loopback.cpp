@@ -152,19 +152,16 @@ TEST_CASE("Two-node image messaging over the borrowed runtime",
         [&] { return side_b.session_pairing_restricted(identity_a.id); },
         15s));
     std::atomic<bool> paired_a{false};
-    std::atomic<bool> paired_b{false};
     side_a.set_pairing_observer(
         [&](const DeviceId& peer, bool ok, const std::string&) {
             if (ok && peer == identity_b.id) paired_a.store(true);
         });
-    side_b.set_pairing_observer(
-        [&](const DeviceId& peer, bool ok, const std::string&) {
-            if (ok && peer == identity_a.id) paired_b.store(true);
-        });
     REQUIRE(side_a.pair_peer(identity_b.id, "test-local-password"));
-    REQUIRE(side_b.pair_peer(identity_a.id, "test-local-password"));
     if (!wait_until(
-            [&] { return (paired_a.load() && paired_b.load()); }, 20s)) {
+            [&] {
+                return paired_a.load() && side_a.session_authenticated(identity_b.id)
+                    && side_b.session_authenticated(identity_a.id);
+            }, 20s)) {
         // 环境受限降级（沿 M3-04/05/09 纪律，不冒充已验证）。
         for (const auto& entry : side_a.peer_session_diagnostics()) {
             std::printf("    [diag] A session peer=%s state=%d restricted=%d\n",

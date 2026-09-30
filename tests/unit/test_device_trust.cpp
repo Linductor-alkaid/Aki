@@ -271,6 +271,10 @@ TEST_CASE("Incoming restricted session is confirmable without starting scan",
     REQUIRE(stack.router.on_pairing_ready(
         aki::device::DeviceId{"incoming-peer"}, key));
     stack.settle();
+    REQUIRE(stack.adapter.inject_device_connected(
+        aki::device::DeviceId{"incoming-peer"},
+        aki::device::ConnectionPath::Lan));
+    stack.settle();
     REQUIRE(stack.trust_of("incoming-peer")
         == aki::device::TrustState::Pending);
     executor::comm::Snapshot<AppState> snapshot;
@@ -280,6 +284,27 @@ TEST_CASE("Incoming restricted session is confirmable without starting scan",
     REQUIRE(views.size() == 1);
     REQUIRE(views.front().fingerprint_available);
     REQUIRE(views.front().can_confirm());
+}
+
+TEST_CASE("Adapter pairing rejection is visible after UI queue admission",
+    "[unit][device_trust][dec022]") {
+    TrustStack stack;
+    REQUIRE(stack.state.submit_update(
+        UpsertDevice{make_device("alpha", aki::device::TrustState::Pending)}));
+    stack.settle();
+    stack.adapter.set_pairing_admission(false);
+    const auto rejected_before = stack.devices.stats().handler_rejections;
+    REQUIRE(stack.actions.confirm_pairing(
+        aki::device::DeviceId{"alpha"}, "peer-owned-password"));
+    stack.settle();
+    REQUIRE(stack.devices.stats().handler_rejections == rejected_before + 1);
+    REQUIRE(stack.trust_of("alpha") == aki::device::TrustState::Pending);
+    executor::comm::Snapshot<AppState> snapshot;
+    REQUIRE(stack.state.try_load_snapshot(snapshot));
+    const auto views = aki::ui::models::derive_device_views(snapshot.value.devices);
+    REQUIRE(views.size() == 1);
+    REQUIRE(views.front().pairing_failed);
+    REQUIRE_FALSE(views.front().can_confirm());
 }
 
 TEST_CASE("Connected carries the mapped path and disconnect resets to Unknown",

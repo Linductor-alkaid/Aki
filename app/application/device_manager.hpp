@@ -450,6 +450,9 @@ private:
         if (work.password.empty()
             || !adapter_.confirm_pairing(work.device,
                 std::move(work.password))) {
+            // UI 入队成功不等于 adapter 接纳；同步拒绝也必须进入可见结果。
+            (void)state_owner_.submit_update(
+                SetPairingFailure{work.device, true});
             return false;
         }
         return state_owner_.submit_update(SetPairingFailure{work.device, false});

@@ -137,6 +137,11 @@ public:
             return false;
         }
         pairing_submits_.push_back(peer);
+        if (!pairing_admission_) {
+            std::fill(password.begin(), password.end(), '\0');
+            password.clear();
+            return false;
+        }
         const bool success = pairing_result_override_.has_value()
             ? *pairing_result_override_
             : !expected_pairing_password_.has_value()
@@ -266,6 +271,10 @@ public:
     void queue_pairing_result(bool success) {
         pairing_result_override_ = success;
     }
+
+    void set_pairing_admission(bool admitted) {
+        pairing_admission_ = admitted;
+    }
     void set_expected_pairing_password(std::string password) {
         expected_pairing_password_ = std::move(password);
     }
@@ -332,6 +341,7 @@ private:
     std::vector<aki::device::DeviceId> revoked_peers_;
     std::optional<bool> pairing_result_override_;
     std::optional<std::string> expected_pairing_password_;
+    bool pairing_admission_ = true;
     bool has_valid_grant_ = true;
 };
 

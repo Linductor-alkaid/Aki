@@ -376,18 +376,25 @@ public:
 
     // DEC-006 映射 3：指纹确认 → pair_peer（scope：message.send + M4-05 起
     // 文件推送独立 scope file.push:<root>，DEC-012⑥——缺省申请全集）。
-    // 一次性结果经 set_pairing_observer 注册；false = 提交被拒（会话缺失/
-    // 非 pairing_restricted/重复 pending，RULE-09 可见）。
+    // 一次性结果经 set_pairing_observer 注册；false = 快照未找到受限会话
+    // 或 strand 派发被拒。重复 pending/提交后状态竞态见 HEY-20260930-001。
     [[nodiscard]] bool pair_peer(const aki::device::DeviceId& peer,
         const std::string& password,
         std::vector<std::string> scopes = {"message.send",
             "file.push:inbox"}) {
-        auto key = endpoint_key_of(peer);
-        if (!key.has_value()) {
-            return false;
+        // HEY-20260930-001: Node admits the strand dispatch before checking
+        // its session, then discards the validation error without an observer.
+        // Reject snapshot-known invalid attempts at the Aki adapter boundary.
+        for (const auto& session : node_.peer_sessions()) {
+            if (::heyaki::to_string(session.peer.device_id) == peer.value
+                && session.state
+                    == ::heyaki::NodePeerSessionState::pairing_restricted) {
+                auto submitted = node_.pair_peer(
+                    session.peer, password, std::move(scopes));
+                return submitted.has_value();
+            }
         }
-        auto submitted = node_.pair_peer(*key, password, std::move(scopes));
-        return submitted.has_value();
+        return false;
     }
 
     [[nodiscard]] bool rotate_local_password(std::string_view password,
