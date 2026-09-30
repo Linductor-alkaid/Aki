@@ -87,6 +87,11 @@ Completed 被拒。修正 TM 的发送会话路径，单测改用真实进度事
 落库和消息快照保持，不宣称进程重启恢复。ASAN/UBSAN/TSAN、Windows
 以及 Ubuntu 20.04 打包检查由本轮 CI 承载，尚待结果；双机补跑负责人
 Linductor 和设备操作者，条件为两端使用新包、在线且 TCP 可互通。
+用户明确本轮先验证连接与密码授权；Heyaki 独立管理，通过台账向上游
+提出能力/缺陷 issue，不在 Aki 内直接修改依赖。上游
+[Heyaki #2](https://github.com/Linductor-alkaid/heyaki/issues/2) 跟踪无密码
+接收方允许，[Heyaki #1](https://github.com/Linductor-alkaid/heyaki/issues/1)
+跟踪配对 strand 校验失败终态反馈，分别关联上述两个反馈编号。
 
 ## M5-12~M5-17：双端实测后的修复与设备体验
 

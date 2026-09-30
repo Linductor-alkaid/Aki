@@ -5,7 +5,9 @@
 
 ## HEY-20260929-001：受限会话由接收方直接批准
 
-- **状态**：待上游能力设计；未修改 pinned 依赖，未向上游发送消息。
+- **状态**：待上游能力设计；按用户 2026-09-30 指示独立管理 Heyaki，
+  已提交 [Heyaki #2](https://github.com/Linductor-alkaid/heyaki/issues/2)，
+  未修改 pinned 依赖。当前先验证 Aki 连接与密码授权。
 - **用户需求**：A 发起连接后，B 在自己的设备上点击“允许”即可签发给 A
   的授权，无需 A 输入 B 的密码，也无需 B 输入 A 的密码。
 - **当前证据**：`third_party/heyaki/include/heyaki/node.hpp` 公开的配对入口
@@ -29,6 +31,7 @@
 ## HEY-20260930-001：配对派发后的校验失败未回传
 
 - **状态**：已核对 pinned API 与实现；Aki 增加快照前置校验，未修改依赖。
+  已提交 [Heyaki #1](https://github.com/Linductor-alkaid/heyaki/issues/1)。
 - **可复现证据**：`Node::pair_peer` 成功 post 到 strand 后返回成功，
   派发 lambda 丢弃 `pair_peer_strand` 的结果。会话缺失、非受限或已存在
   pending 请求时，该方法失败而不建立 pending，也不调用 pairing observer。
