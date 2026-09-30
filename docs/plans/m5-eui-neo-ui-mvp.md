@@ -92,6 +92,22 @@ Linductor 和设备操作者，条件为两端使用新包、在线且 TCP 可�
 [Heyaki #2](https://github.com/Linductor-alkaid/heyaki/issues/2) 跟踪无密码
 接收方允许，[Heyaki #1](https://github.com/Linductor-alkaid/heyaki/issues/1)
 跟踪配对 strand 校验失败终态反馈，分别关联上述两个反馈编号。
+本轮 CI 回填：run `36659102913`、head
+`ef23c78c784b99ea73356e6aa138b62cb5872198`，Linux debug/asan/ubsan/tsan、
+Windows MSVC debug、Ubuntu 20.04 deb 和 Windows setup 七项全绿。
+目标机已由用户手动安装并打开新版；deb SHA-256 为
+`05c6dfd24f1d9de7da89d902d1fbe94e288685ac2263a34b480a7a113c783fa8`，
+安装二进制与包内容 SHA-256 同为
+`34f169e485f220e4e88e369525cf96edbbeef7f8f447811256b84d88a93dab76`，
+`dpkg -V aki` 无差异。本机命令行下载存储地址失败，未冒充上传成功；
+用户手动下载的包已通过 LAN 取回核对。
+双机复验再次失败：目标机截图显示在线、LAN、待确认；验证口令后弹窗
+关闭且无结果。本机调试器取证确认已 authenticated 并收到了配对请求，
+Heyaki 却不发配对结果，详见
+[HEY-20260930-002](../heyaki_feedback/ledger.md#hey-20260930-002非对称授权状态下接收端静默忽略密码请求)
+及 [Heyaki #3](https://github.com/Linductor-alkaid/heyaki/issues/3)。
+M5-25~28 均保持未完成；非对称旧授权修复由 Heyaki 独立处理，不能用
+首次配对测试或 CI 全绿替代双机验收。
 
 ## M5-12~M5-17：双端实测后的修复与设备体验
 

@@ -48,3 +48,33 @@
   UI 移除会向已授权会话再次调用 `pair_peer` 的“更新文件授权”入口。
 - **负责人及补跑条件**：Linductor；上游修复公开完成契约并固定依赖后，
   补会话校验竞态、重复请求、取消、超时、关闭和反向 grant 验证。
+
+## HEY-20260930-002：非对称授权状态下接收端静默忽略密码请求
+
+- **状态**：双机实际复现，已提交
+  [Heyaki #3](https://github.com/Linductor-alkaid/heyaki/issues/3)；按用户要求
+  独立管理上游，未修改 pinned 依赖。
+- **版本与条件**：Heyaki `e114508ab32d496d52e9db9bac26eb1cc88c4ae7`；
+  Aki CI run `36659102913` / head `ef23c78`，七项 job 全绿。目标机
+  手动安装的 deb SHA-256 为
+  `05c6dfd24f1d9de7da89d902d1fbe94e288685ac2263a34b480a7a113c783fa8`，
+  安装二进制与 deb 内容一致，`dpkg -V aki` 无差异。
+- **可复现证据**：本机 ProfileStore 有一条有效 received grant；目标机
+  对应 issued grant 已撤销。目标机 UI 显示本机在线、LAN、待确认。
+  输入本机口令后弹窗关闭，授权与失败状态都无变化。调试器在本机周期
+  维护断点只读取状态及计数：Node `authenticated`、PeerSession `active`；
+  `pairing_requests_received=1`、`pairing_results_sent=0`（sent request 和
+  received result 均为 0）。因此请求确已抵达本机，未产生结果。
+- **确定路径**：`PeerSession::handle_pairing_request` 在已 authenticated
+  时仅计数、notify 后返回，不发送 pairing_result。区别于
+  HEY-20260930-001 的发送端 strand 校验拒绝，本项是接收端静默忽略。
+  缺少 TCP 套接字不能用于推断断线：数据会话可运行在 UDP/WebRTC 上。
+- **影响及期望**：既有单向授权/撤销造成两端状态不一致时，受限端可以
+  提交密码请求，已授权端却不回应。需要明确反向授权与修复语义，并为
+  已认证状态下的合法请求返回成功或明确拒绝；超时、取消、断连及关闭
+  均有一次可观察终态，不得永久静默等待。
+- **Aki 处理与验收**：当前不能以队列接纳声明密码验证成功；M5-26
+  双机授权验收保持未完成。负责人 Linductor；上游补非对称授权、单向
+  授权后反向申请、撤销后重配、错误口令、重复请求及超时测试，修复公开
+  契约并固定依赖后在 Aki 双机复验。独立测试配置的首次配对只能证明
+  初次配对路径，不能替代本项修复验收。
