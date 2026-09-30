@@ -12,7 +12,7 @@
 > 真实 Adapter、NodeSession、发现/消息/图片/传输/presence/重连管道与恢复
 > 语义均已就绪
 > 建议发布点：v0.5.0（MVP）
-> 更新日期：2026-09-30（M5-29~30 历史会话恢复与基础通信权限）
+> 更新日期：2026-09-30（M5-29~31 修复、CI 与双设备复验）
 
 ## M5-29~M5-30：历史会话恢复与基础通信权限
 
@@ -76,6 +76,46 @@ Debug 完整构建通过，全量 ctest 43/43 无失败（34.78s）；发送路�
 ASAN 目标构建与四个测试目标无失败（19.86s），发送路径同样 11/279。
 本机完整文件回环在 Debug/ASAN 均因握手限制 skip，Debug 断线恢复回环
 也 skip，不计网络验收；本轮 CI 尚待新提交结果，负责人 Linductor。
+
+续验：CI run 36675887002 / head 78684a9ece0ee141d56e4adda412622a91fd7520
+七项均 completed/success：Linux Debug、ASAN、UBSAN、TSAN、Windows
+Debug、Ubuntu 20.04 deb、Windows setup。TSAN 仍包含前述上游符号豁免，
+不表示 Heyaki #5 已解决。目标机新版包交付与聊天页复验尚未完成，
+负责人 Linductor 与设备操作者；条件为两端新版运行并检查同一历史会话。
+
+## M5-32：重连快照中的历史关闭记录
+
+> 状态：In Progress；负责人：Linductor；依据：DEC-006/DEC-022、设计 §8.1。
+
+- [ ] `M5-32` 当前连接不被同设备的历史 closed 会话覆盖；验收：
+  不同快照顺序、restricted/authenticated 与旧 closed 共存、完整退出/
+  重开事件序列和双设备重启复验，相关单测与 CI。
+
+2026-09-30：用户手动安装并启动新 deb 后报告：后启动一端识别对端，
+先启动一端的历史聊天仍等待恢复；交换重启顺序则症状交换。目标机
+安装包 SHA-256 为 21eafb49a39185d19c039321ec64ebfd49f5ee1f7d367a8065a9364a708ba4bc，
+运行二进制 SHA-256 为 3d72bd938b00d3d47d2ddf414e70a806e86b6e91d4b0eaf3edc4859235f59d93，
+`dpkg -V aki` 无差异；包构建时间为 14:13。本轮自动下载超时，未由
+Agent 上传，交付/安装来源为用户手动操作。
+本机启动后 DB 为 Active、6 条历史消息，目标机仍 Disconnected、4 条
+历史消息；目标正常退出后本机 DB 转为 Disconnected，底层活动会话归零。
+已核对 pinned Heyaki `publish_peer_sessions()` 将当前 attempts 放在
+前面、finished closed 历史追加在后；Aki diff 用 device ID 无条件覆盖，
+同设备的历史关闭行会覆盖新会话。该问题在 Aki Adapter 中归并修正，
+不改 pinned 依赖、不新建并发路径。目标机重开后的现场已复现：本机底层当前 attempt 为 authenticated、
+PeerSession active，同时保留一条 finished closed；本机 DB 仍
+Disconnected，目标机 DB 恢复 Active。修复验收待补。
+
+修复在 diff 两端排除 closed 记录，再按 authenticated/restricted/握手态
+选择设备代表；不修改 Node 生命周期或自建监控。新确定性测试在旧代码
+2 个用例/27 条断言中失败 5 条，修复后 Debug 与 ASAN Adapter 单测
+均 14 用例/143 断言通过；覆盖历史顺序、冷启动、重排、路径变化、
+重复断开及同设备多个端点。Debug 全量构建、verbose ctest 43/43
+无失败（41.96s），文件完整回环实际通过；断线恢复回环因 close_lan
+后未收到断开事件 skip，不计该回环验收。本机已正常关闭/重启修复版，
+用户已配合目标机再次退出/重开并确认本机自动恢复连接。本机 DB
+也恢复 Active；原 6 条消息保留并新增 1 条消息。目标机仍运行本轮补丁
+之前的包，需要同版更新后反向重启复验；新版 CI 与 deb 交付待完成。
 
 ## M5-25~M5-28：连接与信任语义复验
 

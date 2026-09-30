@@ -8,6 +8,10 @@
 
 ## 当前状态
 
+- 2026-09-30：M5-32 双端交换重启顺序复现当前连接被历史关闭会话覆盖。
+  Heyaki 快照同时包含当前与 finished 记录，Aki Adapter 按设备归并时
+  旧 closed 覆盖当前 linked；修复与复验见 M5 记录，保持 In Progress。
+
 - 2026-09-30：M5-31 跟进 CI ASAN 的文件传输终态断言失败，修复 wire
   committed 与暂停/恢复确认交错时的归档停摆和 Paused 收尾；复用既有
   Manager/IO 单飞承载，确定性回归与取消终态约束见 M5 维护记录。

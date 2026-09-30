@@ -209,6 +209,117 @@ TEST_CASE("Peer session diff ignores non-authenticated churn",
     CHECK(events_fired == 0);
 }
 
+TEST_CASE("A reconnect is not hidden by finished peer session diagnostics",
+    "[unit][peer_sessions][reconnect_history]") {
+    using aki::device::ConnectionPath;
+    for (const int linked_state : {3, 4}) {
+        for (const bool history_first : {false, true}) {
+            DYNAMIC_SECTION("state=" << linked_state
+                << " history_first=" << history_first) {
+                int connected = 0;
+                int disconnected = 0;
+                int ready = 0;
+                int authorized = 0;
+                std::vector<ConnectionPath> paths;
+                aki::heyaki::PeerSessionEvents events;
+                events.on_connected = [&](const auto&, ConnectionPath path) {
+                    ++connected;
+                    paths.push_back(path);
+                };
+                events.on_disconnected = [&](const auto&) { ++disconnected; };
+                events.on_pairing_ready = [&](const auto&) { ++ready; };
+                events.on_authorized = [&](const auto&) { ++authorized; };
+                events.on_connection_path_changed = [&](const auto&,
+                    ConnectionPath path) { paths.push_back(path); };
+
+                auto old_link = make_view("peer-a", linked_state, 1, 0);
+                old_link.session_id = "old-session";
+                auto history = make_view("peer-a", 5, 5, 1);
+                history.session_id = "old-session";
+                // Epochs from different sessions do not define recency.
+                history.session_epoch = 99;
+                aki::heyaki::diff_peer_sessions({old_link}, {history}, events);
+                REQUIRE(disconnected == 1);
+
+                auto current = make_view("peer-a", 2, 0, 0);
+                current.session_id = "new-session";
+                const auto with_history = [&](const auto& view) {
+                    return history_first ? std::vector{history, view}
+                                         : std::vector{view, history};
+                };
+                auto prev = with_history(current);
+                aki::heyaki::diff_peer_sessions({history}, prev, events);
+                REQUIRE(connected == 0);
+                current = make_view("peer-a", linked_state, 1, 0);
+                current.session_id = "new-session";
+                auto curr = with_history(current);
+                aki::heyaki::diff_peer_sessions(prev, curr, events);
+                REQUIRE(connected == 1);
+                REQUIRE(disconnected == 1);
+                REQUIRE(paths == std::vector{ConnectionPath::Lan});
+                REQUIRE(ready == (linked_state == 3 ? 1 : 0));
+                REQUIRE(authorized == (linked_state == 4 ? 1 : 0));
+
+                // Both cold-start snapshots and reorderings retain the link.
+                int cold_connected = 0;
+                aki::heyaki::PeerSessionEvents cold;
+                cold.on_connected = [&](const auto&, auto) { ++cold_connected; };
+                aki::heyaki::diff_peer_sessions({}, curr, cold);
+                REQUIRE(cold_connected == 1);
+                prev = curr;
+                std::swap(curr[0], curr[1]);
+                aki::heyaki::diff_peer_sessions(prev, curr, events);
+                REQUIRE(connected == 1);
+                REQUIRE(disconnected == 1);
+                REQUIRE(ready == (linked_state == 3 ? 1 : 0));
+                REQUIRE(authorized == (linked_state == 4 ? 1 : 0));
+
+                prev = curr;
+                current.data_path = 5;
+                current.signaling_route = 1;
+                curr = with_history(current);
+                aki::heyaki::diff_peer_sessions(prev, curr, events);
+                REQUIRE(paths == std::vector{ConnectionPath::Lan,
+                    ConnectionPath::Relay});
+                REQUIRE(connected == 1);
+
+                prev = curr;
+                current = make_view("peer-a", 5, 5, 1);
+                current.session_id = "new-session";
+                curr = with_history(current);
+                aki::heyaki::diff_peer_sessions(prev, curr, events);
+                REQUIRE(disconnected == 2);
+                aki::heyaki::diff_peer_sessions(curr, curr, events);
+                REQUIRE(disconnected == 2);
+            }
+        }
+    }
+}
+
+TEST_CASE("Device link aggregation prefers a linked current endpoint",
+    "[unit][peer_sessions][reconnect_history]") {
+    int connected = 0;
+    int ready = 0;
+    int authorized = 0;
+    aki::heyaki::PeerSessionEvents events;
+    events.on_connected = [&](const auto&, auto) { ++connected; };
+    events.on_pairing_ready = [&](const auto&) { ++ready; };
+    events.on_authorized = [&](const auto&) { ++authorized; };
+    auto linked = make_view("peer-a", 4, 1, 0);
+    auto restricted = make_view("peer-a", 3, 0, 0);
+    restricted.endpoint_id = "hye1_other";
+    auto handshake = make_view("peer-a", 2, 0, 0);
+    handshake.endpoint_id = "hye1_handshake";
+    auto closed = make_view("peer-a", 5, 0, 0);
+    for (const auto& rows : {std::vector{linked, restricted, handshake, closed},
+             std::vector{closed, handshake, restricted, linked}}) {
+        aki::heyaki::diff_peer_sessions({}, rows, events);
+    }
+    REQUIRE(connected == 2);
+    REQUIRE(authorized == 2);
+    REQUIRE(ready == 0);
+}
+
 // ---- M5-11：LAN 发现单 tick 纯函数 diff（网络无关；lan_discovery.hpp）----
 
 namespace {

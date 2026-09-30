@@ -18,6 +18,10 @@
 - `pairing_restricted` 和 `authenticated` 都是已建链状态。前者按信令路由
   显示 LAN/Relay，后者按实际数据路径显示 LAN/P2P/Relay。两态之间不
   重复发出连接事件；授权完成另行校准信任方向。
+- Heyaki 会话快照包含当前 attempts 与历史 closed 记录。Adapter 按设备
+  汇总连接时排除 closed 历史；同设备多条当前记录以 authenticated、
+  pairing_restricted、握手态的顺序选择代表。存在当前建链则保持连接，
+  仅当所有当前记录均未建链/缺失时发出断开；历史记录不触发配对或授权。
 - 设备在线是发起 `connect_lan` 的前提，不要求先有 trust grant。已建链
   不意味着可发送消息：pinned Heyaki `Node::send_message` 仍只接受
   `authenticated` 会话，发送失败须按既有失败路径向用户展示。

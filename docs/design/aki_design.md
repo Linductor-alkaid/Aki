@@ -672,6 +672,11 @@ LAN 广播/监听随 Node 常驻）。因此 `start_discovery` / `stop_discovery
   表不跨会话累积扫描残留；其重新在网时经发现观察管道以真实存活状态再次
   进入。`Pending`（在途确认）与 `Rejected` / `Revoked`（用户决策终态）原值
   恢复。
+- 会话快照归并（M5-32、DEC-022）：Heyaki 同时提供当前会话和 finished
+  closed 历史。Adapter 的 device 级 diff 在上一轮和本轮均排除 closed
+  记录，并在多条当前端点记录中优先 authenticated，其次 pairing_restricted，
+  最后握手态。只要仍有当前建链就不发断开；历史记录不能覆盖当前连接、
+  路径、配对就绪或授权事件。所有当前建链消失才发一次断开。
 - 主动建链与设备认证（M5-11；DEC-022 修订连接事实）：宿主组合根装配即常驻
   启动 peer_sessions 观察管道（`PeerSessionPipeline`，200ms diff）——主动
   `begin_pairing`（UI Connect，仅对 presence Online 的非本机行渲染）经

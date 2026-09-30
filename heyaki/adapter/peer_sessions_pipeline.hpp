@@ -92,7 +92,10 @@ struct PeerSessionEvents {
     std::function<void(const aki::device::DeviceId&)> on_authorized;
 };
 
-// 纯函数 diff：prev → curr 的已建链↔closed 变化与路径变化。
+// 纯函数 diff：prev → curr 的设备级建链变化与路径变化。
+// Node snapshots append finished closed diagnostics after current attempts.
+// M5-32: discard history before grouping devices, and prefer a linked endpoint
+// over another endpoint still handshaking. History never supersedes a live link.
 //   - 新 restricted 或 authenticated → on_connected（含映射路径）；
 //   - 原已建链现缺失/closed/握手态 → on_disconnected；
 //   - 两侧均已建链且路径变化 →
@@ -102,14 +105,24 @@ inline void diff_peer_sessions(
     const std::vector<NodeSession::PeerSessionView>& prev,
     const std::vector<NodeSession::PeerSessionView>& curr,
     const PeerSessionEvents& events) {
-    std::map<std::string, NodeSession::PeerSessionView> prev_by_key;
-    for (const auto& view : prev) {
-        prev_by_key[view.device_id.value] = view;
-    }
-    std::map<std::string, NodeSession::PeerSessionView> curr_by_key;
-    for (const auto& view : curr) {
-        curr_by_key[view.device_id.value] = view;
-    }
+    const auto index_current = [](const auto& views) {
+        std::map<std::string, NodeSession::PeerSessionView> by_device;
+        const auto priority = [](const auto& view) {
+            return view.authenticated ? 2 : (view.pairing_restricted ? 1 : 0);
+        };
+        for (const auto& view : views) {
+            if (view.closed) {
+                continue;
+            }
+            auto [it, inserted] = by_device.try_emplace(view.device_id.value, view);
+            if (!inserted && priority(view) > priority(it->second)) {
+                it->second = view;
+            }
+        }
+        return by_device;
+    };
+    const auto prev_by_key = index_current(prev);
+    const auto curr_by_key = index_current(curr);
 
     for (const auto& [key, view] : curr_by_key) {
         const auto previous = prev_by_key.find(key);
