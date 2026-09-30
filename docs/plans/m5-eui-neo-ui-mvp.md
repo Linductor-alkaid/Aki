@@ -12,7 +12,7 @@
 > 真实 Adapter、NodeSession、发现/消息/图片/传输/presence/重连管道与恢复
 > 语义均已就绪
 > 建议发布点：v0.5.0（MVP）
-> 更新日期：2026-09-29（M5-25~27 连接、信任与设置弹窗复验）
+> 更新日期：2026-09-30（M5-25~28 连接、信任与传输复验）
 
 ## M5-25~M5-28：连接与信任语义复验
 
@@ -62,6 +62,31 @@ TrustStore 中旧 grant 方向/撤销状态不一致。复验前修正断连时�
 交互修正的本机验证：`cmake --build build/debug --target aki test_ui_models
 -j4` 通过，`test_ui_models` 12/12 用例、168/168 断言通过；双端复验
 尚待新版安装。
+
+2026-09-30 续验：`be3e4e8` 的七项 CI 均在 `test_device_trust` 失败；
+测试仍使用旧的“Pending 即可验证”前置条件。补入真实连接事件后复验。
+同时修正 UI 通道已接纳而 Adapter 拒绝时未发布失败状态的问题；
+NodeSession 提交前核对受限会话快照，相关上游完成契约缺口登记为
+[HEY-20260930-001](../heyaki_feedback/ledger.md)。回环测试统一单侧口令
+提交，并验证发起方结果与双端 authenticated，避免交叉配对使结果失效。
+单侧配对后的实跑暴露 `test_transfer_full_loopback` 旧前置缺陷：等待
+未赋值的标志、未建立 Conversation、未连接 RouterSink。补齐测试装配，
+改为消息哈希和 wire 终态实测，删除终态注入，并在失败时先停 worker。
+断线恢复回环仍可能输出环境降级，必须按实际日志记录，不能由退出码
+推断真实断线恢复已验收。
+实跑同时发现发送归档会话未按网络进度推进 Transferring，导致后续
+Completed 被拒。修正 TM 的发送会话路径，单测改用真实进度事件完成
+状态链；全链路回环补数据库 worker，使完成后的归档、DB 哈希与文件
+本体一致性能够实际执行。
+本机最终 Debug 构建通过；`ctest --test-dir build/debug --verbose
+--output-on-failure -j4` 43/43 无失败（24.24s），其中完整文件回环实际
+通过 31 个断言，发送路径单测 11 用例/177 断言，设备信任单测
+11 用例/81 断言，UI 模型 12 用例/168 断言。连接状态与断线恢复回环
+（test_peer_sessions_loopback、test_disconnect_recovery_loopback）输出
+握手失败 skip，不计为真实验收。上述文件回环只证明受控关闭后的传输
+落库和消息快照保持，不宣称进程重启恢复。ASAN/UBSAN/TSAN、Windows
+以及 Ubuntu 20.04 打包检查由本轮 CI 承载，尚待结果；双机补跑负责人
+Linductor 和设备操作者，条件为两端使用新包、在线且 TCP 可互通。
 
 ## M5-12~M5-17：双端实测后的修复与设备体验
 

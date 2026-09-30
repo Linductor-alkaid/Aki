@@ -319,9 +319,7 @@ void run_chunk_case(SendPathStack& stack, const FileMetadata& file,
     REQUIRE(stack.adapter.inject_transfer_started(aki::transfer::Transfer{id,
         DeviceId{"local-1"}, DeviceId{"beta"}, file, 0, size,
         TransferState::Negotiating}));
-    REQUIRE(stack.adapter.inject_transfer_started(aki::transfer::Transfer{id,
-        DeviceId{"local-1"}, DeviceId{"beta"}, file, 0, size,
-        TransferState::Transferring}));
+    REQUIRE(stack.adapter.inject_transfer_progress(id, size, size));
     REQUIRE(stack.adapter.inject_transfer_completed(id, TransferState::Completed));
     stack.quiesce();
     {

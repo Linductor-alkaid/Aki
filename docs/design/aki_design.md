@@ -778,7 +778,7 @@ Store 所有权：
 | `on_message_delivered` | MM：`SetDeliveryState(Delivered)` | MessageDelivered |
 | `on_message_send_failed`（M3-05） | MM：`SetDeliveryState(Failed)` | —（Failed 为终态，RULE-08；无主路径事件） |
 | `on_transfer_started` | TM：`UpsertTransfer`（建行与状态推进——发送行由 `StartTransferWork` 先建、发送端专属的 `probing`/`offered` 事件推进；接收行由**首个 `transferring`/`verifying`** 事件承担（pinned heyaki 接收端无 probing/offered，首个事件即 transferring）——接收行 `file.name`=剥根段 wire `logical_name`、`size`=`bytes_total`、sender=peer/receiver=local；同态重复幂等去重，§7.1⑤） | TransferStarted |
-| `on_transfer_progress` | TM：首个进度事件整行 upsert 推进 `Negotiating/Paused → Transferring`，后续 `UpdateTransferProgress` | TransferProgress |
+| `on_transfer_progress` | TM：发送与接收路径的首个网络进度均整行 upsert 推进 `Negotiating/Paused → Transferring`，随后按有界聚合写 `UpdateTransferProgress`；本地归档进度不能替代网络状态转换 | TransferProgress |
 | `on_transfer_completed` | TM：`CompleteTransfer(final_state)`（接收侧无会话直达；发送侧经终态闸门，§7.1③） | TransferCompleted |
 | `on_transfer_paused`（M4-05） | TM：`UpsertTransfer`（`Paused`；对端驱动与本地暂停确认同此映射；发送会话归档续接抑制） | —（不新增主路径事件类型，状态经 Store 快照可见，§8.1） |
 | `on_connection_path_changed` | DM：`SetDeviceConnectionPath{device, to}`（M5-04 起，[DEC-015](../decisions/DEC-015-per-device-connection-path.md)；`from` 为诊断信息） | ConnectionPathChanged |

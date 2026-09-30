@@ -419,6 +419,19 @@ private:
             return posted && applied;
         }
         // 会话路径：最新槽 + 单飞 dirty（每次排空至多一个进度更新，§7.1③）。
+        // wire progress advances the active send row before its coalesced
+        // byte update; archive progress alone must not authorize Completed.
+        auto known = known_rows_.find(work.transfer.value);
+        if (known != known_rows_.end()
+            && (known->second.state == aki::transfer::TransferState::Negotiating
+                || known->second.state == aki::transfer::TransferState::Paused)) {
+            auto advanced = known->second;
+            advanced.state = aki::transfer::TransferState::Transferring;
+            advanced.transferred = work.transferred;
+            advanced.total = work.total;
+            if (!state_owner_.submit_update(UpsertTransfer{advanced})) return false;
+            known->second = std::move(advanced);
+        }
         it->second.progress_latest = work.transferred;
         it->second.progress_total = work.total;
         mark_progress_dirty(work.transfer, it->second);
