@@ -12,7 +12,36 @@
 > 真实 Adapter、NodeSession、发现/消息/图片/传输/presence/重连管道与恢复
 > 语义均已就绪
 > 建议发布点：v0.5.0（MVP）
-> 更新日期：2026-09-30（M5-25~28 连接、信任与传输复验）
+> 更新日期：2026-09-30（M5-29~30 历史会话恢复与基础通信权限）
+
+## M5-29~M5-30：历史会话恢复与基础通信权限
+
+> 状态：In Progress；负责人：Linductor；依据：DEC-008、
+> [DEC-023](../decisions/DEC-023-basic-communication-policy.md)。
+
+- [ ] `M5-29` 启动恢复的 Conversation 参与连接/断开事件推进，保留原 ID、
+  端点和历史；验收：恢复后重连/断开、重复 ensure、Archived 不复活单测，
+  HostRuntime 实际播种接线，CI 与双设备聊天页状态复验。
+- [x] `M5-30` 核对并向 Heyaki 提出免设备信任的基础消息/文件能力；
+  验收：公开 API、通道与服务权限证据、反馈台账、上游 issue。
+  状态 Completed（本项范围为能力核对与 issue）；实现接入待 Heyaki 独立提供策略 API 后另行验证，不以 Aki 放开 UI 代替。
+
+2026-09-30：用户要求优先修复设备页在线而聊天页断开的状态不一致，
+并将消息/文件通信与未来 shell 等设备控制的信任授权分开。已定位恢复
+会话只播种 AppStateOwner、未播种 ConversationManager 的创建记录，导致
+后续 connected/disconnected 被当成未建会话空操作。修复复用既有
+ManagerPump，不新增线程、队列或调度器。实际绿点来自 presence，仍须
+真实建链事件才推进 Active，不能把发现在线直接作为已连接。
+
+本机 Debug 全量构建通过；`ctest --test-dir build/debug --verbose
+--output-on-failure -j4` 43/43 无失败（37.18s）。其中断线恢复回环因
+close_lan 后未收到 disconnect 事件而 skip，不能计为真实恢复验收；
+GUI 双端状态复验由用户配合，负责人 Linductor，条件为两端新版启动、
+实际路径建立后查看同一历史 Conversation。新增恢复回归 1 用例/77 断言
+通过；最终 Manager 单测 19 用例/921 断言、宿主单测 4 用例/149 断言通过。
+宿主真实 DB 夹具验证恢复记录参与连接/断开并保留原 ID。
+上游基础通信需求已提交 Heyaki #4，反馈 HEY-20260930-003；不改 pinned
+依赖。CI 与 deb 交付本轮进行中，尚不宣称双机修复已验收。
 
 ## M5-25~M5-28：连接与信任语义复验
 

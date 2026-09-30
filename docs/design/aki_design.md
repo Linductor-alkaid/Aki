@@ -148,6 +148,9 @@ Trusted -> Revoked
 ——被拒绝/撤销的设备在已连接或会话活跃时仍可打开会话通信
 （[DEC-019](../decisions/DEC-019-directional-trust-and-chat-scopes.md)、
 [DEC-021](../decisions/DEC-021-bidirectional-trust-and-repair.md)）。
+用户已明确基础消息/文件只需身份已验证的连接，设备信任用于后续控制
+授权；该产品策略见 [DEC-023](../decisions/DEC-023-basic-communication-policy.md)。
+当前 pinned Heyaki 尚无此策略，未实现的免信任通信不得宣称可用。
 终端、屏幕控制、机器人控制等能力需要继续经过
 capability 和 permission 判断，避免把设备信任直接等同于控制权限。
 
@@ -759,9 +762,10 @@ Store 所有权：
   （`start_file_transfer` / `pause_transfer` / `resume_transfer` / `cancel_transfer`）
   归 TransferManager。ConversationManager 显式提供
   `ensure_conversation(local, remote)`，由宿主 / 用户流程调用，不从事件隐式建会话；
-  其自建会话的 id/端点记录仅用于 connected/disconnected 事件的状态推导（创建记录，
-  不复制 owner 权威状态），消息或连接事件先于 `ensure_conversation` 到达时，会话
-  推导为幂等空操作。
+  其新建及启动恢复会话的 id/端点记录仅用于 connected/disconnected 事件的状态推导（创建记录，
+  不复制 owner 权威状态），消息或连接事件到达时若既无恢复记录也未
+  `ensure_conversation`，会话推导为幂等空操作。宿主在启动网络事件源前播种历史会话原 ID/端点；
+  重连复用历史会话，不清空消息，Archived 终态仍由 owner 拒绝复活。
 
 11 类 Sink 事件（9 类主路径 + 出站失败面 `on_message_send_failed` + 传输暂停面
 `on_transfer_paused`，均不产新增主路径事件类型）由 `app/application` 内单一 `RouterSink`（实现 `HeyakiAdapterSink`）

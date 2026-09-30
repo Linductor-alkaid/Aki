@@ -2,11 +2,18 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-09-29
+> 更新日期：2026-09-30
 > 设计依据：[Aki 设计方案](../design/aki_design.md)
 > 协作约束：[AGENTS.md](../../AGENTS.md)、[项目管理与工程规范](../project/project-standards.md)
 
 ## 当前状态
+
+- 2026-09-30：M5-29 修复历史会话恢复后遗漏连接事件的问题，保留原 ID/
+  端点及消息；基础通信与设备控制授权分离按用户要求冻结
+  [DEC-023](../decisions/DEC-023-basic-communication-policy.md)。M5-30
+  已核对 pinned Heyaki 的业务通道/服务门控并提交
+  [Heyaki #4](https://github.com/Linductor-alkaid/heyaki/issues/4)，上游独立管理，
+  当前免信任消息/文件尚未实现。会话状态修复等待双设备新版复验。
 
 - 2026-09-29：`M5-25`~`M5-28` 处理“在线先建链、授权方向、设置弹窗中心”
   的第三轮验证，依据 [DEC-022](../decisions/DEC-022-link-before-trust-and-grant-direction.md)。

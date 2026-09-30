@@ -78,3 +78,26 @@
   授权后反向申请、撤销后重配、错误口令、重复请求及超时测试，修复公开
   契约并固定依赖后在 Aki 双机复验。独立测试配置的首次配对只能证明
   初次配对路径，不能替代本项修复验收。
+
+## HEY-20260930-003：基础消息/文件与设备控制信任解耦
+
+- **状态**：公开 API 与通道/服务门控已核对，待上游提供 opt-in 策略；
+  未修改 pinned 依赖。已提交
+  [Heyaki #4](https://github.com/Linductor-alkaid/heyaki/issues/4)，关联 M5-30、DEC-023。
+- **版本与证据**：Heyaki `e114508ab32d496d52e9db9bac26eb1cc88c4ae7`。
+  `NodePeerSessionState::pairing_restricted` 仅允许配对帧；NodeConfig 无免
+  grant 的基础通信策略，PairingPolicy 的 default_scopes 用于配对 grant。
+  PeerSession 的 open/adopt_business_channel、Node 消息发送及服务安装要求
+  authenticated；MessageService 检查 message.send，FileService 检查
+  file.push:<root>。不属于 Executor 能力缺口。
+- **用户目标**：完成密码学身份验证且已连接后可收发文本/图片和指定 inbox
+  文件，不建立持久化设备信任；shell 等设备控制继续要求独立权限。
+- **最小能力**：默认兼容的 opt-in 应用策略，双端通道创建/接纳及业务帧
+  统一强制执行，区分策略能力与 grant scope。指定接收根、路径、配额、
+  容量与速率限制保留，不顺带开放远程目录读取/控制 RPC/shell/gateway。
+- **影响与临时处理**：当前 Aki 即使显示已连接也可能被 Heyaki 拒绝消息/
+  文件；仅改按钮不能达成需求，不以自动签发宽 scope grant 代替。上游
+  缺口未解决前，免信任通信仍未实现，失败沿既有状态路径可见。
+- **负责人及验收**：Linductor；Heyaki 独立实现并固定公开策略 API 后接入，
+  补无 grant 双端消息/图片/inbox 文件、拒绝策略、身份/路径攻击、配额/
+  背压、断连、取消与 shutdown；基础通道不得打开高级控制能力。
