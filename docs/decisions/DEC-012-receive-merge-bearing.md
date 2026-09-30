@@ -169,3 +169,17 @@ ASAN/UBSAN/TSAN 随 PR CI；回环沿 M3/M4-03/04 降级纪律。证据记录于
   `EXEC-02/04`、M4）
 - [M4：图片消息与文件传输](../plans/m4-image-file-transfer.md)（`M4-05`
   实现、`M4-06` 回环与对账断言）
+
+## 2026-09-30：committed 与暂停确认竞态（M5-31）
+
+wire committed 是对端完成传输的事实，后续无须也未必存在进度事件。
+当已知活动行停在 Negotiating/Paused 时，TM 在提交 Completed 前按既有
+合法边推进 Transferring，不直接增加 Paused→Completed 状态边。发送侧
+仍等待本地归档完成：持有 committed 后解除归档暂停抑制并续接既有单飞
+IO，迟到 paused 不再阻止该归档。该恢复只完成本地存储，不发网络 resume。
+未知行、已 Failed/Cancelled 的行仍由 owner 拒绝；取消在 held 完成闸门
+释放前到达时清理会话，并直接结算本地 Cancelled（wire 已 committed，
+不会再有 cancelled 回报），迟到 IO/wire 完成不能复活终态。失败与背压维持可观察。
+
+验收覆盖无后续 wire progress、resume 后迟到 paused、归档慢于 wire
+committed、取消与迟到事件；真实回环仍验证文件本体、消息哈希和 DB 落库。

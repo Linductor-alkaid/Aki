@@ -426,7 +426,11 @@ IO **不经 DatabaseWorker 通道**（M4-01 硬结论维持且更干净：DB dra
 DatabaseWorker 通道，批上限维持 64×2≤256 不变、drain 预算（2s）不受影响。
 终态闸门：`CompleteTransfer(Completed)` 仅在归档 `.part` 写完后放行入队
 （M2-06 终态作业组对不完整 `.part` 按契约明确失败）；`Failed`/`Cancelled`
-终态不等待归档（在飞块结束后幂等清理）。**废除形态**（M4-04 定案）：池上
+终态不等待归档（在飞块结束后幂等清理）。wire committed 已确认传输
+完成后，归档解除暂停抑制并继续单飞分块；held committed 后迟到 paused
+不阻止归档。已知 Negotiating/Paused 行在放行 Completed 前经既有合法边
+推进 Transferring，无须等待不存在的下一次进度。未知行与 Failed/Cancelled
+仍拒绝复活（DEC-012 的 M5-31 修订）。**废除形态**（M4-04 定案）：池上
 `submit_cancellable` 会话长任务内联写 + `sleep_for` 轮询（M1/M4-02 骨架）——
 每会话停占一个池 worker，2 核设备 ≥2 并发传输即饥饿 Manager 泵（M4-03
 观察③ CI 实证）。hash-first 排序（④ 的发送前 SHA-256）：hash 分块作业流

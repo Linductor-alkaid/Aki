@@ -50,6 +50,33 @@ HEY-20260930-004 / Heyaki #5。沿现有 vendor-only 纪律只增加精确符号
 包 SHA-256 为 e9436226a343840136e88091410a7152b124e2f74bc91f2732f0218cbea80c10，
 目标机 SSH 密码窗口仍等待用户输入；尚未上传，未冒充交付/安装完成。
 
+## M5-31：传输完成与暂停确认的竞态
+
+> 状态：In Progress；负责人：Linductor；依据：DEC-011/DEC-012、设计 §7.1。
+
+- [ ] `M5-31` wire committed 后完成本地归档并收敛 Completed，迟到暂停
+  确认不能使完成闸门停摆；保留 Cancelled/Failed 终态不复活、未知行拒绝。
+  验收：确定性暂停/恢复/迟到暂停/committed 回归、归档闸门与取消回归，
+  Debug/ASAN 本地目标测试、CI 七项全绿及新版包交付。
+
+2026-09-30：run 36672794896 / head c7d2f1c 仅 Linux ASAN 失败，其余六项
+成功，TSAN 上游精确符号豁免生效。失败为 test_transfer_full_loopback:406
+的 terminal_seen 断言（无 ASAN 内存报告）：对端 committed 且本体哈希通过，
+本机 Paused、owner 拒绝 1 次、TM handler 拒绝 1 次。小文件的最后进度可能
+早于暂停确认；resume 仅解除归档抑制，未必还有 wire progress 能推进状态。
+明确 committed 是 wire 完成事实：归档不再等待网络 resume，持有终态时
+迟到 paused 不阻止本地归档；归档完毕后经既有 Transferring 合法边结算。
+不增加线程/调度器，不放宽 Cancelled/Failed 或未知行的状态校验。
+
+确定性回归在旧代码上失败两处：held committed 后归档 advance=0、
+归档完整但行仍 Paused；修复后覆盖 committed 早/晚于归档、迟到 pause
+控制/确认、Negotiating 无最后进度、取消 held 完成及迟到 IO/wire 事件。
+Debug 完整构建通过，全量 ctest 43/43 无失败（34.78s）；发送路径
+11 用例/279 断言，Manager 19/921、接收路径 4/80、宿主 4/149。
+ASAN 目标构建与四个测试目标无失败（19.86s），发送路径同样 11/279。
+本机完整文件回环在 Debug/ASAN 均因握手限制 skip，Debug 断线恢复回环
+也 skip，不计网络验收；本轮 CI 尚待新提交结果，负责人 Linductor。
+
 ## M5-25~M5-28：连接与信任语义复验
 
 > 状态：In Progress；负责人：Linductor；设计依据：

@@ -494,69 +494,128 @@ TEST_CASE("Progress coalescing applies at most one update per drain and "
     REQUIRE(stack.io->idle());
 }
 
-// ---- 终态闸门：wire Completed 先于归档完成 → 持有；归档完成 → 放行 ----
-//（确定性：单线程池 + 饱和任务——start+pause 在泵运行前入列，FIFO 保证
-//  pause 先于任何 IO 事件被处理，归档停在首块边界。）
-
-TEST_CASE("Terminal gate holds wire completion until the archive finishes",
-    "[unit][send_path]") {
-    ExecutorOwner::Options host_options;
-    host_options.executor_config.min_threads = 1;
-    host_options.executor_config.max_threads = 1;
-    TransferIoWorkerOptions io_options;
-    io_options.chunk_bytes = 8;
-    SendPathStack stack{host_options, io_options};
-    const auto source = write_source(stack.root, "gate.bin", 40, 'k');
-    const FileMetadata file{"gate.bin", 40, "application/octet-stream", ""};
-    const TransferId id{"t-gate"};
-
-    auto saturate =
-        stack.host.executor().submit_auto([] {
-            std::this_thread::sleep_for(150ms);
-        });
-    REQUIRE(stack.transfers->start_transfer(DeviceId{"beta"}, id, file, source));
-    REQUIRE(stack.transfers->pause_transfer(id));
-    saturate.get();  // 泵此刻才运行：FIFO 处理 start → pause（先于 IO 事件）
-    stack.quiesce();  // 积压 IO 事件到达：paused → 无续接
-
-    // 归档停在首块（hash 相位）：.part 未创建（copy 相位未开始）。
-    {
-        std::error_code ec;
-        REQUIRE_FALSE(std::filesystem::exists(stack.store->part_path(id.value), ec));
+// 控制 IO 完成回报的确定性夹具：不创建线程或队列，事件经 TM 既有泵投递。
+class ControlledArchiveIo final : public aki::transfer::TransferIo {
+public:
+    bool start(const TransferId&, std::filesystem::path, std::string,
+        std::uint64_t) override { return true; }
+    bool advance(const TransferId&) override { advances.fetch_add(1); return true; }
+    bool cancel(const TransferId&) override { return true; }
+    bool release(const TransferId&) override { releases.fetch_add(1); return true; }
+    void set_event_sink(std::function<void(const aki::transfer::TransferIoEvent&)> sink)
+        override { sink_ = std::move(sink); }
+    void request_stop() noexcept override {}
+    bool idle() const noexcept override { return true; }
+    std::uint64_t rejected_submissions() const noexcept override { return 0; }
+    void emit(const TransferId& id, aki::transfer::TransferIoEvent::Phase phase) {
+        sink_({id, phase, 40, 40, {}, {}});
     }
-    // wire committed 先到（行先推进到 Transferring——合法链）：归档未完成
-    // → 持有（行不得 Completed）。
-    REQUIRE(stack.adapter.inject_transfer_started(aki::transfer::Transfer{id,
+    std::atomic<int> advances{0};
+    std::atomic<int> releases{0};
+private:
+    std::function<void(const aki::transfer::TransferIoEvent&)> sink_;
+};
+
+TEST_CASE("Wire commit reconciles a paused row while preserving the archive gate",
+    "[unit][send_path][commit_pause]") {
+    ExecutorOwner host;
+    REQUIRE(host.initialize());
+    AppStateOwner owner;
+    FakeHeyakiAdapter adapter;
+    ControlledArchiveIo io;
+    TransferManagerOptions options;
+    options.sender = DeviceId{"local-1"};
+    options.io = &io;
+    TransferManager transfers{host.executor(), owner, adapter, options};
+    TransferOnlySink sink{&transfers};
+    adapter.set_sink(&sink);
+    const TransferId id{"t-commit-pause"};
+    const FileMetadata file{"gate.bin", 40, "application/octet-stream", ""};
+    const auto settle = [&] { REQUIRE(transfers.flush(2s)); owner.drain(); };
+    const auto state = [&] {
+        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        REQUIRE(snapshot.value.transfers.transfers.size() == 1);
+        REQUIRE(snapshot.value.transfers.transfers.front().file == file);
+        return snapshot.value.transfers.transfers.front().state;
+    };
+    REQUIRE(transfers.start_transfer(DeviceId{"beta"}, id, file, "source.bin"));
+    settle();
+    REQUIRE(adapter.inject_transfer_started(aki::transfer::Transfer{id,
         DeviceId{"local-1"}, DeviceId{"beta"}, file, 0, 40,
         TransferState::Negotiating}));
-    REQUIRE(stack.adapter.inject_transfer_started(aki::transfer::Transfer{id,
-        DeviceId{"local-1"}, DeviceId{"beta"}, file, 0, 40,
-        TransferState::Transferring}));
-    REQUIRE(stack.adapter.inject_transfer_completed(id, TransferState::Completed));
-    stack.quiesce();
-    {
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
-        REQUIRE(stack.state_owner.try_load_snapshot(snapshot));
-        REQUIRE(snapshot.value.transfers.transfers.front().state
-            != TransferState::Completed);
-        REQUIRE(stack.transfers->active_session_count() == 1);
-    }
-    // 恢复归档 → copy_done 放行 held 终态（M2-06 作业组随后消费完整 .part）。
-    REQUIRE(stack.transfers->resume_transfer(id));
-    REQUIRE(wait_until([&] {
-        stack.quiesce();
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
-        if (!stack.state_owner.try_load_snapshot(snapshot)) {
-            return false;
-        }
-        return snapshot.value.transfers.transfers.front().state
-            == TransferState::Completed;
-    }, 5s));
-    REQUIRE(stack.transfers->active_session_count() == 0);
+    settle();
+    const auto pause_and_late_confirm = [&] {
+        REQUIRE(transfers.pause_transfer(id));
+        REQUIRE(transfers.enqueue_transfer_paused(id));
+        REQUIRE(transfers.resume_transfer(id));
+        // resume 已处理，但旧 pause 确认晚到；之后没有新的 wire progress。
+        REQUIRE(transfers.enqueue_transfer_paused(id));
+        settle();
+        REQUIRE(state() == TransferState::Paused);
+    };
 
-    const auto report = stack.host.shutdown();
-    REQUIRE(report.fully_stopped());
-    REQUIRE(stack.io->idle());
+    SECTION("commit before archive completes resumes local IO despite late pause") {
+        pause_and_late_confirm();
+        REQUIRE(adapter.inject_transfer_completed(id, TransferState::Completed));
+        REQUIRE(transfers.pause_transfer(id));
+        REQUIRE(transfers.enqueue_transfer_paused(id));
+        settle();
+        REQUIRE(state() != TransferState::Completed);
+        REQUIRE(transfers.active_session_count() == 1);
+        io.emit(id, aki::transfer::TransferIoEvent::Phase::hash_done);
+        settle();
+        REQUIRE(io.advances.load() == 1);
+        io.emit(id, aki::transfer::TransferIoEvent::Phase::copy_done);
+        settle();
+        REQUIRE(state() == TransferState::Completed);
+        REQUIRE(io.releases.load() == 1);
+        REQUIRE(owner.stats().updates_rejected == 0);
+    }
+    SECTION("commit after archive completes requires no final progress event") {
+        io.emit(id, aki::transfer::TransferIoEvent::Phase::hash_done);
+        settle();
+        io.emit(id, aki::transfer::TransferIoEvent::Phase::copy_done);
+        settle();
+        pause_and_late_confirm();
+        REQUIRE(adapter.inject_transfer_completed(id, TransferState::Completed));
+        settle();
+        REQUIRE(state() == TransferState::Completed);
+        REQUIRE(io.releases.load() == 1);
+        REQUIRE(owner.stats().updates_rejected == 0);
+    }
+    SECTION("cancelling the held commit prevents late IO from completing it") {
+        pause_and_late_confirm();
+        REQUIRE(adapter.inject_transfer_completed(id, TransferState::Completed));
+        settle();
+        REQUIRE(transfers.cancel_transfer(id));
+        settle();
+        REQUIRE(state() == TransferState::Cancelled);
+        io.emit(id, aki::transfer::TransferIoEvent::Phase::copy_done);
+        settle();
+        REQUIRE(state() == TransferState::Cancelled);
+        REQUIRE(transfers.late_io_events() == 1);
+        REQUIRE(io.releases.load() == 0);
+        REQUIRE(adapter.inject_transfer_completed(id, TransferState::Completed));
+        settle();
+        REQUIRE(state() == TransferState::Cancelled);
+        REQUIRE(owner.stats().updates_rejected == 1);
+    }
+    SECTION("negotiating commit needs no synthetic wire progress") {
+        io.emit(id, aki::transfer::TransferIoEvent::Phase::hash_done);
+        settle();
+        io.emit(id, aki::transfer::TransferIoEvent::Phase::copy_done);
+        settle();
+        REQUIRE(state() == TransferState::Negotiating);
+        REQUIRE(adapter.inject_transfer_completed(id, TransferState::Completed));
+        settle();
+        REQUIRE(state() == TransferState::Completed);
+        REQUIRE(owner.stats().updates_rejected == 0);
+    }
+    REQUIRE(transfers.active_session_count() == 0);
+    REQUIRE(transfers.stats().handler_rejections == 0);
+    adapter.set_sink(nullptr);
+    REQUIRE(host.shutdown().fully_stopped());
 }
 
 // ---- DOD-02：任务异常（源缺失 → failed 事件，worker 存活）+ 归档失败时

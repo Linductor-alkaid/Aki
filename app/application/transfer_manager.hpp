@@ -451,6 +451,12 @@ private:
                 // 终态闸门（§7.1③）：wire committed 先于归档完成——持有事件，
                 // 归档 copy_done 后放行（M2-06 作业组对不完整 .part 明确失败）。
                 session.held_completed = work;
+                // wire 已完成，不再等待网络 resume；迟到 pause 不能阻止
+                // 本地归档收尾（M5-31 / DEC-012）。
+                session.paused = false;
+                if (!session.io_in_flight) {
+                    continue_archive(work.transfer, session);
+                }
                 return true;
             }
             if (work.final_state == aki::transfer::TransferState::Completed) {
@@ -525,6 +531,9 @@ private:
     bool handle(PauseTransferWork& work) {
         auto it = sessions_.find(work.transfer_id.value);
         if (it != sessions_.end()) {
+            if (it->second.held_completed.has_value()) {
+                return true;  // wire 终态后的迟到控制不能重新暂停归档。
+            }
             it->second.paused = true;  // 归档续接抑制（在飞块自然完成）
         }
         return adapter_.pause_transfer(work.transfer_id);
@@ -555,10 +564,16 @@ private:
                 CompleteTransfer{work.transfer_id,
                     aki::transfer::TransferState::Cancelled});
         }
+        const bool wire_finished = it->second.held_completed.has_value();
         finish_session_io(it->second, work.transfer_id);
         sessions_.erase(it);
         session_count_.store(static_cast<int>(sessions_.size()));
         cancelled_sessions_.fetch_add(1);
+        if (wire_finished) {
+            // wire 已终结，不再等待不会到达的 cancelled 回报；取消本地闸门。
+            return deliver_terminal(TransferCompletedWork{work.transfer_id,
+                aki::transfer::TransferState::Cancelled});
+        }
         return true;
     }
 
@@ -570,6 +585,9 @@ private:
         // handle(PauseTransferWork) 已置位，此处幂等）。
         auto session = sessions_.find(work.transfer.value);
         if (session != sessions_.end()) {
+            if (session->second.held_completed.has_value()) {
+                return true;  // committed 已到，旧 paused 确认不覆盖完成事实。
+            }
             session->second.paused = true;
         }
         // 整行 upsert（Paused）：已知行缓存承载（§7.1②——状态推进经
@@ -749,6 +767,18 @@ private:
 
     // 终态投递（事件 + CompleteTransfer；held 放行与直达共用出口）。
     bool deliver_terminal(const TransferCompletedWork& work) {
+        auto known = known_rows_.find(work.transfer.value);
+        if (work.final_state == aki::transfer::TransferState::Completed
+            && known != known_rows_.end()
+            && (known->second.state == aki::transfer::TransferState::Negotiating
+                || known->second.state == aki::transfer::TransferState::Paused)) {
+            // committed 后未必还有 progress：经已有合法边完成收尾，
+            // 不允许未知行或 Failed/Cancelled 终态被恢复。
+            auto advanced = known->second;
+            advanced.state = aki::transfer::TransferState::Transferring;
+            if (!state_owner_.submit_update(UpsertTransfer{advanced})) return false;
+            known->second = std::move(advanced);
+        }
         known_rows_.erase(work.transfer.value);  // 终态：行缓存清理（M4-05）
         const bool posted =
             post_event(TransferCompletedEvent{work.transfer, work.final_state});
