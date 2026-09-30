@@ -473,6 +473,7 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
 
     ConversationManagerOptions conversation_options;
     conversation_options.pump.name = "aki.cm";
+    conversation_options.seeded_rows = impl.recovery->state.conversations;
     impl.conversations.emplace(impl.executor_owner.executor(),
         *impl.state_owner, conversation_options);
 

@@ -23,7 +23,9 @@ AGENTS 规则 11。
   写入以类型化更新指令经 `MpscChannel` 汇聚到状态 owner（`DEC-002` / `RULE-02`）。
   出站操作按域切分（发现启停→DM、`send_text`→MM、传输四接口→TM）；CM 显式提供
   `ensure_conversation(local, remote)`，不从事件隐式建会话，其自建会话记录仅用于
-  断连推导（创建记录，不复制 owner 权威状态）。
+  断连推导（创建记录，不复制 owner 权威状态）。2026-09-30 补充：宿主在
+  启动网络事件源前，将恢复会话的原 ID/端点播种到 CM，历史会话同样参与
+  连接事件推进；不重新派生 ID，不回写恢复状态，Archived 终态仍由 owner 校验。
 - **事件路由**：`app/application` 内单一 `RouterSink` 实现 `HeyakiAdapterSink`，
   回调线程只做有界校验并投递到各 Manager 私有有界 `MpscChannel` 收件箱
   （`EXEC-02`）；9 类事件逐一对应固定路由与状态更新（设计第 8.3 节路由表）；

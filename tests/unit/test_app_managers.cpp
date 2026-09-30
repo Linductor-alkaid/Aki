@@ -305,7 +305,7 @@ struct BasicStack {
         ManagerPumpOptions device_pump = {},
         ConversationManagerOptions conversation_options = {},
         MessageManagerOptions message_options = {},
-        TransferManagerOptions transfer_options = {})
+        TransferManagerOptions transfer_options = {}, AppState initial = {})
         : host([&] {
               // 固定线程池（脱离 runner 硬件决定性）：M1 会话骨架
               // session_loop 在池 worker 上 sleep 轮询（每个活跃会话停占
@@ -320,7 +320,7 @@ struct BasicStack {
               pinned.executor_config.min_threads = 4;
               pinned.executor_config.max_threads = 4;
               return pinned;
-          }()) {
+          }()), state_owner({}, std::move(initial)) {
         if (device_pump.name.empty()) {
             device_pump.name = "aki.dm";
         }
@@ -477,6 +477,69 @@ void drain_until_idle(AppStateOwner& owner) {
 }
 
 }  // namespace
+
+TEST_CASE("Recovered conversations follow link events without losing their IDs or history",
+    "[unit][managers][recovery]") {
+    AppState initial;
+    aki::conversation::Conversation recovered;
+    recovered.id = ConversationId{"stored-conversation-id"};
+    recovered.local_device = DeviceId{"local-1"};
+    recovered.remote_device = DeviceId{"dev-a"};
+    recovered.state = ConversationState::Disconnected;
+    initial.conversations.conversations.push_back(recovered);
+    auto archived = recovered;
+    archived.id = ConversationId{"archived-conversation-id"};
+    archived.remote_device = DeviceId{"dev-b"};
+    archived.state = ConversationState::Archived;
+    initial.conversations.conversations.push_back(archived);
+    auto history = make_message("stored-message");
+    history.sender = recovered.local_device;
+    history.receiver = recovered.remote_device;
+    initial.messages.messages.push_back(history);
+    ConversationManagerOptions options;
+    options.seeded_rows = initial.conversations.conversations;
+    AppStack stack({}, {}, std::move(options), {}, {}, std::move(initial));
+    const auto settle = [&] {
+        quiesce(stack.state_owner, *stack.devices, *stack.conversations,
+            *stack.messages, *stack.transfers);
+    };
+    const auto check = [&](ConversationState expected) {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(stack.state_owner.try_load_snapshot(snapshot));
+        const auto& rows = snapshot.value.conversations.conversations;
+        REQUIRE(rows.size() == 2);
+        REQUIRE(rows[0].id == recovered.id);
+        REQUIRE(rows[0].local_device == recovered.local_device);
+        REQUIRE(rows[0].remote_device == recovered.remote_device);
+        REQUIRE(rows[0].state == expected);
+        REQUIRE(rows[1].state == ConversationState::Archived);
+        REQUIRE(snapshot.value.messages.messages.size() == 1);
+        REQUIRE(snapshot.value.messages.messages[0].id == history.id);
+        REQUIRE(snapshot.value.messages.messages[0].payload == history.payload);
+    };
+    // 在线发现不等于连接，不把历史会话提前标为 Active。
+    REQUIRE(stack.adapter.inject_device_discovered(make_discovered("dev-a")));
+    settle();
+    check(ConversationState::Disconnected);
+    REQUIRE(stack.conversations->ensure_conversation(recovered.local_device,
+        recovered.remote_device));
+    settle();
+    check(ConversationState::Disconnected);
+    REQUIRE(stack.adapter.inject_device_connected(recovered.remote_device,
+        ConnectionPath::Lan));
+    settle();
+    check(ConversationState::Active);
+    REQUIRE(stack.adapter.inject_device_disconnected(recovered.remote_device));
+    settle();
+    check(ConversationState::Disconnected);
+    REQUIRE(stack.adapter.inject_device_connected(recovered.remote_device,
+        ConnectionPath::P2p));
+    REQUIRE(stack.adapter.inject_device_connected(archived.remote_device,
+        ConnectionPath::Lan));
+    settle();
+    check(ConversationState::Active);
+    REQUIRE(stack.state_owner.stats().updates_rejected >= 1);
+}
 
 // ---- 用例 1：12 类 Sink 方法路由（失败面不产主路径事件）、Store 归属、
 // ---- 扇出与 FIFO（DOD-02 正常完成）----
