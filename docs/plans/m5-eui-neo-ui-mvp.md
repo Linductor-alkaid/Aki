@@ -292,6 +292,16 @@ Debug `aki` 构建成功，`desktop-file-validate` 和 `git diff --check` 通过
 不进入分发或仓库。CI、deb 交付及安装版 Dock 观察仍待执行；负责人
 Linductor/设备操作者，补跑条件为 Ubuntu 24.04 正常退出旧版后安装新包。
 
+同日运行版复验：用户正常退出旧安装版后启动上述双后端修复版，确认
+“图标正常，归为同一个图标”。此结果证明 Ubuntu 24.04 GNOME Dock 的
+实际关联恢复；当前运行的是 Debug 构建，尚不替代 CI deb 安装复验。
+代码 head `5f8d71bd027998e6c78b668a2f9aba6f2890f842` / CI run
+`36696751776`：17:52（Asia/Shanghai）核实 Windows Debug success，
+其他六项仍 queued；Linux 打包 runner_id=0，无日志或失败 annotation。
+本机未配置 Ubuntu 20.04 容器构建环境，兼容 deb 交付等待既有 CI runner。
+本轮验收文档提交不改变应用代码，最新 head 的七项 CI 仍须独立核实；
+不得用运行版验收或单项 Windows 成功宣称整批完成。
+
 2026-09-29：用户第二轮双端实测发现上述七类问题，归入本维护批；
 双端复验需分别测试撤销方向、重建配对与断线恢复时序。
 
