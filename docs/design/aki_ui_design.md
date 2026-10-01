@@ -2,7 +2,7 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-09-28
+> 更新日期：2026-10-01
 > 权威约束：[ZCode Design System](zcode-design-system.md)（直接采用，见下）
 > 上位设计：[Aki 设计方案](aki_design.md)第 9/10 节
 > 实现基线：pinned `third_party/EUI-NEO`
@@ -309,3 +309,13 @@ Transfers / Settings。组件选型（`RISK-2026-002` 的盘点基线，M5 用 p
 - Font Awesome Free Solid（界面图标字体）：随 pinned EUI-NEO assets 分发，
   许可以 EUI-NEO 仓库内标注为准（发行前资产许可审计登记项，锁文件
   `used_by` 已注）。
+
+### 2026-10-01：图片与本地文件呈现（M5-38/39，DEC-026）
+
+图片气泡默认显示 `image` 的 Contain 缩略图，最高 240px（4px 基频），
+点击预览打开整窗居中的现有 dialog。文件名、传输状态和保存路径同时可见，
+未归档显示“正在保存文件”，归档文件缺失显示“本地文件已不存在”。
+本地路径使用 ui-sm 和 mono；聊天卡片换行显示完整路径，Transfers 固定行
+在路径过长时显示尾段并提供“复制路径”和“打开文件夹”。操作按钮为 secondary，
+不额外增加卡片层级。Transfers 行高由原文件信息区、路径行和控件令牌相加，
+路径区按排印和控件令牌扩展。打开文件夹仅交给系统文件管理器，不执行收到的文件。

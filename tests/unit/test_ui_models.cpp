@@ -19,6 +19,7 @@
 #include "app/state/app_state_updates.hpp"
 #include "ui/models/ui_state_consumer.hpp"
 #include "ui/models/view_models.hpp"
+#include "ui/models/local_file_path.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -673,4 +674,44 @@ TEST_CASE("Update-submit wake hook fires on submitter context and contains"
 
     const auto report = executor_owner.shutdown();
     REQUIRE(report.fully_stopped());
+}
+
+TEST_CASE("Archived images join both directions and survive unavailable local files",
+    "[unit][ui_models][local_media]") {
+    aki::conversation::Conversation conversation;
+    conversation.local_device = aki::device::DeviceId{"local"};
+    conversation.remote_device = aki::device::DeviceId{"peer"};
+    aki::app::MessageStore messages;
+    aki::app::TransferStore transfers;
+    for (const bool outbound : {false, true}) {
+        const auto key = outbound ? "out" : "in";
+        aki::transfer::Transfer row;
+        row.id = aki::transfer::TransferId{key};
+        row.sender = outbound ? conversation.local_device : conversation.remote_device;
+        row.receiver = outbound ? conversation.remote_device : conversation.local_device;
+        row.state = aki::transfer::TransferState::Completed;
+        row.file.name = "photo.png";
+        transfers.transfers.push_back(row);
+        transfers.local_artifacts.push_back({row.id, std::string("files/") + key + "/photo.png",
+            std::string(64, '0'), 3, outbound});
+        aki::conversation::Message message;
+        message.id = aki::conversation::MessageId{key};
+        message.sender = row.sender; message.receiver = row.receiver;
+        message.type = aki::conversation::MessageType::Image;
+        message.payload = aki::conversation::ImagePayload{row.file, row.id};
+        messages.messages.push_back(message);
+    }
+    const auto views = derive_message_views(messages, conversation, conversation.local_device, transfers);
+    REQUIRE(views.size() == 2);
+    REQUIRE(views[0].local_relative_path == "files/in/photo.png");
+    REQUIRE_FALSE(views[0].local_file_available);
+    REQUIRE(views[1].local_file_available);
+    const auto files = derive_transfer_views(transfers, conversation.local_device);
+    REQUIRE(files[1].local_relative_path == views[1].local_relative_path);
+    REQUIRE(local_file_path("/data", views[0].local_relative_path).generic_string() == "/data/files/in/photo.png");
+    REQUIRE(local_file_path("/data", "files/in/../secret").empty());
+    REQUIRE(local_file_path("/data", "files/other/photo.png/child").empty());
+    REQUIRE(local_file_path("", "files/in/photo.png").empty());
+    transfers.local_artifacts.clear();
+    REQUIRE(derive_message_views(messages, conversation, conversation.local_device, transfers)[0].local_relative_path.empty());
 }

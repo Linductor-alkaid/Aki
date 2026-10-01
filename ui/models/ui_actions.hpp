@@ -79,6 +79,10 @@ struct UiActions {
     std::function<bool(aki::device::DeviceId)> revoke_device;
     std::function<bool(aki::device::DeviceId, std::string)> set_device_remark;
 
+    // Platform commands run only in user click handlers; no compose IO.
+    std::function<bool(std::filesystem::path, std::string&)> open_file_folder;
+    std::function<void(std::string)> copy_local_path;
+
     // 会话域（ConversationManager::ensure_conversation——显式建会话，不从
     // 事件隐式建，设计 §8.3）。
     std::function<bool(aki::device::DeviceId, aki::device::DeviceId)>

@@ -40,6 +40,9 @@ inline constexpr float kSpacingSection = 16.0f;
 inline constexpr float kSpacingLarge = 20.0f;
 inline constexpr float kSpacingPanel = 24.0f;
 
+// Image bubble extent (aki_ui_design §4, 4px base).
+inline constexpr float kImageThumbnailExtent = 240.0f;
+
 // ---- 语义色板（§2.3，值取自上游 Tailwind 默认调色板；hex 0xRRGGBB）----
 // ThemeColorTokens 绑定 + AkiSemanticPalette 扩展语义色（aki_theme.hpp）。
 struct PaletteHex {

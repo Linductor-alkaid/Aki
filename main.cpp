@@ -29,6 +29,7 @@
 #include "ui/pages/main_window.hpp"
 #include "ui/platform/application_identity.hpp"
 #include "ui/platform/ime_guard.hpp"
+#include "ui/platform/local_files.hpp"
 #include "ui/theme/aki_theme.hpp"
 
 #include <eui/dsl_app.h>
@@ -303,6 +304,8 @@ void app::compose(eui::Ui& ui, const eui::Screen& screen) {
                     == aki::ui::Language::Chinese ? "zh-CN" : "en");
                 model.language_selection_pending = false;
             }
+            ui_actions()->open_file_folder = aki::ui::platform::open_file_folder;
+            ui_actions()->copy_local_path = aki::ui::platform::copy_local_path;
             model.actions = ui_actions();
         }
         log_theme_override();

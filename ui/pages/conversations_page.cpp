@@ -11,6 +11,9 @@
 #include "ui/pages/conversations_page.hpp"
 
 #include "ui/components/transfer_card.hpp"
+#include "ui/components/local_file_location.hpp"
+#include "ui/models/local_file_path.hpp"
+#include "ui/theme/aki_theme_values.hpp"
 #include "ui/pages/main_window.hpp"
 
 #include "components/button.h"
@@ -155,6 +158,19 @@ const std::filesystem::path* outbound_source_of(
         }
     }
     return nullptr;
+}
+
+std::filesystem::path image_source_of(const MainWindowModel& model,
+    const models::MessageView& message) {
+    if (message.local_file_available)
+        return models::local_file_path(model.data_directory, message.local_relative_path);
+    // Keep immediate outgoing preview while persistence is finishing. A missing
+    // archive must not resurrect a stale original path after completion.
+    if (message.outbound && message.local_relative_path.empty()) {
+        if (const auto* path = outbound_source_of(model.conversations, message.transfer_id))
+            return *path;
+    }
+    return {};
 }
 
 // ---- 消息视图派生缓存推进（重组边界；纯函数派生 + 页面模型写回，§9.1）----
@@ -347,6 +363,27 @@ void compose_file_card(eui::Ui& ui, const ThemeColorTokens& tokens,
             widgets::compose_transfer_card_body(
                 ui, tokens, semantic, id + ".body", data, inner_width);
 
+            if (message.type == aki::conversation::MessageType::Image) {
+                const auto source = image_source_of(model, message);
+                if (!source.empty()) {
+                    const float thumbnail = std::min(inner_width, theme_values::kImageThumbnailExtent);
+                    components::image(ui, id + ".thumbnail", components::ImageStyle(tokens))
+                        .size(inner_width, thumbnail).contain()
+                        .radius(metrics.radius.small).source(source.string())
+                        .onClick([&model, message_id = message.id] {
+                            model.conversations.preview_message = message_id;
+                        }).build();
+                }
+            }
+            if (message.transfer_tracked
+                && message.transfer_state == aki::transfer::TransferState::Completed) {
+                widgets::compose_local_file_location(ui, tokens, semantic,
+                    id + ".local", model.data_directory, message.local_relative_path,
+                    message.local_file_available, message.local_file_error, inner_width, false, model.actions.get(),
+                    [&model](std::string feedback) {
+                        model.last_action_feedback = std::move(feedback);
+                    });
+            }
             // 图片预览入口（§4 image+dialog；弹窗 open 态页面持有）。
             if (message.type == aki::conversation::MessageType::Image) {
                 components::button(ui, id + ".preview")
@@ -508,43 +545,27 @@ void compose_preview_dialog(eui::Ui& ui, const ThemeColorTokens& tokens,
                 .fontSize(metrics.typography.caption)
                 .color(semantic.text_subtle)
                 .build();
-            const std::filesystem::path* source =
-                outbound_source_of(chat, message->transfer_id);
+            const auto source = image_source_of(model, *message);
             const float body_y = metrics.spacing.section
                 + metrics.typography.subtitle + metrics.typography.caption
                 + metrics.spacing.content;
-            if (source != nullptr) {
+            if (!source.empty()) {
                 components::image(ui, "aki.chat.preview.image",
                     components::ImageStyle(tokens))
                     .position(metrics.spacing.section, body_y)
-                    .size(inner, inner)
+                    .size(inner, dialog_h - body_y - metrics.control.field
+                        - metrics.spacing.section * 2.0f)
+                    .contain()
                     .radius(metrics.radius.card)
-                    .source(source->string())
+                    .source(source.string())
                     .build();
             } else {
-                // 接收侧/无本地路径：显式不可用态（接收文件落接收根，Store
-                // 不持本地路径——如实呈现，不以占位图冒充）。
                 components::text(ui, "aki.chat.preview.unavailable")
-                    .text(tr("local preview not available (received files land"
-                             " in the receive root; metadata only)"))
+                    .text(tr(message->local_relative_path.empty()
+                        ? "Image is not available yet." : "Local file is missing"))
                     .position(metrics.spacing.section, body_y)
-                    .fontSize(metrics.typography.caption)
-                    .wrap(true)
-                    .maxWidth(inner)
-                    .color(semantic.text_subtlest)
-                    .build();
-                components::text(ui, "aki.chat.preview.sha")
-                    .text(message->media.stored_sha256.empty()
-                            ? std::string("sha-256: (pending sender archive)")
-                            : "sha-256: " + message->media.stored_sha256)
-                    .position(metrics.spacing.section,
-                        body_y + metrics.typography.caption * 3.0f)
-                    .fontSize(metrics.typography.hint)
-                    .fontFamily("Mono")
-                    .wrap(true)
-                    .maxWidth(inner)
-                    .color(semantic.text_subtle)
-                    .build();
+                    .fontSize(metrics.typography.caption).wrap(true)
+                    .maxWidth(inner).color(tokens.text).build();
             }
             components::button(ui, "aki.chat.preview.close")
                 .position(dialog_w - metrics.spacing.section - 120.0f,
