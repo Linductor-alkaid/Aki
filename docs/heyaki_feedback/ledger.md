@@ -1,7 +1,7 @@
 # Heyaki 能力反馈台账
 
 > 状态：Active
-> 更新日期：2026-10-01
+> 更新日期：2026-10-02
 
 ## HEY-20260929-001：受限会话由接收方直接批准
 
@@ -157,3 +157,32 @@ Linux/Windows 安装版尚待验收，不能以升级/上游关闭替代。
   无 committed、无 grant、已有取消 admission 与 shutdown，未将拒绝终态
   标完成。M5-34 的单端文件拒绝验收保持未完成。负责人 Linductor；
   补跑条件为上游固定修复后双端策略矩阵与取消竞争回归。
+
+## 2026-10-02：HEY-20261001-001 上游修复消费
+
+Heyaki #13 已 closed/completed；#14 已合入 516815c，新参数
+file_offer_timeout（0=默认30s）让未接收 offer 产生一次失败终态，接收前
+不读取或发送正文。Aki 在 M5-40 单独固定此提交并适配；新独立 offer
+Debug 回环通过，最终 sanitizer/CI 与安装版补跑尚待完成。
+
+首轮 ASAN 的消息拒绝→同会话文件 push 没有 failed，进一步观测到
+paused=1 / linked=0，是上游明确保留的“拒绝后后续 push 破坏会话”边界。
+旧复现永久 offered 的缺口和此断连停车不同；原测试严格要求 failed 或
+可观察的 Paused+断连。上游修复不等于后续会话保持已验收，M5-34 仍未完成。
+
+## HEY-20261002-001：策略拒绝后再次推送破坏会话
+
+- 状态 Reported：[Heyaki #15](https://github.com/Linductor-alkaid/heyaki/issues/15)，
+  上游 #14 已提及但此前未独立跟踪。关联 M5-34；负责人 Linductor。
+- 516815c / Ubuntu 24.04 / GCC 13 / Aki ASAN；fresh profiles、零 grant、
+  单 Executor / 两 borrowed Runtime。A basic=true，B=false；文本 TTL 拒绝
+  后 A 的文件 push 被接纳，随后 offered→paused，会话快照最终断连。
+  无落盘/无 grant；取消 parked transfer 同步被拒。暂停回调先于断连快照，
+  直接读取可能短暂 linked=1；回归等待最终快照后断言断连。
+- 影响：严格策略/旧端拒绝业务通道后，复用缓存关闭通道的下一次发送可能
+  破坏整条身份会话；不等于首次独立 offer 的 deadline 修复失败。
+- 期望：退役/替换关闭通道，后续 push 明确拒绝或有界失败，健康身份会话
+  保持；book 中 Paused transfer 的取消语义需明确。验证重复/迟到、重连、
+  shutdown 与两种拒绝序列；独立管理上游，Aki 不直接改依赖。
+- Aki 回归保留 budget 内 Failed 或 Paused+最终断连可见，未声称保持会话已
+  修复。补跑条件为上游固定后复验 ASAN/TSAN/双端策略矩阵。

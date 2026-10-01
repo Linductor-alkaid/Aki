@@ -12,7 +12,7 @@
 > 真实 Adapter、NodeSession、发现/消息/图片/传输/presence/重连管道与恢复
 > 语义均已就绪
 > 建议发布点：v0.5.0（MVP）
-> 更新日期：2026-10-01（Heyaki v1.1.1 接入与跨平台验收）
+> 更新日期：2026-10-02（Heyaki 文件协商终态修复接入）
 
 ## M5-33~M5-35：Heyaki v1.1.1 接入
 
@@ -109,6 +109,26 @@ UBSAN/TSAN、Windows Debug、deb、setup）。TSAN ctest 44/44；新基础
 Linux CI 包 SHA256：58878a74fb2df636e37de7a78f5b50cf3e54624f12624741fe3002ed389d8b7c，
 包内 aki SHA256：5291c24f87ae0a17c5732331ba0a427ead733f0db1d0a801390425425b4a7a89；
 amd64/0.1.0、desktop-file-validate 通过。安装版跨平台验收仍待操作者。
+
+## M5-40：Heyaki 文件协商终态修复接入
+
+> 状态：In Progress；日期：2026-10-02；负责人：Linductor。
+> 依据：DEC-003、DEC-006、DEC-023，HEY-20261001-001 / Heyaki #13。
+
+- [ ] `M5-40` 独立依赖 MR 固定上游修复提交 516815cbfb76f93f60acd4b58e5b6a7976e4417f
+  （v1.1.1 后两个提交，未发布新 tag）；Adapter 映射 file_offer_timeout，
+  默认使用上游有界 30s，测试可缩短等待。验证被单侧策略/缺根拒绝的 push
+  一次失败终态、同 TransferId、取消前后竞态、无落盘/无 grant，以及已接受
+  文件与重连/关闭回归；Aki 七项最新 head CI 与供应链审计通过后完成接入。
+  双端安装包通信验收仍归 M5-34/37~39，不以上游 issue 关闭替代。
+
+用户告知上游 issue 已处理。#13 closed/completed，#14 已合入 516815c；
+修复沿上游现有维护 tick 提供协商 deadline，并在 FILE_ACCEPT 前禁止读取/
+发送正文。没有新增 Aki timer/线程/队列。已知上游后续限制：退役会话上的
+取消仍可能同步拒绝，策略拒绝后同一物理通道的后续 push 可能断开会话。
+此批只接入已修复的首次 offer 终态，保留这些结果边界；使用默认 30s 不
+改变接收根、设备 grant 或控制能力。未执行项负责人 Linductor，条件为
+本地/CI runner 与两端安装包可用。
 
 ## M5-36~M5-39：Linux / Windows 实测缺陷修复
 
@@ -2329,3 +2349,31 @@ Windows 首启、双向新图片、文件位置实际操作及安装包验收仍
 本机文件位置操作复验：操作者确认已完成图片/文件卡片可看到完整保存
 路径，复制路径和打开所在目录可用。该证据只覆盖本机 Linux，M5-39
 仍待 Windows 同项验收；Windows 首启、双向新图片及重启历史待新 CI 包。
+
+### 2026-10-02：桌面修复 MR 闭环与后续依赖修复
+
+PR #64 的 head b63eb06d43ef716522fc964bb0109afc09373f7a，CI run
+[36890952241](https://github.com/Linductor-alkaid/Aki/actions/runs/36890952241)
+七项 completed/success（Linux Debug/ASAN/UBSAN/TSAN、Windows Debug、deb、
+setup）。2026-10-02 北京时间 squash 合入 e189253be45b5a18c86597992019902a8d6d073a，
+远程与本地分支删除，主目录 master fast-forward。主目录原有 Heyaki checkout
+e114508 未覆盖；它是此前存在的 submodule 差异，不纳入本次升级提交。
+
+M5-40：精确固定 516815c，官方 fetch --check --all 通过，默认 30s 配置
+仅在 Adapter 映射。新增 file_offer 定向 Debug 86 assertions / 2 cases
+通过；首轮 Debug 全回环 46.50s 通过。ASAN 旧消息拒绝后再文件序列未
+得到 terminal；定向复现 terminal=0 / paused=1 / offered=1 / linked=0，
+确认是会话丢失停车。原测试改为严格要求预算内 Failed 或 Paused 且已断连，
+第一次独立 offer 仍严格要求 failed。上游已知后续问题单独保留；最终各档
+回归及最新 Aki CI 尚待回填，不以上游 closed 或首次 Debug 替代。
+
+M5-40 最终本地：Debug aki 构建通过；完整基础回环 Debug 1/1（47.99s）、
+UBSAN 1/1（71.24s），ASAN 修正回调/快照观察顺序后 1/1（53.45s）通过。
+ASAN 两轮失败均保留：首次未区分断连 Paused，第二次直接断言异步连接
+快照。真实新 offer 两个测试严格要求一次 failed/cancelled，无 skip；旧
+后续序列保持在预算内 Failed 或 Paused+最终断连的门禁。后续缺陷已报
+[Heyaki #15](https://github.com/Linductor-alkaid/heyaki/issues/15)，台账
+HEY-20261002-001；七项新 head CI 与安装版尚待补跑。
+
+最终独立 file_offer 定向 ASAN 86 assertions / 2 cases 通过；诊断/失败
+记录和首次 offer 严格终态断言均保留。

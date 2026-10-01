@@ -71,3 +71,10 @@ M5-33 将 Heyaki 升级至 v1.1.1 @ 1ceb42c7b244e950ebeeb10edc84b6d83e423626，
 替换上述 Heyaki 基线；Executor/EUI-NEO pins 保持不变。独立 MR 与 lock
 更新及审计见 [heyaki-v1.1.1](../supply-chain/heyaki-v1.1.1.md)，业务策略
 采用 DEC-023。消费官方 fetch 中的同步补丁，不直接修补上游代码。
+
+## 2026-10-02 文件 offer 修复消费
+
+M5-40 将 Heyaki 固定至官方已合入提交 516815cbfb76f93f60acd4b58e5b6a7976e4417f
+（v1.1.1 后两个提交，未发布新 tag）。来源、差异、未通过的上游 CI、已知
+后续限制与本地/CI 回归见 [升级审计](../supply-chain/heyaki-file-offer-deadline.md)。
+仅适配新增公开参数，不改上游，遵循现有独立依赖 MR。

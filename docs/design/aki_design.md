@@ -1478,3 +1478,12 @@ LocalTransferArtifact 记录及 SetLocalTransferArtifact 更新，只由归档�
 密码是否需设置和 GLFW 后端，不记录密码。Profile 检查异常阻止 Host 装配，
 错误页提供重试；既有合法密码不得因重装而重置。目录打开和复制路径仅在用户
 点击时由 Platform Adapter 执行，compose 不查询磁盘。
+
+### 文件 offer 超时边界（M5-40 / HEY-20261001-001）
+
+Heyaki Adapter 在 NodeSession::Options 映射 file_offer_timeout，0 保持
+上游 30s 默认协商窗口；Host 不关闭该窗口。未收到接收确认时，上游经既有
+维护推进发布一次失败事件，沿既有 Transfer 状态和 AppState 投递链映射
+Negotiating → Failed；接收确认后的传输不套用 offer deadline。Aki 不另设
+并行计时器，也不以 admission 推断对端接受。断连仍按既有 Paused/重连
+契约处理，不把断连停车误报为 offer expiry；到期推进不宣称实时精度。
