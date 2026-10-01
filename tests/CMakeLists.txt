@@ -580,3 +580,11 @@ target_link_libraries(test_basic_communication_loopback PRIVATE Catch2::Catch2Wi
 aki_deploy_openssl_dlls(test_basic_communication_loopback)
 add_test(NAME test_basic_communication_loopback COMMAND test_basic_communication_loopback)
 set_tests_properties(test_basic_communication_loopback PROPERTIES LABELS "integration" TIMEOUT 180)
+
+# Approved EUI-20261001-002 generated-source override; no GUI automation.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME test_eui_x11_ime_patch COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}" "-DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/eui_x11_patch_test.cmake")
+    set_tests_properties(test_eui_x11_ime_patch PROPERTIES LABELS "unit")
+endif()

@@ -52,6 +52,8 @@ set(EUI_ENABLE_MODULES OFF CACHE BOOL "" FORCE)
 set(EUI_WINDOW_BACKEND "glfw" CACHE STRING "" FORCE)
 set(EUI_RENDER_BACKEND "opengl" CACHE STRING "" FORCE)
 add_subdirectory(third_party/EUI-NEO)
+include(cmake/EuiX11ImePatch.cmake)
+aki_apply_eui_x11_ime_patch()
 
 # 应用图标（2026-09-27 用户确认，aki_ui_design §2.6）：Windows exe 内嵌
 # 图标采用 Heyaki 图标（assets/icons/aki-icon.ico，scripts/make_app_icons.py

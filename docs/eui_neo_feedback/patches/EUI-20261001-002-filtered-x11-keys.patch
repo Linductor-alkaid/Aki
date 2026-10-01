@@ -1,0 +1,14 @@
+--- a/3rd/glfw/src/x11_window.c
++++ b/3rd/glfw/src/x11_window.c
+@@ -1258,7 +1258,10 @@
+                 Time diff = event->xkey.time - window->x11.keyPressTimes[keycode];
+                 if (diff == event->xkey.time || (diff > 0 && diff < ((Time)1 << 31)))
+                 {
+-                    if (keycode)
++                    // The input method owns filtered key presses. Reporting
++                    // them as application edits deletes committed text while
++                    // Backspace is deleting the active preedit string.
++                    if (keycode && !filtered)
+                         _glfwInputKey(window, key, keycode, GLFW_PRESS, mods);
+ 
+                     window->x11.keyPressTimes[keycode] = event->xkey.time;

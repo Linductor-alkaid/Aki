@@ -2296,3 +2296,16 @@ verifier 校验并签发 grant；`handle_pairing_request` 响应侧即升级会�
   Linux/Windows 图形输入、双向图片/重启历史、复制路径/打开目录仍未验收，
   负责人 Linductor，补跑条件为安装新 CI 包后双设备在线；M5-36~39 保持未完成。
   TSAN 本机受已知 runtime mapping 限制，本阶段以最新 head CI 门禁补跑。
+
+### 2026-10-01：本机第一轮 GUI 反馈
+
+用户确认中文输入恢复、Dock 图标正常分组、历史图片默认缩略图正常。
+M5-36 仍未通过：中文组合串退格同时删正文，已登记 EUI-20261001-002，
+提供未应用的最小过滤补丁与 issue 草稿。M5-38 尚待 Windows 收件及双向
+新图片/重启；M5-39 尚待复制路径/打开目录；Windows 首启原因待配置证据。
+
+用户随后授权临时补丁并发 issue，已发布 EUI-NEO#78。临时覆盖仅在 Linux
+X11 生效：pinned 源码副本→git apply→产物 hash 检查→替换 GLFW target
+单一编译单元，原 checkout 不改。Debug aki 构建通过；真实 CMake fixture
+验证实际编译源切换、重复 configure 幂等、原件保留、补丁/原源漂移拒绝。
+需重启修复版复验候选退格/确认及正文普通退格，等待操作者，未标通过。
