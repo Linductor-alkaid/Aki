@@ -110,6 +110,48 @@ Linux CI 包 SHA256：58878a74fb2df636e37de7a78f5b50cf3e54624f12624741fe3002ed38
 包内 aki SHA256：5291c24f87ae0a17c5732331ba0a427ead733f0db1d0a801390425425b4a7a89；
 amd64/0.1.0、desktop-file-validate 通过。安装版跨平台验收仍待操作者。
 
+## M5-41：免信任首次建链与双向信任实时校准
+
+> 状态：In Progress；日期：2026-10-02；负责人：Linductor。
+> 依据：DEC-022、DEC-023；关联 M5-34 / M5-37。
+
+- [ ] `M5-41` 发现有效身份后，连接对账不再限定 Pending/Trusted；
+  Unknown/Rejected/Revoked 都可建立基础连接并创建会话、双向收发消息。
+  自动连接不创建 grant、不重新打开终态信任轮；重新配对仅由用户显式发起。
+  同一连接上的有效 grant 方向变化由既有 peer timer 快照差异投递 Manager，
+  即使会话已 authenticated 也更新单向/互信显示。首条入站消息先经 CM
+  建立会话再投递 MM，接收端无需手动建聊天。覆盖零 grant 的首次发现→
+  建链→Conversation→消息以及双向密码授权、重复快照、失败查询、断连/关闭。
+  Debug/ASAN/UBSAN、最新 head 七项 CI 和两端安装版复验后完成。
+
+2026-10-02 用户复验：删除 Windows 用户数据后重开可见“设置本设备”，
+证明新数据根的首启界面实际可达。既有 Windows 日志 password_setup_required=no、
+identity=loaded，原密码校验记录来源仍未确定；用户已自行删除原数据，
+不再要求重建该现场。新身份尚不能免信任创建会话；反向密码授权后，
+操作端显示互信，另一端仍显示单向。定位 Aki 自动建链对账的信任筛选和
+peer diff 只在首次 authenticated 时校准。修复不修改 pinned Heyaki。
+M5-37 首启界面实测证据补齐，其余既有配置异常/错误可见性结果保留。
+
+M5-41 本地验证：真实 Adapter + 四类 Manager 的零 grant 应用回环通过
+41 assertions / 1 case：首次发现选择、连接路径、仅发送端建聊天、接收端
+自动建立会话、双向文本 Delivered、单向授权再反向授权后两端互信。
+该回环直接推进与 Host 相同的连接选择条件，不替代 Host 五秒 timer 或
+两台安装版的 GUI 验收。首轮用例错误假定局域网只存在目标设备，实际有
+其他设备，改为按 DeviceId 选择；随后仅发送端建聊天时复现首条入站消息
+被会话 FK 拒绝（20/21 assertions），修正 CM→MM 投递顺序后通过。
+
+最终选择回归（peer sessions、reconnect、device trust、app managers、完整
+basic communication）：Debug 5/5（50.45s）、ASAN 5/5（55.95s）、
+UBSAN 5/5（65.04s）。转发拒绝、异常及 owner 关闭均有独立断言，异常
+进入 Executor failure 统计。连接对账停止边界追加后，Debug aki/Host
+构建通过，Host 单测 1/1（7.17s）；ASAN Host + device trust 2/2（8.01s）、
+UBSAN 同组 2/2（9.97s）。本机 TSAN 的既有 memory mapping 环境限制
+未消除，须以本次精确 head 的 CI TSAN 结果为门禁，尚未标通过。
+
+待补跑：最新 head 七项 CI；Ubuntu/Windows 新安装版未授权建聊、首条
+收件与回复、双向密码认证后两端同步显示互信。负责人 Linductor/操作者，
+条件为两端安装本次 CI 包并保持同一局域网；M5-41 继续 In Progress。
+
 ## M5-40：Heyaki 文件协商终态修复接入
 
 > 状态：Completed；日期：2026-10-02；负责人：Linductor。

@@ -154,7 +154,7 @@ Aki Host 在 Heyaki v1.1.1 公开 NodeConfig 上显式开启 basic_communication
 NodeSession 保留默认关闭供严格策略测试；会话快照的 policy_scopes 与
 authorized_scopes 分开，不以策略 scope 推导 TrustState。已授权会话继续
 按实际 grant scopes 检查，高级服务配置保持空。
-当前 pinned Heyaki 尚无此策略，未实现的免信任通信不得宣称可用。
+免信任通信的安装版验收仍归 M5-34/41，不以底层回环通过替代 GUI 实测。
 终端、屏幕控制、机器人控制等能力需要继续经过
 capability 和 permission 判断，避免把设备信任直接等同于控制权限。
 
@@ -168,8 +168,13 @@ capability 和 permission 判断，避免把设备信任直接等同于控制权
 已信任会话被裁定落入 restricted（双向有效 grant 均不存在）时，本机信任
 降级 `Trusted -> Revoked` 并归零对向信任——这是对端撤销/授权过期的可
 观测信号（协议无撤销推送，限制见 DEC-021）。断线重连循环预算耗尽后由
-周期对账任务重启：Pending/Trusted 且重新出现在 LAN 目录、尚未建链的已知设备触发
-单飞重连，恢复仍由 connected 事件链承载。
+周期对账任务重启：具有完整身份公钥、重新出现在 LAN 目录且尚未建链的
+非本机设备触发单飞连接，不按 TrustState 筛选。自动建链不重开 Rejected/Revoked
+信任轮；只有用户显式重新配对可进入 Pending。peer 快照包含查询成功时的
+有效 issued/received grant 方向，同一已授权连接上的方向变化也投递信任校准，
+查询失败不当作授权消失，重复值幂等；恢复仍由 connected 事件链承载。
+连接对账 timer 的查询/投递与停止共享生命周期互斥边界：停止先关闭入口
+并等待本轮结束，排队的旧 tick 不再查询 Node，再执行 Node shutdown。
 
 ## 5. Conversation
 
@@ -184,6 +189,11 @@ struct Conversation {
     ConversationState state;
 };
 ```
+
+接收端尚无会话时，首条有效入站消息通过 CM 的有界收件箱显式建立本地
+Conversation，再投递 MM；会话与消息更新进入同一 owner 通道的先后顺序
+保证归属完整。CM 不写 Message，MM 不写 Conversation，接收端无需预先
+手动新建聊天或验证密码（M5-41 / DEC-008）。
 
 Conversation
 不绑定具体网络路径。同一段会话可能最初走局域网直连，之后切换到 Internet
@@ -795,7 +805,7 @@ Store 所有权：
 | `on_device_discovered` | DM：`UpsertDevice` | DeviceDiscovered |
 | `on_device_connected` | DM：`SetPresence(Online)` + `SetDeviceConnectionPath{device, path}`（M5-04 起，[DEC-015](../decisions/DEC-015-per-device-connection-path.md)：初连即携带映射路径）；CM 扇出：已建会话则 `UpsertConversation → Active` | DeviceConnected（仅 DM 投递一次） |
 | `on_device_disconnected` | DM：`SetPresence(Offline)` + `SetDeviceConnectionPath{device, Unknown}`（离线不展示陈旧路径，[DEC-015](../decisions/DEC-015-per-device-connection-path.md)）；CM 扇出：已建会话则 `UpsertConversation → Disconnected` | DeviceDisconnected（仅 DM 投递一次） |
-| `on_message_received` | MM：`UpsertMessage`（收到的消息本地记录为 `Delivered`，第 6 节） | MessageReceived |
+| `on_message_received` | CM 显式建立/确认会话后投递 MM：`UpsertMessage`（本地 `Delivered`；M5-41 / DEC-008） | MessageReceived |
 | `on_message_delivered` | MM：`SetDeliveryState(Delivered)` | MessageDelivered |
 | `on_message_send_failed`（M3-05） | MM：`SetDeliveryState(Failed)` | —（Failed 为终态，RULE-08；无主路径事件） |
 | `on_transfer_started` | TM：`UpsertTransfer`（建行与状态推进——发送行由 `StartTransferWork` 先建、发送端专属的 `probing`/`offered` 事件推进；接收行由**首个 `transferring`/`verifying`** 事件承担（pinned heyaki 接收端无 probing/offered，首个事件即 transferring）——接收行 `file.name`=剥根段 wire `logical_name`、`size`=`bytes_total`、sender=peer/receiver=local；同态重复幂等去重，§7.1⑤） | TransferStarted |
