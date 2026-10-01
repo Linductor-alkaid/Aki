@@ -128,7 +128,7 @@ public:
     // 有界 admission / 提交结果，拒绝可见（RULE-09）；配对一次性结果经
     // on_pairing_completed 异步返回。目标端口令由调用方显式传入（DEC-018）。
     // 指纹确认后发起配对（→ pair_peer，scope 冻结 {message.send,
-    // file.push:inbox}）；提交被拒 = 会话缺失/非 pairing_restricted/重复
+    // file.push:inbox}）；提交被拒 = 会话缺失/既非受限也非已授权/重复
     // pending。
     virtual bool begin_pairing(const aki::device::DeviceId& peer) = 0;
     virtual bool confirm_pairing(const aki::device::DeviceId& peer,
@@ -138,8 +138,8 @@ public:
     virtual bool revoke_trust(const aki::device::DeviceId& peer) = 0;
 
     // 对向信任查询（DEC-021 四态）：本机 TrustStore 中与该 peer 的双向
-    // 有效 grant。issued = 本机签发（对方信任本机）；received = 本机持有
-    // 对端签发（本机信任对方）。对端无 endpoint/会话上下文时返回
+    // 有效 grant。issued = 本机签发（本机信任对方）；received = 本机持有
+    // 对端签发（对方已信任本机）。对端无 endpoint/会话上下文时返回
     // std::nullopt（无信息，非 false）。本机侧有界 sqlite 查询。
     struct TrustDirections {
         bool issued = false;

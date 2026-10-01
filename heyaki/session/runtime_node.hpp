@@ -96,13 +96,19 @@ public:
         // 与对端 push_root 对应——Aki 默认单根 "inbox"）。空 = 不接收
         //（对端 push 将被拒）。
         std::vector<::heyaki::FileRootConfig> file_receive_roots = {};
+        // DEC-023: explicit host policy, independent of persisted device grants.
+        bool basic_communication = false;
+        bool pairing_approval_enabled = false;
+        std::chrono::milliseconds pairing_deadline{0};
     };
 
     // 前置：executor 已 Running（ExecutorOwner.initialize() 之后）。
     [[nodiscard]] static NodeSession create(executor::Executor& executor,
         const Options& options) {
         namespace hh = ::heyaki;
-        auto runtime_result = hh::Runtime::create_borrowed(executor);
+        hh::RuntimeConfig runtime_config{};
+        runtime_config.worker_name = options.worker_name;
+        auto runtime_result = hh::Runtime::create_borrowed(executor, runtime_config);
         if (!runtime_result) {
             const auto* error = runtime_result.error_if();
             throw std::runtime_error(
@@ -113,9 +119,6 @@ public:
 
         // pinned release 拒绝缺省成员的 designated initializer：全成员列出
         // （与 heyaki 自身双节点测试一致）。
-        hh::RuntimeConfig runtime_config{};
-        runtime_config.worker_name = options.worker_name;
-
         // Runtime 包装对象堆置且地址稳定（M3-04 CI run 35922249364 ASan
         // stack-use-after-return 实测）：NodeConfig.runtime 为非拥有指针，
         // Node 内部异步路径（如 ShellPtyCoordinator drain、expiry timer）在
@@ -139,6 +142,9 @@ public:
             .pairing_backoff_base = std::chrono::milliseconds{0},
             .pairing_backoff_max = std::chrono::milliseconds{0},
             .pairing_grant_ttl_milliseconds = 0U,
+            .pairing_approval_enabled = options.pairing_approval_enabled,
+            .basic_communication = options.basic_communication,
+            .pairing_deadline = options.pairing_deadline,
             .event_subscriber_queue_items = 0U,
             .event_max_subscriptions_per_peer = 0U,
             .file_receive_roots = options.file_receive_roots,
@@ -238,6 +244,9 @@ public:
         bool authenticated = false;
         bool pairing_restricted = false;
         bool closed = false;
+        bool basic_communication = false;
+        std::vector<std::string> policy_scopes;
+        std::vector<std::string> authorized_scopes;
         // DEC-006 映射 6：同 SessionId、epoch+1 的重建可观测性。
         std::string session_id;   // heyaki::to_string(SessionId) 规范形式
         std::uint64_t session_epoch = 1;
@@ -259,6 +268,9 @@ public:
                 session.state == ::heyaki::NodePeerSessionState::pairing_restricted;
             view.closed =
                 session.state == ::heyaki::NodePeerSessionState::closed;
+            view.basic_communication = session.basic_communication;
+            view.policy_scopes = session.policy_scopes;
+            view.authorized_scopes = session.authorized_scopes;
             view.session_id = ::heyaki::to_string(session.session_id);
             view.session_epoch = session.session_epoch;
             out.push_back(std::move(view));
@@ -376,25 +388,15 @@ public:
 
     // DEC-006 映射 3：指纹确认 → pair_peer（scope：message.send + M4-05 起
     // 文件推送独立 scope file.push:<root>，DEC-012⑥——缺省申请全集）。
-    // 一次性结果经 set_pairing_observer 注册；false = 快照未找到受限会话
-    // 或 strand 派发被拒。重复 pending/提交后状态竞态见 HEY-20260930-001。
+    // v1.1.1 admission is bounded and returns strand validation errors;
+    // accepted attempts report one terminal outcome through the observer.
+    // Authorized sessions may request a reverse grant or repair an old grant.
     [[nodiscard]] bool pair_peer(const aki::device::DeviceId& peer,
         const std::string& password,
-        std::vector<std::string> scopes = {"message.send",
-            "file.push:inbox"}) {
-        // HEY-20260930-001: Node admits the strand dispatch before checking
-        // its session, then discards the validation error without an observer.
-        // Reject snapshot-known invalid attempts at the Aki adapter boundary.
-        for (const auto& session : node_.peer_sessions()) {
-            if (::heyaki::to_string(session.peer.device_id) == peer.value
-                && session.state
-                    == ::heyaki::NodePeerSessionState::pairing_restricted) {
-                auto submitted = node_.pair_peer(
-                    session.peer, password, std::move(scopes));
-                return submitted.has_value();
-            }
-        }
-        return false;
+        std::vector<std::string> scopes = {"message.send", "file.push:inbox"}) {
+        auto key = endpoint_key_of(peer);
+        if (!key) return false;
+        return node_.pair_peer(*key, password, std::move(scopes)).has_value();
     }
 
     [[nodiscard]] bool rotate_local_password(std::string_view password,
@@ -436,8 +438,8 @@ public:
 
     // 对向信任查询（DEC-021 四态数据源）：本机 TrustStore 中与该 peer 的
     // 双向有效 grant（SQL 已过滤 revoked 与过期）。issued = 本机签发给
-    // 对端（「对方信任本机」）；received = 对端签发给本机（「本机信任
-    // 对方」的 heyaki 权威记录）。查不到 endpoint key（对端不在目录且无
+    // 对端（「本机信任对方」）；received = 对端签发给本机（「对方已信任
+    // 本机」的 heyaki 权威记录）。查不到 endpoint key（对端不在目录且无
     // 会话）时返回 std::nullopt，由调用方按无信息处理而非 false。
     struct TrustDirections {
         bool issued = false;

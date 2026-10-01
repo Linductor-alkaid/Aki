@@ -2,11 +2,16 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-09-30
+> 更新日期：2026-10-01
 > 设计依据：[Aki 设计方案](../design/aki_design.md)
 > 协作约束：[AGENTS.md](../../AGENTS.md)、[项目管理与工程规范](../project/project-standards.md)
 
 ## 当前状态
+
+- 2026-10-01：M5-33~35 接入 Heyaki v1.1.1，独立升级 MR 消费上游
+  已修复的五项反馈；基础消息/文件策略按 DEC-023 接入并保持零 grant，
+  接收方无密码批准另项推进。新回环、sanitizer 与 Linux/Windows 安装版
+  验收跟踪在 M5；原 Linux 目标离线，Windows 目标尚未安装。
 
 - 2026-09-30：M5-24 Ubuntu 24.04 安装版 Dock 图标再次复现，依据
   [DEC-024](../decisions/DEC-024-linux-desktop-window-identity.md) 在 Aki

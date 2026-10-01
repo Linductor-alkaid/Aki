@@ -65,3 +65,11 @@
 - [Aki 设计](../design/aki_design.md)第 4、8.1 节
 - [Aki UI 设计规范](../design/aki_ui_design.md)第 3、4 节
 - [M5 里程碑](../plans/m5-eui-neo-ui-mvp.md) `M5-25`~`M5-28`
+
+## 2026-10-01 基线更新
+
+上述 e114508 时期的消息授权限制与受限快照临时校验由 v1.1.1 公共
+API 替代：Aki Host 按 DEC-023 opt-in 基础通信，不产生 grant；普通
+password pairing 的 admission 同步有界，允许受限/已授权会话，不能
+再先行拒绝反向授权。接收方允许的 API 已发布，Aki UI 接线归 M5-35，
+仍不把密码验证称为无密码允许。连接/信任方向与持久化字段含义不变。

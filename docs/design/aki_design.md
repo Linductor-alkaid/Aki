@@ -150,6 +150,10 @@ Trusted -> Revoked
 [DEC-021](../decisions/DEC-021-bidirectional-trust-and-repair.md)）。
 用户已明确基础消息/文件只需身份已验证的连接，设备信任用于后续控制
 授权；该产品策略见 [DEC-023](../decisions/DEC-023-basic-communication-policy.md)。
+Aki Host 在 Heyaki v1.1.1 公开 NodeConfig 上显式开启 basic_communication，
+NodeSession 保留默认关闭供严格策略测试；会话快照的 policy_scopes 与
+authorized_scopes 分开，不以策略 scope 推导 TrustState。已授权会话继续
+按实际 grant scopes 检查，高级服务配置保持空。
 当前 pinned Heyaki 尚无此策略，未实现的免信任通信不得宣称可用。
 终端、屏幕控制、机器人控制等能力需要继续经过
 capability 和 permission 判断，避免把设备信任直接等同于控制权限。
@@ -618,7 +622,8 @@ Manager 和 Adapter 显式传递，不进入快照、日志或业务数据库（
 扫描也从已验证 LAN endpoint 建立可确认设备行。`confirm_pairing(device, password)`
 ——指纹确认并输入目标端口令后发起配对（→
 `pair_peer`，scope 冻结 `{message.send, file.push:inbox}`；提交被拒
-= 会话缺失/非 pairing_restricted/重复 pending，admission false 可见）；
+= 会话缺失/既非受限也非已授权/重复 pending，admission false 可见；
+v1.1.1 允许在已授权会话申请反向 grant 或修复，不再用受限快照先行拒绝）；
 `revoke_trust(device)`——撤销既有信任（→ `revoke_trust_grants`，无有效
 grant 时 false 可见）。本地拒绝无 wire 面（`Pending → Rejected` 为纯本地
 判定，不经 Adapter）。信任状态转移合法性由应用层状态机校验（第 4 节
@@ -766,6 +771,9 @@ Store 所有权：
   ConversationManager → conversations、MessageManager → messages、TransferManager →
   transfers；写入一律以第 10.1 节的类型化更新指令经 `MpscChannel` 汇聚到状态 owner
   （`RULE-02` / `EXEC-03`），Manager 不直写快照。
+- LAN 发现与连接状态观察的 stop 在查询互斥边界内失效 timer；已排队或旧扫描代次的
+  tick 不得继续访问 Node。stop 等待当前端点查询结束，已合成事件仍可能
+  投递；管道与 sink 必须存活至 Executor 排空，Node 在发现停止后关闭。
 - 出站操作按域切分：发现启停（`start_discovery` / `stop_discovery`）归
   DeviceManager；`send_text_message` 归 MessageManager；传输四接口
   （`start_file_transfer` / `pause_transfer` / `resume_transfer` / `cancel_transfer`）

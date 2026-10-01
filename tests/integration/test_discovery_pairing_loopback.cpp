@@ -281,7 +281,7 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
     // M5-11：配对前快照里的发现行即在线存活（目录条目 = 正在广播）。
     REQUIRE(discovered_b->presence == PresenceState::Online);
     // Directory discovery alone cannot admit a password attempt: the
-    // snapshot guard avoids Heyaki's silent strand validation rejection.
+    // v1.1.1 bounded admission reports missing-session rejection immediately.
     REQUIRE_FALSE(side_a.pair_peer(identity_b.id, "test-local-password"));
 
     // DEC-006 映射 3：pairing_restricted 会话出现 → Unknown→Pending。
@@ -320,6 +320,7 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
     //（补跑/heyaki 侧排查证据，不静默丢弃）；B 侧观察器仅在 B 自身 pair_peer
     // 时触发，单侧流程下用于失败面诊断。
     std::atomic<bool> paired_a{false};
+    std::atomic<unsigned> a_success_count{0};
     std::atomic<bool> paired_b{false};
     std::atomic<int> pairing_failure_counter{0};
     std::mutex pairing_diag_mutex;
@@ -329,6 +330,7 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
         [&](const DeviceId& peer, bool ok, const std::string& detail) {
             if (ok && peer == identity_b.id) {
                 paired_a.store(true);
+                ++a_success_count;
             } else if (!ok) {
                 pairing_failure_counter.fetch_add(1);
                 std::lock_guard<std::mutex> guard(pairing_diag_mutex);
@@ -453,20 +455,16 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
     REQUIRE(state_owner.stats().updates_rejected
         == rejected_before_revive_b + 1);
 
-    // HEY-20260930-001：Aki 快照前置校验拒绝已认证会话上的重复提交；
-    // 不改变双侧会话，也不产生新的 pairing observer 结果。
+    // v1.1.1 permits renewal after a completed password attempt. This is
+    // not a duplicate pending request: admission succeeds and one new
+    // outcome arrives while the authorized session remains usable.
     {
-        const bool duplicate_submitted =
-            side_a.pair_peer(identity_b.id, "test-local-password");
-        const bool a_auth_before = side_a.session_authenticated(identity_b.id);
-        const bool b_auth_before = side_b.session_authenticated(identity_a.id);
+        REQUIRE(a_success_count == 1);
         const auto failures_before = pairing_failure_counter.load();
-        std::this_thread::sleep_for(300ms);
-        REQUIRE_FALSE(duplicate_submitted);
+        REQUIRE(side_a.pair_peer(identity_b.id, "test-local-password"));
+        REQUIRE(wait_until([&] { return a_success_count == 2; }, 25s));
         REQUIRE(side_a.session_authenticated(identity_b.id));
         REQUIRE(side_b.session_authenticated(identity_a.id));
-        REQUIRE(a_auth_before);
-        REQUIRE(b_auth_before);
         REQUIRE(pairing_failure_counter.load() == failures_before);
     }
 

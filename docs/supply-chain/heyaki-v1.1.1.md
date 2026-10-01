@@ -1,0 +1,86 @@
+# Heyaki v1.1.1 升级审计
+
+> 状态：In Progress；日期：2026-10-01；负责人：Linductor；工作项：M5-33。
+
+## 固定来源与差异
+
+从 e114508ab32d496d52e9db9bac26eb1cc88c4ae7 升级至官方 tag v1.1.1
+的 1ceb42c7b244e950ebeeb10edc84b6d83e423626。
+[发布说明](https://github.com/Linductor-alkaid/heyaki/releases/tag/v1.1.1)
+列明 pair_peer 返回 Result<RequestId>、有界终态、已授权会话修复、
+receiver approval 与显式 basic_communication。源 API 变化只在 Aki
+Heyaki Adapter 消费；基础通信遵循 DEC-023。gateway 新能力保持关闭。
+
+## 许可证和依赖闭包
+
+Heyaki 仍为 MIT；官方 dependencies.lock、licenses.lock 与
+transitive-dependencies.lock 相对旧 pin 无差异；Executor 仍为
+74a94198fbe0f2a4081cd260658a26f969986870，保持单图三方一致性校验。
+libdatachannel 仍为 v0.23.2，官方 fetch 脚本应用并验证已纳入 release 的
+synchronized_stored_callback copy/move 同步补丁。Aki 不直接修改 vendor。
+官方补丁 SHA256 为 3730b39b9203c273e7fcced398747929ad2ed7cb3d989f464dbbdf2a0d3c00a2。
+本地官方 fetch --all 应用补丁后，--check --all 全部通过；configure
+验证三方 Executor pin、Aki lock，打包登记 40 份许可证文本。
+独立核实上游 release commit 的 CI run
+[36831912768](https://github.com/Linductor-alkaid/heyaki/actions/runs/36831912768)：
+12/12 jobs completed/success，包含三种 sanitizer、Windows Debug/Release、
+Ubuntu 20.04、supply-chain、coturn。高级服务拒绝覆盖来自该 pin 的
+M5BasicCommunicationTest.BasicSessionsKeepRpcEventsStreamsShellGatewayGrantOnly
+等真实上游测试；不将其称为 Aki 控制 UI 或目标设备实测。
+
+## 适配与验证
+
+NodeSession 暴露独立 basic_communication/policy_scopes/authorized_scopes；
+普通密码提交使用上游有界 admission，允许 restricted 或 authorized 会话。
+单 Executor 双节点回归发现 worker_name 原来仅传入 NodeConfig，borrowed
+Runtime 创建时未消费；现直接传入 Runtime::create_borrowed，确保两个
+blocking worker 名互异，不引入新 owner 或自行管理线程。
+NodeConfig 新成员默认值与上游一致，Aki Host 明确 opt-in 基础通信。
+移除 HEY-20260930-004 的精确抑制，保留已有 usrsctp 上游抑制。
+
+待执行：无 grant 双端消息/文件、单侧策略拒绝、密码反向授权/错误口令、
+关闭回调 TSAN，七项最新 head CI，安装版 Linux/Windows 双机测试。
+未执行项负责人 Linductor；条件为本地依赖和 CI runner 可用，两端设备
+安装同版新包上线。不得将上游 issue 关闭替代这些证据。
+
+## 已知后续问题
+
+单侧 basic=false 的文件 push 可入队而无有界终态；Debug 可显式取消，
+ASAN 观察到取消 admission 被拒。详见 HEY-20261001-001 / Heyaki #13。
+该限制未被升级掩盖，M5-34 文件拒绝完成语义保持未完成；测试对这一路径
+只声明无落盘/无授权、取消 admission 可见和 shutdown，不声明已修复。
+
+2026-10-01：Debug 全量构建通过；首轮 ctest 43/44，旧“完成后重复应拒绝”
+断言依据 v1.1.1 更新为续期结果后，目标 53 assertions 通过；基础通信
+110 assertions 通过。ASAN 基础回环 + Adapter 2/2 通过（46.94s）。
+本地 TSAN 编译通过但运行前 unexpected memory mapping，未验证；
+最新 Aki CI 与安装版验证仍待执行。原有网络 skip 列表见 M5 记录。
+
+2026-10-01 首轮 Aki CI run 36857212819 / head dc09559：Debug、ASAN、
+UBSAN、Windows Debug、deb/setup 打包六项通过；TSAN 43/44，旧发送
+回环未停发现管道即释放 Node，第一方查询/释放竞争。修复 Aki 停止顺序、
+已排队扫描代次校验及断言失败清理，不修改上游、不新增抑制。TSAN 需
+修复后最新 head 重新验证，旧 run 的安装包不交付。基础回环在该 TSAN
+runner 已通过（71.14s）；本地 UBSAN 基础回环通过（47.54s）。
+
+2026-10-01 修复后本地定向构建 Debug/ASAN 通过；Adapter 137 assertions /
+12 cases 两档通过。旧发送回环两档均在握手前置门 skip（15.65s/16.05s），
+未执行传输或停止顺序断言，不记为竞态修复验收。真实关闭链路及 TSAN
+由修复后最新 head 的 CI 补跑；负责人 Linductor，条件为 CI runner 可用。
+
+2026-10-01 连接状态停止修复后：Debug/ASAN 的 Adapter（137 assertions）、
+PeerSession 纯映射（143 assertions）与真实连接状态回环（30 assertions）
+三目标均通过（18.21s/19.59s，非 skip）。回环覆盖停止后零事件及随后
+Node shutdown；ASAN 无内存报告。最新 head TSAN 仍须 CI 运行后确认。
+
+2026-10-01 产品代码 gate：head 9d0a7fe15d89bf697aa2f0de19ceb7a54a13873a，
+CI run 36860880298 七项独立核实 completed/success（Linux Debug/ASAN/
+UBSAN/TSAN、Windows Debug、deb、setup）。TSAN ctest 44/44；新基础
+回环无 skip 出口，TSAN 66.19s。旧回环成功项输出不含断言/skip 细节，
+不宣称它们全部执行了网络分支。补充观察管道无 skip 回归在本地 Debug
+116 assertions / 3 cases（41.61s）、ASAN 115 assertions / 3 cases
+（44.35s）通过；差一断言来自已登记单侧文件取消 admission 路径。
+后续提交仅追加测试与证据，产品代码相同，须再经最新 head 七项门禁。
+Linux CI 包 SHA256：58878a74fb2df636e37de7a78f5b50cf3e54624f12624741fe3002ed389d8b7c，
+包内 aki SHA256：5291c24f87ae0a17c5732331ba0a427ead733f0db1d0a801390425425b4a7a89；
+amd64/0.1.0、desktop-file-validate 通过。安装版跨平台验收仍待操作者。

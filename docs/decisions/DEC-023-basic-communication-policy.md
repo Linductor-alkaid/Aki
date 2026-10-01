@@ -3,7 +3,7 @@
 > 状态：Accepted
 > 日期：2026-09-30
 > 负责人：Linductor
-> 关联工作项：M5-30
+> 关联工作项：M5-30、M5-34
 > 修订：DEC-019、DEC-021、DEC-022 的基础通信产品目标；当前 pinned 实现限制仍有效
 
 ## 背景
@@ -34,3 +34,10 @@ Heyaki 的默认策略保持兼容；Aki 需通过公开配置选择基础通信
 目录穿越、配额/背压，以及基础通道无法打开 shell/控制/gateway。Aki
 后续验证 Unknown/Pending/Rejected/Revoked 与控制授权分别表现、失败可见
 和双设备实际文本/图片/文件传输。公开配置缺口由 HEY-20260930-003 跟踪。
+
+## 2026-10-01 接入依据
+
+Heyaki v1.1.1 提供公开 basic_communication opt-in 配置及独立 policy_scopes。
+Aki 组合根启用该配置，低层 NodeSession 的缺省仍关闭；不自动配对或签发
+grant。配置既有 inbox 接收根，保持高级服务默认关闭。已配对会话仍按
+实际 grant 的有效 scopes 执行，基础策略不扩充设备授权。验收归 M5-34。

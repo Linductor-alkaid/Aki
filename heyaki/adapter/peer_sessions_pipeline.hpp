@@ -11,7 +11,8 @@
 //     connection_path_changed。
 //   - 管道层：executor timer 周期轮询 NodeSession::peer_session_views()，
 //     diff 后经事件回调投递（EXEC-02：消费方有界校验 + 投递）；TimerHandle
-//     由管道持有，stop 取消后零回调；RULE-09 start 失败可见。
+//     由管道持有，stop 等待本轮查询/投递结束；旧 tick 不再查询 Node。
+//     owner 保留管道至 Executor 排空；RULE-09 start 失败可见。
 //
 // RULE-10：heyaki 数值不跨层——视图与映射的公开面仅 aki 领域类型与 int
 // （数值语义在本层文档内封闭）。
@@ -190,8 +191,10 @@ public:
         if (timer_.valid()) {
             return false;
         }
+        const auto generation = ++generation_;
         timer_ = executor_.submit_periodic_with_handle(
-            static_cast<std::int64_t>(period.count()), [this] { poll(); });
+            static_cast<std::int64_t>(period.count()),
+            [this, generation] { poll(generation); });
         return timer_.valid();
     }
 
@@ -209,11 +212,14 @@ public:
     }
 
 private:
-    void poll() {
-        auto curr = session_.peer_session_views();
+    void poll(std::uint64_t generation) {
         std::vector<NodeSession::PeerSessionView> previous;
         {
             std::lock_guard<std::mutex> guard(mutex_);
+            if (!timer_.valid() || generation != generation_) {
+                return;
+            }
+            auto curr = session_.peer_session_views();
             previous.swap(previous_);
             diff_peer_sessions(previous, curr, events_);
             previous_ = std::move(curr);
@@ -226,6 +232,7 @@ private:
     mutable std::mutex mutex_;
     std::vector<NodeSession::PeerSessionView> previous_;
     executor::TimerHandle timer_;
+    std::uint64_t generation_{0};
 };
 
 }  // namespace aki::heyaki

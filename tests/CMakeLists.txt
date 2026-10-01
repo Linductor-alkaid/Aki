@@ -571,3 +571,12 @@ target_link_libraries(test_device_trust PRIVATE
     aki_ui_models)
 add_test(NAME test_device_trust COMMAND test_device_trust)
 set_tests_properties(test_device_trust PROPERTIES LABELS "unit")
+
+# M5-33/34: no skip exits; fresh profile + single Executor owner.
+add_executable(test_basic_communication_loopback integration/test_basic_communication_loopback.cpp)
+target_compile_features(test_basic_communication_loopback PRIVATE cxx_std_20)
+aki_apply_warnings(test_basic_communication_loopback PRIVATE)
+target_link_libraries(test_basic_communication_loopback PRIVATE Catch2::Catch2WithMain aki_app aki_heyaki aki_persistence heyaki::client)
+aki_deploy_openssl_dlls(test_basic_communication_loopback)
+add_test(NAME test_basic_communication_loopback COMMAND test_basic_communication_loopback)
+set_tests_properties(test_basic_communication_loopback PROPERTIES LABELS "integration" TIMEOUT 180)

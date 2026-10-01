@@ -1,7 +1,7 @@
 # Heyaki 能力反馈台账
 
 > 状态：Active
-> 更新日期：2026-09-30
+> 更新日期：2026-10-01
 
 ## HEY-20260929-001：受限会话由接收方直接批准
 
@@ -124,3 +124,36 @@
   Heyaki 的其他路径、不关闭测试/插桩。此豁免不表示竞态已修复。
 - **负责人及移除条件**：Linductor；上游补并发 close、远端 close、fail、
   取消、超时和 Node shutdown 的 TSAN 回归，升级 pinned 后移除精确条目。
+
+## 2026-10-01 上游修复与 Aki 接入进度
+
+Heyaki #1~5 均 closed/completed，官方 v1.1.1 release 的 pin 为
+1ceb42c7b244e950ebeeb10edc84b6d83e423626。依次修复有界密码 admission
+(9626ed0)、receiver approval (0c317c7)、已授权会话回答密码请求
+(5e191ef)、basic communication (0440a03)、回调 copy/move 同步
+(8f4843e)。这些记录的上游阻塞已解除，旧复现证据仍保留。
+Aki 接入归 M5-33~35，尚不标为 Aki 双设备验收 Completed；M5-35 批准
+界面仍待接线，M5-25/26 需同版双设备密码与反向授权复验。
+
+HEY-20260930-001 的快照临时校验已移除，使用发布 API 的有界 admission；
+HEY-20260930-004 的精确 TSAN 条目已移除，等待 Aki 最新 head TSAN CI。
+HEY-20260930-003 显式策略已在 Host 接入，零 grant 本地回环通过，
+Linux/Windows 安装版尚待验收，不能以升级/上游关闭替代。
+
+## HEY-20261001-001：单端基础策略拒绝文件时缺少有界终态
+
+- **状态**：Open；已提交 [Heyaki #13](https://github.com/Linductor-alkaid/heyaki/issues/13)，关联 M5-34。
+- **版本与复现**：v1.1.1 @ 1ceb42c，Ubuntu 24.04 / GCC 13；新身份零 grant、
+  单 Executor 两 borrowed Runtime，两端配置 inbox，仅 A basic=true。
+  push_file 返回成功，3 秒内无失败/取消终态，B 无落盘、无 committed；
+  Debug 输出 file admitted=1 terminal-before-cancel=0，随后显式取消收到
+  cancelled（109 assertions / 3 cases）。ASAN 下同样无终态，但取消返回
+  false；该失败已保留，不能声称取消必定可用。上游 basic 测试明确承认
+  strict 端拒绝 push 没有 TTL 有界终态，停在 unaccepted 状态。
+- **影响与期望**：同版双方 opt-in 的文件正常；严格策略/旧版接收端可能
+  让 Aki 长期显示等待。需传回明确拒绝，或公开、可配置的协商 deadline，
+  每个 TransferId 一次终态，断连/取消/shutdown 与迟到结果幂等。
+- **Aki 边界**：不直接修改上游，不自动签发 grant；回归仅验证无落盘、
+  无 committed、无 grant、已有取消 admission 与 shutdown，未将拒绝终态
+  标完成。M5-34 的单端文件拒绝验收保持未完成。负责人 Linductor；
+  补跑条件为上游固定修复后双端策略矩阵与取消竞争回归。
