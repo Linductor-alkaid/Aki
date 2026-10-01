@@ -265,11 +265,11 @@ M5-25~28 均保持未完成；非对称旧授权修复由 Heyaki 独立处理，
 - [ ] `M5-21` 四态信任显示（inbound_trust 校准/撤销归零/降级启发）。
 - [ ] `M5-22` 掉线恢复：周期重连对账 re-arm，presence/会话状态随 connected 恢复。
 - [ ] `M5-23` 图片/文件选取按存在性过滤（zenity stderr 诊断行不再致 stat 失败）。
-- [ ] `M5-24` 24.04 图标：desktop StartupWMClass 已落；Wayland app_id
+- [x] `M5-24` 24.04 图标：desktop StartupWMClass 已落；Wayland app_id
   按 [DEC-024](../decisions/DEC-024-linux-desktop-window-identity.md)
   在 Aki 平台适配层补齐窗口创建参数；不改 pinned 依赖，上游 #77 继续
-  独立跟踪。真实 Wayland/X11 标识检查通过；状态 In Progress，等待 CI
-  与安装版 Dock 验收。
+  独立跟踪。真实 Wayland/X11 标识检查及 Ubuntu 24.04 安装版 Dock 验收
+  通过，状态 Completed。
 
 2026-09-30 M5-24：用户在安装版再次复现 Dock 图标缺失。图标与 desktop
 布局正确，pinned runner 缺窗口身份；按 DEC-024 在 Aki 平台层设置三个
@@ -301,6 +301,24 @@ Linductor/设备操作者，补跑条件为 Ubuntu 24.04 正常退出旧版后�
 本机未配置 Ubuntu 20.04 容器构建环境，兼容 deb 交付等待既有 CI runner。
 本轮验收文档提交不改变应用代码，最新 head 的七项 CI 仍须独立核实；
 不得用运行版验收或单项 Windows 成功宣称整批完成。
+
+2026-10-01 M5-24 收尾：run `36699133720` 对应
+`d2c39561f64b58232839ca00e412b1e59a31935c`，七项 job 全部
+completed/success（Linux Debug/ASAN/UBSAN/TSAN、Windows Debug、Linux
+deb、Windows setup）。artifact `11090715903` 的 archive SHA256
+`c470136dc6dec9d72dc0a7267460f829ed0a79f6546c7036d4ea105ec0f7388f`
+核对通过；deb SHA256
+`a9f44db30a26966f18346f8ad69aa5062e09c531ab73aedd2a13c2cdc4030444`，
+大小 13,600,374 bytes，amd64、libc6 >=2.30，桌面文件校验通过。
+本机包 `/home/linductor/下载/aki-0.1.0-d2c3956-amd64.deb` 已由用户安装、
+从桌面入口重开并确认“同一图标正常显示在 dock”；安装二进制与 CI 包
+均 SHA256 `1e19ac04cb31d8ed09fa3792bd35aaab4b1c23e22f0f2a402aaa578f28a7811e`，
+hicolor 图标与源资源哈希一致。M5-24 完成。
+原目标 `ybt@192.168.1.206` 上传尝试返回 No route to host，用户确认设备
+当前离线，未宣称上传成功；补传负责人 Linductor/设备操作者，条件为该
+设备上线并确认地址。此交付待办不替代也不影响 Ubuntu 24.04 本机 Dock
+验收。当前可用 Windows `192.168.5.99` 尚未安装 Aki，跨平台通信测试
+将在 Heyaki 更新接入后的新包上进行，另项记录。
 
 2026-09-29：用户第二轮双端实测发现上述七类问题，归入本维护批；
 双端复验需分别测试撤销方向、重建配对与断线恢复时序。

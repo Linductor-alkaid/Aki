@@ -10,8 +10,10 @@
 
 - 2026-09-30：M5-24 Ubuntu 24.04 安装版 Dock 图标再次复现，依据
   [DEC-024](../decisions/DEC-024-linux-desktop-window-identity.md) 在 Aki
-  Linux 平台层设置与桌面入口一致的 Wayland/X11 窗口身份。实现及安装版
-  复验进行中；不修改 pinned EUI-NEO，上游 #77 继续独立跟踪。
+  Linux 平台层设置与桌面入口一致的 Wayland/X11 窗口身份。2026-10-01
+  七项 CI 全绿及 Ubuntu 24.04 安装版 Dock 复验通过，M5-24 Completed；
+  不修改 pinned EUI-NEO，上游 #77 继续独立跟踪。原目标 Linux 设备离线，
+  deb 补传条件与负责人记录在 M5 验证记录。
 
 - 2026-09-30：M5-32 双端交换重启顺序复现当前连接被历史关闭会话覆盖。
   Heyaki 快照同时包含当前与 finished 记录，Aki Adapter 按设备归并时
