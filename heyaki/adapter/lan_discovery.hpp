@@ -137,13 +137,16 @@ public:
         }
         state_.seen.clear();
         state_.live.clear();
+        const auto generation = ++generation_;
         timer_ = executor_.submit_periodic_with_handle(
-            static_cast<std::int64_t>(period.count()), [this] { poll(); });
+            static_cast<std::int64_t>(period.count()),
+            [this, generation] { poll(generation); });
         return timer_.valid();
     }
 
-    // 取消句柄：后续 tick 不再产生（在飞 tick 完成后 sink 不再被调用——
-    // stop 后 seen 检查仍互斥，取消后 poll 不再被调度）。
+    // cancel 不移除已排队/在飞 tick。与查询共用互斥边界，stop 返回后
+    // 旧 tick 不再访问 Node；已合成事件仍可能投递。owner 必须保留
+    // 本管道及 sink 至 Executor 排空，之后才能销毁。
     void stop() {
         std::lock_guard<std::mutex> guard(mutex_);
         if (timer_.valid()) {
@@ -163,12 +166,15 @@ public:
     }
 
 private:
-    void poll() {
+    void poll(std::uint64_t generation) {
         // diff：新出现的未信任端点合成 on_device_discovered（§8.1 触发语义）；
         // 消失端点合成 on_device_presence 离线回落（M5-11 存活语义）。
         LanDiscoveryTick tick;
         {
             std::lock_guard<std::mutex> guard(mutex_);
+            if (!timer_.valid() || generation != generation_) {
+                return;
+            }
             tick = diff_lan_discovery(session_.endpoints(), state_);
         }
         for (const auto& device : tick.discovered) {
@@ -191,6 +197,7 @@ private:
     mutable std::mutex mutex_;
     LanDiscoveryState state_;
     executor::TimerHandle timer_;
+    std::uint64_t generation_{0};
     std::atomic<std::uint64_t> discovered_{0};
 };
 

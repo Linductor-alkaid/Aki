@@ -60,6 +60,24 @@ head CI 验证，安装版仍待用户双端测试。
 上游终态修复。两端新 Aki 都启用策略的通路已验证，尚未声称目标 Windows
 安装或 GUI 通信验收。M5-35 不在本升级 MR 宣称实现。
 
+2026-10-01 M5-33 CI 首轮 run 36857212819 / head dc09559：TSAN
+43/44，失败位于旧发送回环 test_transfer_send_loopback。Aki 未先停止
+LanDiscoveryPipeline 就 shutdown Node，定时回调 endpoints() 与 Node
+释放竞争。这是 Aki 生命周期顺序缺陷，不归上游 #5、不新增抑制。
+修复依据 EXEC-01/04、设计 8.3：先停发现生产者；同一互斥边界阻止
+取消前已排队的 tick 再访问 Node，并按扫描代次拒绝 stop/start 前的旧 tick。
+stop 只等待端点查询结束；已合成事件可能仍投递，调用方必须保留管道与
+sink 至 Executor 排空。回环断言失败也须在观察者/Manager 存活时清理。
+负责人 Linductor；定向 Debug/ASAN 与最新 head CI TSAN 通过后记录证据。
+首轮其余六项 CI completed/success；本地 UBSAN 基础回环通过（47.54s）。
+
+
+
+2026-10-01 修复后本地定向构建 Debug/ASAN 通过；Adapter 137 assertions /
+12 cases 两档通过。旧发送回环两档均在握手前置门 skip（15.65s/16.05s），
+未执行传输或停止顺序断言，不记为竞态修复验收。真实关闭链路及 TSAN
+由修复后最新 head 的 CI 补跑；负责人 Linductor，条件为 CI runner 可用。
+
 ## M5-29~M5-30：历史会话恢复与基础通信权限
 
 > 状态：Completed；负责人：Linductor；依据：DEC-008、

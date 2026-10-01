@@ -55,3 +55,15 @@ ASAN 观察到取消 admission 被拒。详见 HEY-20261001-001 / Heyaki #13。
 110 assertions 通过。ASAN 基础回环 + Adapter 2/2 通过（46.94s）。
 本地 TSAN 编译通过但运行前 unexpected memory mapping，未验证；
 最新 Aki CI 与安装版验证仍待执行。原有网络 skip 列表见 M5 记录。
+
+2026-10-01 首轮 Aki CI run 36857212819 / head dc09559：Debug、ASAN、
+UBSAN、Windows Debug、deb/setup 打包六项通过；TSAN 43/44，旧发送
+回环未停发现管道即释放 Node，第一方查询/释放竞争。修复 Aki 停止顺序、
+已排队扫描代次校验及断言失败清理，不修改上游、不新增抑制。TSAN 需
+修复后最新 head 重新验证，旧 run 的安装包不交付。基础回环在该 TSAN
+runner 已通过（71.14s）；本地 UBSAN 基础回环通过（47.54s）。
+
+2026-10-01 修复后本地定向构建 Debug/ASAN 通过；Adapter 137 assertions /
+12 cases 两档通过。旧发送回环两档均在握手前置门 skip（15.65s/16.05s），
+未执行传输或停止顺序断言，不记为竞态修复验收。真实关闭链路及 TSAN
+由修复后最新 head 的 CI 补跑；负责人 Linductor，条件为 CI runner 可用。

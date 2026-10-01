@@ -118,11 +118,29 @@ struct NodeDomain {
     std::optional<NodeSession> session;
 };
 
+struct ShutdownGuard {
+    std::function<void()> stop;
+    ~ShutdownGuard() {
+        if (!stop) return;
+        try {
+            stop();
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "test cleanup failed: %s\n", error.what());
+        }
+    }
+};
+
 }  // namespace
 
 TEST_CASE("Two-node send-side transfer chain over the borrowed runtime",
     "[integration][transfer_send_loopback]") {
     const std::string root = temp_root("send");
+    // Observer and finite-task result owners outlive all shutdown guards.
+    std::atomic<bool> paired_a{false};
+    std::atomic<int> b_committed{0};
+    std::atomic<int> b_progress{0};
+    std::atomic<bool> hash_ready{false};
+    std::string got_hash;
     ExecutorOwner owner;
     REQUIRE(owner.initialize());
 
@@ -141,6 +159,14 @@ TEST_CASE("Two-node send-side transfer chain over the borrowed runtime",
 
     // 发现 + 连接 + 配对（沿 M3-05/M4-03：握手被拦则降级退出）。
     LanDiscoveryPipeline pipeline(owner.executor(), side_a, [](const auto&) {});
+    ShutdownGuard node_shutdown{[&] {
+        pipeline.stop();
+        (void)side_a.shutdown();
+        (void)side_b.shutdown();
+        (void)domain_a.owner.shutdown();
+        (void)domain_b.owner.shutdown();
+        (void)owner.shutdown();
+    }};
     REQUIRE(pipeline.start(200ms));
     REQUIRE(wait_until([&] {
         for (const auto& entry : side_a.endpoints()) {
@@ -162,7 +188,6 @@ TEST_CASE("Two-node send-side transfer chain over the borrowed runtime",
     }
     REQUIRE(wait_until(
         [&] { return side_b.session_pairing_restricted(identity_a.id); }, 15s));
-    std::atomic<bool> paired_a{false};
     side_a.set_pairing_observer(
         [&](const DeviceId& peer, bool ok, const std::string&) {
             if (ok && peer == identity_b.id) paired_a.store(true);
@@ -202,6 +227,19 @@ TEST_CASE("Two-node send-side transfer chain over the borrowed runtime",
     TransferManager transfers{owner.executor(), state_owner, adapter,
         transfer_options};
 
+    ShutdownGuard transfer_shutdown{[&] {
+        pipeline.stop();
+        (void)transfers.request_cancel_all();
+        (void)transfers.flush(2s);
+        (void)side_a.shutdown();
+        (void)side_b.shutdown();
+        adapter.set_sink(nullptr);
+        (void)domain_a.owner.shutdown();
+        (void)domain_b.owner.shutdown();
+        state_owner.close();
+        (void)owner.shutdown();
+    }};
+
     auto io_runnable = std::make_unique<TransferIoRunnable>(io->impl());
     executor::BlockingWorkerSpec io_spec;
     io_spec.name = "aki.transfer-io";
@@ -211,8 +249,6 @@ TEST_CASE("Two-node send-side transfer chain over the borrowed runtime",
 
     // B 侧文件事件观察（M4-05：接收链路——八相位经 Adapter 分发；此处直连
     // NodeSession 观察面记录相位到达）。
-    std::atomic<int> b_committed{0};
-    std::atomic<int> b_progress{0};
     side_b.set_file_event_observer(
         [&](const DeviceId&, const NodeSession::FileTransferEventView& event) {
             if (static_cast<::heyaki::FileTransferPhase>(event.phase)
@@ -236,8 +272,6 @@ TEST_CASE("Two-node send-side transfer chain over the borrowed runtime",
     const FileMetadata file{"payload.bin", 32, "application/octet-stream", ""};
 
     // 真实发起面：push_file admission（对端已认证）+ Aki 归档链路完成。
-    std::atomic<bool> hash_ready{false};
-    std::string got_hash;
     REQUIRE(transfers.start_transfer(identity_b.id, transfer_id, file, source,
         [&](std::string hash_hex) {
             got_hash = std::move(hash_hex);
@@ -272,16 +306,22 @@ TEST_CASE("Two-node send-side transfer chain over the borrowed runtime",
     REQUIRE(wait_until([&] { return b_committed.load() >= 1; }, 20s));
     REQUIRE(b_progress.load() >= 1);
 
-    // 受控关闭（IO 归零 + worker 回收）。
+    // 受控关闭（先停发现查询，再停止 Node；排空 Executor 后销毁管道）。
+    pipeline.stop();
+    REQUIRE_FALSE(pipeline.running());
     (void)transfers.request_cancel_all();
     REQUIRE(transfers.flush(2s));
     const auto node_report = side_a.shutdown();
     REQUIRE(node_report.node_stopped);
     const auto rb = side_b.shutdown();
     REQUIRE(rb.node_stopped);
+    adapter.set_sink(nullptr);
+    state_owner.close();
     (void)domain_a.owner.shutdown();
     (void)domain_b.owner.shutdown();
     const auto report = owner.shutdown();
     REQUIRE(report.fully_stopped());
     REQUIRE(io->idle());
+    transfer_shutdown.stop = {};
+    node_shutdown.stop = {};
 }
