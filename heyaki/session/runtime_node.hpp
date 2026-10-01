@@ -238,6 +238,12 @@ public:
     // ---- M3-06：peer_sessions 观察面（aki/std 公开面）----
     // state/data_path/signaling_route 为 heyaki 枚举的数值（映射语义见
     // adapter 层 map_connection_path 与 DEC-006 映射 5；数值不跨层解释）。
+    struct TrustDirections {
+        bool issued = false;
+        bool received = false;
+        bool operator==(const TrustDirections&) const = default;
+    };
+
     struct PeerSessionView {
         aki::device::DeviceId device_id;
         std::string endpoint_id;
@@ -250,6 +256,9 @@ public:
         bool basic_communication = false;
         std::vector<std::string> policy_scopes;
         std::vector<std::string> authorized_scopes;
+        // Unknown query results never mean grant revocation. M5-41 samples
+        // both directions even when the authorized session state is unchanged.
+        std::optional<TrustDirections> trust_directions;
         // DEC-006 映射 6：同 SessionId、epoch+1 的重建可观测性。
         std::string session_id;   // heyaki::to_string(SessionId) 规范形式
         std::uint64_t session_epoch = 1;
@@ -274,6 +283,9 @@ public:
             view.basic_communication = session.basic_communication;
             view.policy_scopes = session.policy_scopes;
             view.authorized_scopes = session.authorized_scopes;
+            if (view.authenticated || view.pairing_restricted) {
+                view.trust_directions = trust_directions_for_key(session.peer);
+            }
             view.session_id = ::heyaki::to_string(session.session_id);
             view.session_epoch = session.session_epoch;
             out.push_back(std::move(view));
@@ -444,30 +456,13 @@ public:
     // 对端（「本机信任对方」）；received = 对端签发给本机（「对方已信任
     // 本机」的 heyaki 权威记录）。查不到 endpoint key（对端不在目录且无
     // 会话）时返回 std::nullopt，由调用方按无信息处理而非 false。
-    struct TrustDirections {
-        bool issued = false;
-        bool received = false;
-    };
     [[nodiscard]] std::optional<TrustDirections> trust_grants(
         const aki::device::DeviceId& peer) {
         auto key = endpoint_key_of(peer);
         if (!key.has_value()) {
             return std::nullopt;
         }
-        auto grants = node_.trust_grants_for(*key);
-        if (!grants) {
-            return std::nullopt;
-        }
-        TrustDirections result;
-        for (const auto& grant : *grants.value_if()) {
-            if (grant.revoked) continue;
-            if (grant.direction == ::heyaki::TrustGrantDirection::issued) {
-                result.issued = true;
-            } else {
-                result.received = true;
-            }
-        }
-        return result;
+        return trust_directions_for_key(*key);
     }
 
     // ---- M3-05/M4-03：消息面（DEC-006 映射 4 + 图片面扩展；aki/std 公开面）----
@@ -800,6 +795,25 @@ public:
     }
 
 private:
+    [[nodiscard]] std::optional<TrustDirections>
+    trust_directions_for_key(const ::heyaki::DeviceEndpointKey& key) const {
+        auto grants = node_.trust_grants_for(key);
+        if (!grants) {
+            return std::nullopt;
+        }
+        TrustDirections result;
+        for (const auto& grant : *grants.value_if()) {
+            if (grant.revoked)
+                continue;
+            if (grant.direction == ::heyaki::TrustGrantDirection::issued) {
+                result.issued = true;
+            } else {
+                result.received = true;
+            }
+        }
+        return result;
+    }
+
     [[nodiscard]] std::optional<::heyaki::DeviceEndpointKey> endpoint_key_of(
         const aki::device::DeviceId& peer) const {
         for (const auto& entry : node_.endpoints()) {

@@ -650,7 +650,7 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
                         (void)router_for_hooks->on_pairing_ready(peer,
                             std::move(key));
                     },
-                .on_authorized = [&devices = *impl.devices](
+                .on_trust_changed = [&devices = *impl.devices](
                     const DeviceId& peer) {
                     (void)devices.enqueue_trust_calibration(peer);
                 }});
@@ -672,7 +672,7 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
     impl.assembly_report.peer_observation_started = true;
 
     // 启动信任校准（DEC-021 四态）：恢复的设备行以本机 TrustStore 为权威
-    // 校准对向信任（issued = 对端信任本机）。单次有界任务：每设备一次
+    // 校准本机签发方向（issued = 本机信任对端）。单次有界任务：每设备一次
     // 有界本地查询；submit_update 为 MPSC admission，任意上下文安全。
     if (impl.adapter && impl.state_owner && impl.recovery) {
         impl.trust_calibration = impl.executor_owner.executor().submit_auto(

@@ -156,9 +156,7 @@ TEST_CASE("Restricted link connects before authorization and stays connected",
     events.on_disconnected = [&](const aki::device::DeviceId&) {
         ++disconnected;
     };
-    events.on_authorized = [&](const aki::device::DeviceId&) {
-        ++authorized;
-    };
+    events.on_trust_changed = [&](const aki::device::DeviceId&) { ++authorized; };
     events.on_connection_path_changed = [&](const aki::device::DeviceId&,
         ConnectionPath path) { paths.push_back(path); };
 
@@ -228,7 +226,7 @@ TEST_CASE("A reconnect is not hidden by finished peer session diagnostics",
                 };
                 events.on_disconnected = [&](const auto&) { ++disconnected; };
                 events.on_pairing_ready = [&](const auto&) { ++ready; };
-                events.on_authorized = [&](const auto&) { ++authorized; };
+                events.on_trust_changed = [&](const auto&) { ++authorized; };
                 events.on_connection_path_changed = [&](const auto&,
                     ConnectionPath path) { paths.push_back(path); };
 
@@ -304,7 +302,7 @@ TEST_CASE("Device link aggregation prefers a linked current endpoint",
     aki::heyaki::PeerSessionEvents events;
     events.on_connected = [&](const auto&, auto) { ++connected; };
     events.on_pairing_ready = [&](const auto&) { ++ready; };
-    events.on_authorized = [&](const auto&) { ++authorized; };
+    events.on_trust_changed = [&](const auto&) { ++authorized; };
     auto linked = make_view("peer-a", 4, 1, 0);
     auto restricted = make_view("peer-a", 3, 0, 0);
     restricted.endpoint_id = "hye1_other";
@@ -479,4 +477,37 @@ TEST_CASE("LAN discovery diff graduates a live id to trusted without went_offlin
     REQUIRE(tick3.discovered.empty());
     REQUIRE(tick3.went_offline.empty());
     REQUIRE(state.live.empty());
+}
+
+TEST_CASE("Grant direction changes calibrate an already authorized link",
+          "[unit][peer_sessions][trust_directions][m541]") {
+    using aki::heyaki::NodeSession;
+    int trust_changes = 0;
+    int connects = 0;
+    int disconnects = 0;
+    aki::heyaki::PeerSessionEvents events;
+    events.on_trust_changed = [&](const auto&) { ++trust_changes; };
+    events.on_connected = [&](const auto&, auto) { ++connects; };
+    events.on_disconnected = [&](const auto&) { ++disconnects; };
+    auto old = make_view("peer", 4, 1, 0);
+    old.trust_directions = NodeSession::TrustDirections{false, true};
+    auto mutual = old;
+    mutual.trust_directions->issued = true;
+    aki::heyaki::diff_peer_sessions({old}, {mutual}, events);
+    REQUIRE(trust_changes == 1);
+    REQUIRE(connects == 0);
+    REQUIRE(disconnects == 0);
+    aki::heyaki::diff_peer_sessions({mutual}, {mutual}, events);
+    REQUIRE(trust_changes == 1);
+    auto unavailable = mutual;
+    unavailable.trust_directions.reset();
+    aki::heyaki::diff_peer_sessions({mutual}, {unavailable}, events);
+    REQUIRE(trust_changes == 1);
+    // Lost issued grant is observable without a connection state change.
+    aki::heyaki::diff_peer_sessions({unavailable}, {old}, events);
+    REQUIRE(trust_changes == 2);
+    auto policy = old;
+    policy.policy_scopes = {"message.send", "file.push:inbox"};
+    aki::heyaki::diff_peer_sessions({old}, {policy}, events);
+    REQUIRE(trust_changes == 2);
 }

@@ -116,7 +116,7 @@ public:
                             deliver_path_changed(peer, path);
                         },
                     .on_pairing_ready = {},
-                    .on_authorized = {},
+                    .on_trust_changed = {},
                 });
         }
         options_.session->set_message_handlers(
