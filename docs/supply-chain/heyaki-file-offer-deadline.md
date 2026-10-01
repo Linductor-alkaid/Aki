@@ -1,6 +1,6 @@
 # Heyaki 文件协商终态修复升级审计
 
-> 状态：In Progress；日期：2026-10-02；负责人：Linductor；工作项 M5-40。
+> 状态：Completed；日期：2026-10-02；负责人：Linductor；工作项 M5-40。
 
 ## 来源与差异
 
@@ -13,7 +13,8 @@ v1.1.1-2-g516815c；没有新发布 tag，不称为 v1.1.2。
 新增公开 NodeConfig::file_offer_timeout，0 使用 30s 默认协商窗口。未收到
 FILE_ACCEPT 的 push 在上游维护 tick 到期时发布一次 failed（timeout /
 offer_expired / deadline_exceeded）；已接收文件不应用该 offer deadline。
-接收确认前不调度文件正文读取/发送。没有 wire、grant、接收根或控制能力扩展。
+接收确认前不调度正文分块读取/发送；源文件元数据探测及校验不在此保证内。
+没有 wire、grant、接收根或控制能力扩展。
 Aki 仅在 NodeSession::Options 映射该 std::chrono 参数；Host 默认值不变。
 不创建 Aki timer/worker/队列，不修改 Heyaki 源码。
 
@@ -50,6 +51,10 @@ failed 或 Paused+disconnected，保留这一限制，不把它算作会话保�
 记录保留，不以即时回调推断连接快照已更新。新独立 file_offer 定向
 Debug 与 ASAN 各 86 assertions / 2 cases 通过。后续会话问题另登记 Heyaki #15。
 
-Aki 七项最新 head CI 尚待执行；本机 TSAN
-已知 runtime mapping 限制，补跑条件为 CI runner。两端安装版复验仍归
+Aki 精确 head `ae08acef46490d2a2d6e5f5c5cca0499b123dbbf` 的
+[CI run 36895691566](https://github.com/Linductor-alkaid/Aki/actions/runs/36895691566)
+七项 completed/success（Linux Debug/ASAN/UBSAN/TSAN、Windows Debug、deb、setup）。
+本机 TSAN 的 runtime mapping 限制由 CI runner 完成此门禁；不扩大为 UI
+运行期 TSAN 声明。PR #65 squash 合入 084c39c，M5-40 依赖接入 Completed。
+两端安装版复验仍归
 M5-34/37~39，负责人 Linductor/操作者，条件为新包与双端在线。

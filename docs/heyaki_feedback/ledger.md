@@ -142,7 +142,7 @@ Linux/Windows 安装版尚待验收，不能以升级/上游关闭替代。
 
 ## HEY-20261001-001：单端基础策略拒绝文件时缺少有界终态
 
-- **状态**：Open；已提交 [Heyaki #13](https://github.com/Linductor-alkaid/heyaki/issues/13)，关联 M5-34。
+- **状态**：Resolved；已提交 [Heyaki #13](https://github.com/Linductor-alkaid/heyaki/issues/13)，关联 M5-34。
 - **版本与复现**：v1.1.1 @ 1ceb42c，Ubuntu 24.04 / GCC 13；新身份零 grant、
   单 Executor 两 borrowed Runtime，两端配置 inbox，仅 A basic=true。
   push_file 返回成功，3 秒内无失败/取消终态，B 无落盘、无 committed；
@@ -162,8 +162,11 @@ Linux/Windows 安装版尚待验收，不能以升级/上游关闭替代。
 
 Heyaki #13 已 closed/completed；#14 已合入 516815c，新参数
 file_offer_timeout（0=默认30s）让未接收 offer 产生一次失败终态，接收前
-不读取或发送正文。Aki 在 M5-40 单独固定此提交并适配；新独立 offer
-Debug 回环通过，最终 sanitizer/CI 与安装版补跑尚待完成。
+不调度正文分块读取/发送；源文件元数据探测及校验不在此保证内。Aki 在
+M5-40 单独固定此提交并适配；新独立 offer Debug/ASAN 各 86 assertions /
+2 cases 通过，完整 Debug/ASAN/UBSAN 回环通过。PR #65 精确 head ae08acef
+的 CI run 36895691566 七项全绿，已合入 084c39c；此原始 offer 有界终态
+缺口关闭。两端安装版及后续会话保持分别仍归 M5-34/37~39 与 Heyaki #15。
 
 首轮 ASAN 的消息拒绝→同会话文件 push 没有 failed，进一步观测到
 paused=1 / linked=0，是上游明确保留的“拒绝后后续 push 破坏会话”边界。
