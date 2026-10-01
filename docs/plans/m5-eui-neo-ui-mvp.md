@@ -112,10 +112,10 @@ amd64/0.1.0、desktop-file-validate 通过。安装版跨平台验收仍待操�
 
 ## M5-40：Heyaki 文件协商终态修复接入
 
-> 状态：In Progress；日期：2026-10-02；负责人：Linductor。
+> 状态：Completed；日期：2026-10-02；负责人：Linductor。
 > 依据：DEC-003、DEC-006、DEC-023，HEY-20261001-001 / Heyaki #13。
 
-- [ ] `M5-40` 独立依赖 MR 固定上游修复提交 516815cbfb76f93f60acd4b58e5b6a7976e4417f
+- [x] `M5-40` 独立依赖 MR 固定上游修复提交 516815cbfb76f93f60acd4b58e5b6a7976e4417f
   （v1.1.1 后两个提交，未发布新 tag）；Adapter 映射 file_offer_timeout，
   默认使用上游有界 30s，测试可缩短等待。验证被单侧策略/缺根拒绝的 push
   一次失败终态、同 TransferId、取消前后竞态、无落盘/无 grant，以及已接受
@@ -123,8 +123,9 @@ amd64/0.1.0、desktop-file-validate 通过。安装版跨平台验收仍待操�
   双端安装包通信验收仍归 M5-34/37~39，不以上游 issue 关闭替代。
 
 用户告知上游 issue 已处理。#13 closed/completed，#14 已合入 516815c；
-修复沿上游现有维护 tick 提供协商 deadline，并在 FILE_ACCEPT 前禁止读取/
-发送正文。没有新增 Aki timer/线程/队列。已知上游后续限制：退役会话上的
+修复沿上游现有维护 tick 提供协商 deadline，FILE_ACCEPT 前不调度正文
+分块读取/发送；源文件元数据探测及校验不在此保证内。没有新增 Aki timer/线程/队列。
+已知上游后续限制：退役会话上的
 取消仍可能同步拒绝，策略拒绝后同一物理通道的后续 push 可能断开会话。
 此批只接入已修复的首次 offer 终态，保留这些结果边界；使用默认 30s 不
 改变接收根、设备 grant 或控制能力。未执行项负责人 Linductor，条件为
@@ -2377,3 +2378,32 @@ HEY-20261002-001；七项新 head CI 与安装版尚待补跑。
 
 最终独立 file_offer 定向 ASAN 86 assertions / 2 cases 通过；诊断/失败
 记录和首次 offer 严格终态断言均保留。
+
+### 2026-10-02：M5-40 CI、合并与安装包交付证据
+
+[PR #65](https://github.com/Linductor-alkaid/Aki/pull/65) 的精确 head
+`ae08acef46490d2a2d6e5f5c5cca0499b123dbbf`，CI run
+[36895691566](https://github.com/Linductor-alkaid/Aki/actions/runs/36895691566)
+七项 completed/success：Linux Debug、ASAN、UBSAN、TSAN、Windows Debug、
+Linux deb、Windows setup。依赖接入 M5-40 Completed，不代替安装版双端验收。
+Squash 合入 `084c39c89d0c6733d7f2ed5e70f83398d9491d67`，远程/本地分支
+删除，主目录 master fast-forward；无本地改动的 Heyaki checkout 已按锁定
+更新至 516815c，未修改上游源码。工作树暂留供运行中的 GUI 验收使用。
+
+CI artifacts 经完整下载和 GitHub archive digest 校验后，解包并复核安装文件：
+
+| 安装文件 | artifact | 安装文件 SHA256 |
+| --- | --- | --- |
+| `aki-0.1.0-ae08ace-amd64.deb` | 11180595451 | `5af18db6336b0e551b20a2d69be6a9858f23a8a4e5e417f7b9b97119f03746e3` |
+| `aki-0.1.0-ae08ace-win64-setup.exe` | 11180337072 | `5291a38588afc6bdb075f295829dc55e118afc53ecc512347478aab619157dc7` |
+
+两份文件保存在本机下载目录的 `aki-test-ae08ace/`，另复制 deb 至下载目录。
+仅此安装包目录用于 Windows 局域网下载，HTTP 下载内容与文件哈希一致。
+原目标 Linux 设备离线，当前交付 Windows 192.168.5.99；安装及运行验证待操作者。
+
+Windows 首次密码证据：操作者报告 `%APPDATA%\aki\db\profile.sqlite`
+存在，创建时间 2026-10-01 22:14。此证据不能证明已有有效密码，也不能确定
+首次提示遗漏的原因。下一步在新安装版查看 `password_setup_required` 启动
+决策行；不请求数据库或密码内容。M5-37 保持 In Progress，负责人 Linductor/
+操作者，补跑条件为目标机安装 ae08ace 包后正常退出重开。M5-36/38/39 的
+已确认 Linux GUI 结果保留，安装版与 Windows/双向图片剩余项不标完成。
