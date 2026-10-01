@@ -64,3 +64,10 @@ submodule + `dependencies.lock.json`，或 lock 清单 + CMake 拉取。初始�
 - [Aki 实施总计划](../plans/aki-implementation-plan.md)（`EXEC-01`~`EXEC-07`、`RISK-2026-001`）
 - [M0：工程骨架与协作基线](../plans/m0-project-skeleton.md)（`M0-05`、退出-5）
 - 工程规范第 9.1、10.7 节
+
+## 2026-10-01 Heyaki 发布版本消费
+
+M5-33 将 Heyaki 升级至 v1.1.1 @ 1ceb42c7b244e950ebeeb10edc84b6d83e423626，
+替换上述 Heyaki 基线；Executor/EUI-NEO pins 保持不变。独立 MR 与 lock
+更新及审计见 [heyaki-v1.1.1](../supply-chain/heyaki-v1.1.1.md)，业务策略
+采用 DEC-023。消费官方 fetch 中的同步补丁，不直接修补上游代码。

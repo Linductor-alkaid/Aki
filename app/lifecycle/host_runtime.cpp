@@ -410,7 +410,8 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
         aki::heyaki::NodeSession::Options{.profile = &*impl.profile,
             .file_receive_roots = {::heyaki::FileRootConfig{
                 .name = receive_root_name,
-                .directory = impl.receive_dir}}}));
+                .directory = impl.receive_dir}},
+            .basic_communication = true}));
     impl.assembly_report.lan_interfaces = impl.node_session->has_lan_interfaces();
 
     // 3) DatabaseWorkerControl——先于 AppStateOwner 构造（§8.3 七步序，

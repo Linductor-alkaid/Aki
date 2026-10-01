@@ -11,7 +11,7 @@
 | --- | --- | --- | --- | --- |
 | executor | submodule（pinned `74a9419`） | v0.5.0-7 | MIT | [DEC-003](../decisions/DEC-003-dependency-locking.md)（M0 冻结，升级走独立变更后在此补登记） |
 | EUI-NEO | submodule（pinned `b9032a8`） | v0.6.0 | Apache-2.0 | 同上；assets 许可证审计为发行前检查项（设计第 9 节） |
-| heyaki | submodule（pinned `e114508`） | v1.0.1-38 | MIT | 同上 |
+| heyaki | submodule（pinned `1ceb42c`） | v1.1.1 | MIT | [heyaki-v1.1.1.md](heyaki-v1.1.1.md)（M5-33，回归进行中） |
 | sqlite | vendored（仅 `sqlite3.c`/`sqlite3.h`） | 3.53.4 | public domain | [sqlite-3.53.4.md](sqlite-3.53.4.md)（M2-08，2026-09-23） |
 
 升级流程（DEC-003 / 工程规范 10.7）：任何依赖升级为独立变更——更新

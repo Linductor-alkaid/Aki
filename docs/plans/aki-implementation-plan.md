@@ -8,6 +8,11 @@
 
 ## 当前状态
 
+- 2026-10-01：M5-33~35 接入 Heyaki v1.1.1，独立升级 MR 消费上游
+  已修复的五项反馈；基础消息/文件策略按 DEC-023 接入并保持零 grant，
+  接收方无密码批准另项推进。新回环、sanitizer 与 Linux/Windows 安装版
+  验收跟踪在 M5；原 Linux 目标离线，Windows 目标尚未安装。
+
 - 2026-09-30：M5-32 双端交换重启顺序复现当前连接被历史关闭会话覆盖。
   Heyaki 快照同时包含当前与 finished 记录，Aki Adapter 按设备归并时
   旧 closed 覆盖当前 linked。现已在 Adapter 修复并完成双端重启复验，

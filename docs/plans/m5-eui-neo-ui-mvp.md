@@ -12,7 +12,53 @@
 > 真实 Adapter、NodeSession、发现/消息/图片/传输/presence/重连管道与恢复
 > 语义均已就绪
 > 建议发布点：v0.5.0（MVP）
-> 更新日期：2026-09-30（M5-29~31 修复、CI 与双设备复验）
+> 更新日期：2026-10-01（Heyaki v1.1.1 接入与跨平台验收）
+
+## M5-33~M5-35：Heyaki v1.1.1 接入
+
+> 状态：In Progress；日期：2026-10-01；负责人：Linductor。
+> 依据：DEC-003、DEC-022、DEC-023，HEY-20260929-001 与 HEY-20260930-001~004。
+
+- [ ] `M5-33` 独立依赖 MR 固定 Heyaki v1.1.1 `1ceb42c7b244e950ebeeb10edc84b6d83e423626`；
+  更新 lock 和供应链审计，移除已修复回调竞争的精确 TSAN 抑制，适配
+  有界密码授权 admission；验收 Debug/ASAN/UBSAN/TSAN、Windows 与打包 CI。
+- [ ] `M5-34` Aki 组合根显式开启 basic_communication，Adapter 分离策略
+  scope 与设备 grant；新身份无 grant 双向消息/图片/inbox 文件可用，单侧
+  策略关闭时失败可见，控制权限不随基础通信开放。Linux/Windows 安装版
+  复验文本、文件与交换重启顺序后完成。
+- [ ] `M5-35` Adapter 接入无密码请求/允许/拒绝及稳定请求 ID，Manager
+  经现有 Executor MpscChannel 推进 Application State，UI 消费入站请求；
+  正反方向、拒绝、超时、重复/迟到、断连与 shutdown 均可观察。
+  该项后续独立功能 MR，不将接收方签发 grant 误标为“对方已信任本机”。
+
+2026-10-01 准入：用户告知上游更新。Heyaki #1~5 均 closed/completed，
+公开 v1.1.1 release 提供密码 admission、已授权会话修复、免信任基础通信、
+无密码批准与 vendor 回调同步补丁。上游关闭不代表 Aki 验收完成。继续
+独立管理 Heyaki，仅消费发布版本与官方 fetch 脚本，不直接改上游源码。
+原 Linux 目标机离线；现有 Windows 192.168.5.99 未安装 Aki、SSH 22 超时，
+后续通过安装包下载测试。补跑负责人 Linductor/设备操作者；条件为两端
+安装本次同版 CI 安装包并在同一 LAN 在线。协议能力在 Adapter 收口，
+Runtime 使用现有 borrowed Executor，新增业务不创建线程或私有调度器。
+
+2026-10-01 M5-33/34 本地验证：Debug 全量构建通过。首轮 ctest 43/44，
+唯一失败是旧回环把“已完成后再次提交”视为应拒绝；v1.1.1 明确允许续期。
+改为接纳续期、一次新成功结果且授权会话保持，目标重跑 53 assertions
+通过（7.25s，非 skip）。新单 owner、fresh profile 基础通信回环 3 cases /
+110 assertions 通过（41.03s），覆盖双向 text/image/file 信封、inbox 本体
+哈希、零 grant、退出/重开后重连、错误口令不关闭授权会话、反向 grant、
+单侧消息 30s TTL 失败及文件无落盘/取消 admission/shutdown。
+ASAN 基础回环与 Adapter 单测 2/2 通过（46.94s，非 skip），无内存报告。
+首轮旧回环中的 message、disconnect recovery、real adapter、full/send
+transfer 仍 skip，不能把 43 个返回成功项全部称为网络链路验收。
+本地 TSAN 编译通过，运行在测试开始前因 unexpected memory mapping
+失败（0.02s），未执行回归、未记通过；补跑负责人 Linductor，条件为
+CI TSAN runner 对最新 head 完成全量门禁。UBSAN/Windows/打包同由最新
+head CI 验证，安装版仍待用户双端测试。
+
+单侧文件策略拒绝缺有界终态另登记 HEY-20261001-001 / Heyaki #13，
+保持 M5-34 此项未完成；新测试的取消 admission 与 shutdown 不替代
+上游终态修复。两端新 Aki 都启用策略的通路已验证，尚未声称目标 Windows
+安装或 GUI 通信验收。M5-35 不在本升级 MR 宣称实现。
 
 ## M5-29~M5-30：历史会话恢复与基础通信权限
 
