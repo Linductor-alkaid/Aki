@@ -1461,3 +1461,20 @@ Conversation 返回结果。此时 Conversation
 Heyaki 负责设备发现和数据交换，Aki 负责把这些连接组织成
 Conversation 和可操作的界面，Agent
 能力按需要建立在这套设备通信模型之上。
+
+### 2026-10-01 本地媒体与 Linux 输入兼容修订
+
+依据 DEC-025，Linux 窗口初始化前可在 Platform Adapter 选择 X11 兼容
+输入法，框架保留生命周期所有权。依据 DEC-026，TransferStore 增加有界
+LocalTransferArtifact 记录及 SetLocalTransferArtifact 更新，只由归档作业
+完成/启动恢复供给；UI 默认图片缩略图和本地保存位置消费该事实。更新
+校验传输归属、终态和路径；拒绝不静默。Core/wire 保持无本地路径。
+
+本地文件归档失败通过 `SetLocalTransferArtifactFailure` 发布，错误限 512 字节，
+与文件事实共享 `max_transfers` 容量。UI 显示保存失败；数据库作业 future 仍失败，
+不把磁盘失败改报传输成功。成功重跑可替换失败事实，迟到失败不得覆盖已保存文件。
+
+安装版日志固定写入 `<data_root>/logs/aki-run.log`，启动记录解析后的数据根、
+密码是否需设置和 GLFW 后端，不记录密码。Profile 检查异常阻止 Host 装配，
+错误页提供重试；既有合法密码不得因重装而重置。目录打开和复制路径仅在用户
+点击时由 Platform Adapter 执行，compose 不查询磁盘。

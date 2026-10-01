@@ -19,7 +19,7 @@
 > 状态：In Progress；日期：2026-10-01；负责人：Linductor。
 > 依据：DEC-003、DEC-022、DEC-023，HEY-20260929-001 与 HEY-20260930-001~004。
 
-- [ ] `M5-33` 独立依赖 MR 固定 Heyaki v1.1.1 `1ceb42c7b244e950ebeeb10edc84b6d83e423626`；
+- [x] `M5-33` 独立依赖 MR 固定 Heyaki v1.1.1 `1ceb42c7b244e950ebeeb10edc84b6d83e423626`；
   更新 lock 和供应链审计，移除已修复回调竞争的精确 TSAN 抑制，适配
   有界密码授权 admission；验收 Debug/ASAN/UBSAN/TSAN、Windows 与打包 CI。
 - [ ] `M5-34` Aki 组合根显式开启 basic_communication，Adapter 分离策略
@@ -109,6 +109,34 @@ UBSAN/TSAN、Windows Debug、deb、setup）。TSAN ctest 44/44；新基础
 Linux CI 包 SHA256：58878a74fb2df636e37de7a78f5b50cf3e54624f12624741fe3002ed389d8b7c，
 包内 aki SHA256：5291c24f87ae0a17c5732331ba0a427ead733f0db1d0a801390425425b4a7a89；
 amd64/0.1.0、desktop-file-validate 通过。安装版跨平台验收仍待操作者。
+
+## M5-36~M5-39：Linux / Windows 实测缺陷修复
+
+> 状态：In Progress；日期：2026-10-01；负责人：Linductor。
+
+- [ ] `M5-36` Ubuntu 24 中文输入恢复：定位窗口后端与输入法边界，兼容
+  适配仅使用公开 GLFW API；验收中文切换/候选确认/退格/发送，Dock 分组
+  保持，纯策略单测与 Linux 构建，真实桌面复验后完成。
+- [ ] `M5-37` Windows 首次设备密码：核实实际数据根、profile 是否复用及
+  初始化检查错误；新数据根必显示设置窗口，不设置不得启动 Node；既有
+  有效密码不覆写，检查错误需可见；Windows 实测后完成。
+- [ ] `M5-38` 图片默认预览：归档完成后通过 Application State 暴露本地
+  文件记录，出站即时源与收发归档均可展示缩略图，点击放大；重启历史、
+  消息/文件乱序、未完成/缺失文件都有明确表现。Linux/Windows 双向复验。
+- [ ] `M5-39` 文件位置：先按传输文件保存位置处理，接收与发送归档路径
+  显示在聊天/传输卡片，支持复制完整路径与打开所在目录；长路径、中文路径、未就位
+  与错误反馈可用。若用户澄清为应用安装位置，再调整本项范围。
+
+用户实测版本为 9d0a7fe（产品代码与最新门禁 fe8d071 相同）：Ubuntu 24
+无法切换中文输入，Windows 未看到首次设置密码，双向接收无图片预览且
+Ubuntu 出站也无预览，文件位置不可见。四项均记为未通过，不将协议回环
+替代 GUI 验收。M5-34 保持未完成。输入法涉及 pinned EUI-NEO/GLFW 原生
+Wayland 缺口，按 DEC-025 单一 Platform Adapter 兼容；媒体按 DEC-026
+从既有归档记录派生，不把本地路径加入 wire 或 Core 消息。
+
+M5-33 收口：最新 head fe8d071 的 run 36863633285 七项成功，PR #63
+已 Squash 合入 master 4998b8239ae3265f00825ebec48ab0ec7879645c，工作
+分支已清理，本机 master 已 fast-forward 同步。M5-35 保持后续独立阶段。
 
 ## M5-29~M5-30：历史会话恢复与基础通信权限
 
@@ -2243,3 +2271,28 @@ verifier 校验并签发 grant；`handle_pairing_request` 响应侧即升级会�
     `pulls/53` 的 `merged=true`、`merged_at=2026-09-28T09:29:56Z`），
     远程与本地特性分支已删除，本地 `master` fast-forward 同步且工作树
     干净。该 CI 证据只证明 PR 门禁，不替代 M5 退出-1 双端补跑。
+
+### 2026-10-01：M5-36~39 第一轮实现与验证
+
+- 已实现本地归档事实/失败经原 DatabaseWorker future 与 AppStateOwner MPSC
+  回写；恢复 stored_*、检查路径及存在性。Completed 缺记录显示保存失败，
+  路径不可用保留位置说明；没有新增 worker、队列或第三方代码修改。
+- 聊天图片默认 Contain 缩略图，原预览弹窗读取接收/发送归档；聊天和传输
+  页显示保存位置、复制完整路径、打开所在目录。该目录交给系统文件管理器，
+  不执行收到的文件。界面继续使用 ZCode 令牌；新增图片尺寸已登记。
+- Linux 在 GLFW 初始化前设置 locale，并在 DISPLAY 存在时选择 X11。
+  本机修复版启动日志 GLFW platform=X11，assembly ok 249ms，历史归档
+  3/3 文件存在，其中两张图片；这不等于图片实际渲染或中文输入已通过。
+- Windows profile 检查异常不再隐式继续装配，显示错误和重试。日志迁移至
+  `<data_root>/logs/aki-run.log`，记录密码设置决策，不记录密码；既有有效
+  密码保留。用户尚未提供目标机 profile 创建时间，首启现象原因未确认。
+- 本地 Debug 全目标构建通过；Debug/ASAN/UBSAN 的 test_app_state、
+  test_file_store、test_restart_recovery、test_host_runtime、test_ui_models
+  各 5/5 通过（9.66s/10.67s/14.32s）。另 Debug test_local_identity 通过
+  （新数据根无密码不能建 profile、首启检查、旧默认密码迁移和身份保持）。
+  新覆盖：归档入站/出站 join、路径穿越、不可变回写、失败重跑、背压、
+  关闭后提交、历史记录恢复/缺失及恢复预算拒绝。
+- 界面为原生 C++ EUI-NEO，未运行 Web DOM 检测；实际窗口检验待操作者。
+  Linux/Windows 图形输入、双向图片/重启历史、复制路径/打开目录仍未验收，
+  负责人 Linductor，补跑条件为安装新 CI 包后双设备在线；M5-36~39 保持未完成。
+  TSAN 本机受已知 runtime mapping 限制，本阶段以最新 head CI 门禁补跑。
