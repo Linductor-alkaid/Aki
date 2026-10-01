@@ -100,6 +100,8 @@ public:
         bool basic_communication = false;
         bool pairing_approval_enabled = false;
         std::chrono::milliseconds pairing_deadline{0};
+        // HEY-20261001-001: 0 retains the upstream bounded 30s offer window.
+        std::chrono::milliseconds file_offer_timeout{0};
     };
 
     // 前置：executor 已 Running（ExecutorOwner.initialize() 之后）。
@@ -149,6 +151,7 @@ public:
             .event_max_subscriptions_per_peer = 0U,
             .file_receive_roots = options.file_receive_roots,
             .file_max_peer_receive_bytes = 0U,
+            .file_offer_timeout = options.file_offer_timeout,
             .shell_profiles = {},
             .gateway_profiles = {},
             .gateway_confirm_sink = {}};
