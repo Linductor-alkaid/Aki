@@ -2,7 +2,6 @@
 #ifndef GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_NONE
 #endif
-#include <GLFW/glfw3.h>
 #include <cstdint>
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -17,6 +16,7 @@
 #elif defined(__linux__)
 #include <gio/gio.h>
 #endif
+#include <GLFW/glfw3.h>
 
 namespace aki::ui::platform {
 void copy_local_path(const std::string& path) {
