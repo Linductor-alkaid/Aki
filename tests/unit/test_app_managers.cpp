@@ -2317,3 +2317,58 @@ int main(int argc, char* argv[]) {
     const int result = Catch::Session().run(argc, argv);
     return result;
 }
+
+
+TEST_CASE("First inbound message creates its conversation before the message update",
+    "[unit][managers][incoming_conversation][m541]") {
+    AppStack stack;
+    REQUIRE(stack.host.initialized);
+    auto message = make_message("first-inbound");
+    message.receiver = DeviceId{"local-1"};
+    REQUIRE(stack.adapter.inject_message_received(std::move(message)));
+    REQUIRE(stack.conversations->flush(2s));
+    REQUIRE(stack.messages->flush(2s));
+    stack.state_owner.drain();
+    executor::comm::Snapshot<AppState> snapshot;
+    REQUIRE(stack.state_owner.try_load_snapshot(snapshot));
+    REQUIRE(snapshot.value.conversations.conversations.size() == 1);
+    REQUIRE(snapshot.value.conversations.conversations.front().id == ConversationId{"conv-alpha"});
+    REQUIRE(snapshot.value.conversations.conversations.front().local_device == DeviceId{"local-1"});
+    REQUIRE(snapshot.value.messages.messages.size() == 1);
+    REQUIRE(snapshot.value.messages.messages.front().state == DeliveryState::Delivered);
+    REQUIRE(stack.state_owner.stats().updates_rejected == 0);
+}
+
+TEST_CASE("Incoming conversation forwarding failures remain observable",
+    "[unit][managers][incoming_conversation][m541]") {
+    AppStack stack;
+    REQUIRE(stack.host.initialized);
+    auto message = make_message("first-inbound");
+    message.receiver = DeviceId{"local-1"};
+    SECTION("message queue rejection") {
+        REQUIRE(stack.conversations->enqueue_incoming(std::move(message), [](Message) { return false; }));
+        REQUIRE(stack.conversations->flush(2s));
+        REQUIRE(stack.conversations->stats().handler_rejections == 1);
+    }
+    SECTION("forwarding exception") {
+        REQUIRE(stack.conversations->enqueue_incoming(std::move(message), [](Message) -> bool {
+            throw std::runtime_error("injected forwarding failure");
+        }));
+        REQUIRE(stack.conversations->flush(2s));
+        REQUIRE(stack.conversations->stats().drain_failures == 1);
+        REQUIRE(wait_until([&] {
+            return stack.host.executor_owner.executor().get_failure_status().task_exception_count >= 1;
+        }, 2s));
+    }
+    SECTION("closed state owner") {
+        stack.state_owner.close();
+        bool forwarded = false;
+        REQUIRE(stack.conversations->enqueue_incoming(std::move(message), [&](Message) {
+            forwarded = true;
+            return true;
+        }));
+        REQUIRE(stack.conversations->flush(2s));
+        REQUIRE_FALSE(forwarded);
+        REQUIRE(stack.conversations->stats().handler_rejections == 1);
+    }
+}

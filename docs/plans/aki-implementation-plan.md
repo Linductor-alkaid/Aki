@@ -862,3 +862,9 @@ pair_peer））。
 安装包哈希见 M5 验证记录；该依赖接入项 Completed。M5-34/36~39 的
 安装版、Windows 首次密码和双向图片验收继续进行，后续拒绝通道问题
 单独登记 Heyaki #15 / HEY-20261002-001，不扩大完成声明。
+
+
+2026-10-02：用户清除 Windows 数据后确认首次设置页出现；M5-41 继续修复
+免信任首次建链、同连接上的双向 grant 校准以及接收端首条消息的会话归属
+顺序。使用现有 Executor timer / Manager MpscChannel，控制权限保持独立，
+代码、sanitizer/CI 与两端安装版验收见 M5 工作项，当前 In Progress。

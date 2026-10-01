@@ -38,15 +38,13 @@
 
 namespace aki::app {
 
-// Reconnect only devices that already entered a pairing/trust round.
-// Discovery may mark a Pending peer Online before its session is linked, so
-// presence alone cannot decide whether the reconciliation sweep should run.
+// M5-41 / DEC-023: connection uses verified discovery identity, not grants.
+// The caller also requires a visible endpoint and no existing link.
+// Discovery presence may lead session state; never use trust as this gate.
 [[nodiscard]] inline bool should_reconnect_known_device(
     const aki::device::DeviceIdentity& device,
     const aki::device::DeviceId& local) noexcept {
-    return device.id != local
-        && (device.trust_state == aki::device::TrustState::Pending
-            || device.trust_state == aki::device::TrustState::Trusted);
+    return !device.id.empty() && device.id != local && device.public_key.bytes.size() == 32;
 }
 
 // 构造选项置于命名空间作用域（同仓库既有处理，GCC 纪律）。

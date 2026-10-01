@@ -90,7 +90,9 @@ struct PeerSessionEvents {
         aki::device::ConnectionPath)>
         on_connection_path_changed;
     std::function<void(const aki::device::DeviceId&)> on_pairing_ready;
-    std::function<void(const aki::device::DeviceId&)> on_authorized;
+    // Calibration trigger: initial authorization or an effective grant
+    // direction change. Connection and policy scopes are not trust facts.
+    std::function<void(const aki::device::DeviceId&)> on_trust_changed;
 };
 
 // 纯函数 diff：prev → curr 的设备级建链变化与路径变化。
@@ -141,11 +143,14 @@ inline void diff_peer_sessions(
                     session_connection_path(view));
             }
         }
-        if (view.authenticated
-            && (previous == prev_by_key.end()
-                || !previous->second.authenticated)
-            && events.on_authorized) {
-            events.on_authorized(view.device_id);
+        const bool entered_authorized = view.authenticated
+            && (previous == prev_by_key.end() || !previous->second.authenticated);
+        const bool directions_changed =
+            has_peer_link(view) && view.trust_directions &&
+            (previous == prev_by_key.end() ||
+             previous->second.trust_directions != view.trust_directions);
+        if ((entered_authorized || directions_changed) && events.on_trust_changed) {
+            events.on_trust_changed(view.device_id);
         }
         if (has_peer_link(view) && was_linked) {
             const auto& old = previous->second;

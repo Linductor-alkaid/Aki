@@ -116,7 +116,7 @@ public:
                             deliver_path_changed(peer, path);
                         },
                     .on_pairing_ready = {},
-                    .on_authorized = {},
+                    .on_trust_changed = {},
                 });
         }
         options_.session->set_message_handlers(
@@ -384,7 +384,8 @@ public:
     // 结果经 set_pairing_observer（构造时登记）→ on_pairing_completed 投递。
     [[nodiscard]] bool begin_pairing(
         const aki::device::DeviceId& peer) override {
-        return !peer.empty() && options_.session->connect_lan(peer);
+        return !peer.empty() && (options_.session->session_linked(peer)
+            || options_.session->connect_lan(peer));
     }
 
     [[nodiscard]] bool confirm_pairing(

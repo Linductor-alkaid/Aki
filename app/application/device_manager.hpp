@@ -355,7 +355,18 @@ private:
     }
 
     bool handle(BeginPairingWork& work) {
-        return !work.device.empty() && adapter_.begin_pairing(work.device);
+        if (work.device.empty() || !adapter_.begin_pairing(work.device))
+            return false;
+        executor::comm::Snapshot<AppState> snapshot;
+        if (!state_owner_.try_load_snapshot(snapshot))
+            return false;
+        for (const auto& existing : snapshot.value.devices.devices) {
+            if (existing.id == work.device && aki::device::is_terminal(existing.trust_state)) {
+                // Explicit user command is the only way to reopen a trust round.
+                return apply_trust_transition(work.device, aki::device::TrustState::Pending);
+            }
+        }
+        return true;
     }
 
     bool handle(PairingReadyWork& work) {
@@ -381,13 +392,11 @@ private:
                 return state_owner_.submit_update(
                     UpsertDevice{std::move(downgraded)});
             }
-            // 终态唯一出口：用户可见的重新配对轮把行放回 Pending
-            // （Rejected/Revoked→Pending，DEC-021）；Unknown 正常首轮。
-            const bool rebegin = existing.trust_state
-                == aki::device::TrustState::Rejected
-                || existing.trust_state == aki::device::TrustState::Revoked;
-            if (existing.trust_state != aki::device::TrustState::Unknown
-                && !rebegin) {
+            // An automatic basic connection must not reopen a rejected/revoked
+            // trust round. BeginPairingWork owns the explicit re-pair command.
+            if (aki::device::is_terminal(existing.trust_state))
+                return true;
+            if (existing.trust_state != aki::device::TrustState::Unknown) {
                 return false;
             }
             aki::device::DeviceIdentity updated = existing;

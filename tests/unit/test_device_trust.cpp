@@ -349,27 +349,32 @@ TEST_CASE("Connected carries the mapped path and disconnect resets to Unknown",
 // ---- DEC-021：终态重建边（唯一出口 = 用户显式重新配对轮）与 Trusted 会话
 // ---- 被裁定 restricted 后的降级。
 
-TEST_CASE("Pairing ready reopens terminal rows and downgrades revoked sessions (DEC-021)",
-    "[unit][device_trust][dec021]") {
+TEST_CASE("Automatic connections preserve terminal trust; explicit re-pair reopens it",
+          "[unit][device_trust][dec021]") {
     TrustStack stack;
 
-    // Revoked 行：pairing_ready 把行放回 Pending（状态机新边）；行上其余
-    // 字段（含对向信任）随整行 upsert 保留。
+    // Revoked/Rejected: automatic link events preserve the decision; only
+    // the explicit user re-pair command reopens the round.
     REQUIRE(stack.state.submit_update(
         UpsertDevice{make_device("revoked-dev", aki::device::TrustState::Revoked)}));
     stack.settle();
     REQUIRE(stack.router.on_pairing_ready(aki::device::DeviceId{"revoked-dev"}));
     stack.settle();
+    REQUIRE(stack.trust_of("revoked-dev") == aki::device::TrustState::Revoked);
+    REQUIRE(stack.actions.begin_pairing(aki::device::DeviceId{"revoked-dev"}));
+    stack.settle();
     REQUIRE(stack.trust_of("revoked-dev") == aki::device::TrustState::Pending);
 
-    // Rejected 行：同样可重建。
+    // Rejected follows the same explicit-command boundary.
     REQUIRE(stack.state.submit_update(
         UpsertDevice{make_device("rejected-dev", aki::device::TrustState::Rejected)}));
     stack.settle();
     REQUIRE(stack.router.on_pairing_ready(aki::device::DeviceId{"rejected-dev"}));
     stack.settle();
-    REQUIRE(stack.trust_of("rejected-dev")
-        == aki::device::TrustState::Pending);
+    REQUIRE(stack.trust_of("rejected-dev") == aki::device::TrustState::Rejected);
+    REQUIRE(stack.actions.begin_pairing(aki::device::DeviceId{"rejected-dev"}));
+    stack.settle();
+    REQUIRE(stack.trust_of("rejected-dev") == aki::device::TrustState::Pending);
 
     // Trusted 行 + 对向信任在位：pairing_ready = 对端撤销/grant 过期的
     // 可观测信号 → 本机降级 Revoked 且双向显示归零（inbound=false）。

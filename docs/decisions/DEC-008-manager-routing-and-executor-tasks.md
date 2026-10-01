@@ -97,3 +97,16 @@ ASAN/UBSAN 随 PR 的 Linux CI 门禁提供。
 - [Aki 实施总计划](../plans/aki-implementation-plan.md)（`RULE-02`/`RULE-07`~`RULE-09`、
   `EXEC-02`~`EXEC-07`、`DOD-02`）
 - [M1：领域模型与状态边界](../plans/m1-domain-state.md) 工作项 `M1-05`
+
+
+## 2026-10-02：首条入站消息的会话归属顺序（M5-41）
+
+真实应用回环证实：只有发送端创建 Conversation 时，接收端的 UpsertMessage
+因没有本地会话而被 FK 校验拒绝。接收路径改为 RouterSink 投递 CM 收件箱，
+CM 显式 ensure_conversation(receiver, sender) 后再经注入的有界投递动作入 MM
+收件箱；两项 owner 更新严格按会话、消息顺序进入同一 MpscChannel。
+CM 只写 Conversation，MM 只写 Message；第三方回调仍只校验和投递。
+入站消息不依赖信任；直接绕过此路由的未知会话消息仍由 owner 拒绝。
+CM/MM 收件箱拒绝和 handler 异常由既有 ManagerPump/Executor 统计及 future
+观察，不创建线程、队列或调度器。Owner 关闭前必须先排空 CM、再 MM，
+投递目标由外部组合根持有至排空，沿现有 Host 关闭顺序执行。

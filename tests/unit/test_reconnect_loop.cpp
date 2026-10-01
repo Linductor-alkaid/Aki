@@ -51,24 +51,24 @@ bool wait_until_local(const std::function<bool()>& predicate,
 
 }  // namespace
 
-TEST_CASE("Reconnect sweep admits online Pending peers but excludes terminals",
-    "[unit][reconnect][dec022]") {
+TEST_CASE("Connection sweep admits verified peers independently of trust",
+          "[unit][reconnect][dec023]") {
     aki::device::DeviceIdentity device;
     device.id = DeviceId{"peer-a"};
+    device.public_key.bytes.resize(32);
     const DeviceId local{"local"};
-    device.presence = aki::device::PresenceState::Online;
-    device.trust_state = aki::device::TrustState::Pending;
-    REQUIRE(aki::app::should_reconnect_known_device(device, local));
-    device.trust_state = aki::device::TrustState::Trusted;
-    REQUIRE(aki::app::should_reconnect_known_device(device, local));
-    for (const auto state : {aki::device::TrustState::Unknown,
-             aki::device::TrustState::Rejected,
-             aki::device::TrustState::Revoked}) {
+    for (const auto state : {aki::device::TrustState::Unknown, aki::device::TrustState::Pending,
+                             aki::device::TrustState::Trusted, aki::device::TrustState::Rejected,
+                             aki::device::TrustState::Revoked}) {
         device.trust_state = state;
-        REQUIRE_FALSE(aki::app::should_reconnect_known_device(device, local));
+        REQUIRE(aki::app::should_reconnect_known_device(device, local));
     }
     device.id = local;
-    device.trust_state = aki::device::TrustState::Pending;
+    REQUIRE_FALSE(aki::app::should_reconnect_known_device(device, local));
+    device.id = DeviceId{};
+    REQUIRE_FALSE(aki::app::should_reconnect_known_device(device, local));
+    device.id = DeviceId{"peer-a"};
+    device.public_key.bytes.resize(31);
     REQUIRE_FALSE(aki::app::should_reconnect_known_device(device, local));
 }
 

@@ -28,6 +28,7 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -298,6 +299,9 @@ struct HostRuntime::Impl {
     std::future<void> language_write;
     // 重连对账周期句柄（DEC-021）与启动信任校准任务 future（有界单次）。
     executor::TimerHandle reconnect_sweep;
+    // Lifecycle barrier only: queued/running sweeps finish before Node shutdown.
+    std::mutex reconnect_sweep_mutex;
+    bool reconnect_sweep_stopped = false;
     std::future<void> trust_calibration;
 
     bool assembled = false;
@@ -650,7 +654,7 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
                         (void)router_for_hooks->on_pairing_ready(peer,
                             std::move(key));
                     },
-                .on_authorized = [&devices = *impl.devices](
+                .on_trust_changed = [&devices = *impl.devices](
                     const DeviceId& peer) {
                     (void)devices.enqueue_trust_calibration(peer);
                 }});
@@ -672,7 +676,7 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
     impl.assembly_report.peer_observation_started = true;
 
     // 启动信任校准（DEC-021 四态）：恢复的设备行以本机 TrustStore 为权威
-    // 校准对向信任（issued = 对端信任本机）。单次有界任务：每设备一次
+    // 校准本机签发方向（issued = 本机信任对端）。单次有界任务：每设备一次
     // 有界本地查询；submit_update 为 MPSC admission，任意上下文安全。
     if (impl.adapter && impl.state_owner && impl.recovery) {
         impl.trust_calibration = impl.executor_owner.executor().submit_auto(
@@ -694,9 +698,9 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
             });
     }
 
-    // 周期重连对账（DEC-022）：Pending 设备可能已由 LAN 发现标为
-    // Online，但尚未建链；以「已进入配对/信任轮 + 目录可见 + 未建链」
-    // 而非 presence 判定。终态只允许用户显式重新配对。connected 事件链随后自动
+    // 周期连接对账（M5-41 / DEC-023）：具有完整身份公钥、目录可见且
+    // 未建链即接纳，不按信任状态筛选，不自动签发 grant 或重开信任轮。
+    // connected 事件链随后自动
     // 恢复 presence/路径/会话状态。句柄在关闭钩子 ① 取消。
     {
         auto* owner_for_sweep = &*impl.state_owner;
@@ -706,7 +710,12 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
         impl.reconnect_sweep =
             impl.executor_owner.executor().submit_periodic_with_handle(5000,
                 [owner_for_sweep, node_for_sweep, reconnect_for_sweep,
-                    &local_for_sweep] {
+                    &local_for_sweep, &sweep_mutex = impl.reconnect_sweep_mutex,
+                    &sweep_stopped = impl.reconnect_sweep_stopped] {
+                    std::lock_guard<std::mutex> guard(sweep_mutex);
+                    if (sweep_stopped) {
+                        return;
+                    }
                     executor::comm::Snapshot<AppState> snapshot;
                     if (!owner_for_sweep->try_load_snapshot(snapshot)) {
                         return;
@@ -904,9 +913,13 @@ const HostShutdownReport& HostRuntime::shutdown_with_report() {
             (void)impl.transfers->request_cancel_all();
         }
         if (impl.name_beacon) impl.name_beacon->stop();
-        if (impl.reconnect_sweep.valid()) {
-            (void)impl.reconnect_sweep.cancel();
-            impl.reconnect_sweep = executor::TimerHandle{};
+        {
+            std::lock_guard<std::mutex> guard(impl.reconnect_sweep_mutex);
+            impl.reconnect_sweep_stopped = true;
+            if (impl.reconnect_sweep.valid()) {
+                (void)impl.reconnect_sweep.cancel();
+                impl.reconnect_sweep = executor::TimerHandle{};
+            }
         }
         report.transfers_cancelled = true;
         report.hook_sequence.push_back("hook:transfer.request_cancel_all");

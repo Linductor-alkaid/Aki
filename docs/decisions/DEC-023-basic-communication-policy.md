@@ -41,3 +41,13 @@ Heyaki v1.1.1 提供公开 basic_communication opt-in 配置及独立 policy_sco
 Aki 组合根启用该配置，低层 NodeSession 的缺省仍关闭；不自动配对或签发
 grant。配置既有 inbox 接收根，保持高级服务默认关闭。已配对会话仍按
 实际 grant 的有效 scopes 执行，基础策略不扩充设备授权。验收归 M5-34。
+
+
+## 2026-10-02 首次建链与信任方向修订
+
+M5-41 补齐应用接线：连接对账接纳具有完整身份公钥、目录可见且尚未建链
+的所有非本机设备，不依赖 TrustState。Unknown/Rejected/Revoked 不阻塞
+基础通信；自动建链不生成 grant，终态信任只由用户显式重新配对回到 Pending。
+沿现有 peer 观察 timer 采样有效 issued/received grant 方向，变化经 Manager
+收件箱校准；不会把 authenticated 或 policy_scopes 当作设备信任事实。
+UI 仍按连接路径开放会话；断连禁止发送，控制服务配置保持关闭。
