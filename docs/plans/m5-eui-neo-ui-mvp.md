@@ -2309,3 +2309,19 @@ X11 生效：pinned 源码副本→git apply→产物 hash 检查→替换 GLFW 
 单一编译单元，原 checkout 不改。Debug aki 构建通过；真实 CMake fixture
 验证实际编译源切换、重复 configure 幂等、原件保留、补丁/原源漂移拒绝。
 需重启修复版复验候选退格/确认及正文普通退格，等待操作者，未标通过。
+
+### 2026-10-02：退格回归修正
+
+第一版补丁造成普通退格失效：filtered 事件仍占用 keyPressTimes，相同
+时间戳的 IBus 未消费转发事件被去重。修正版将过滤扩大至派发及时间戳
+推进整个块，未消费转发事件恢复。Debug aki 构建通过，操作者在英文正文、
+已提交中文、未确认拼音三项复验后回复“当前的退格正确了”。
+真实生成源的派发块回归（过滤→同时间戳转发→重复去重→普通重复→回绕）
+及 configure fixture 1/1 通过；不以模型复制代替实际 patched 代码。
+
+head 893d91e 的 CI 失败：Linux 的生成 Wayland 协议文件被错误解析到源码
+目录；Windows local_files.cpp 的 GLFW/Windows 头文件次序导致 APIENTRY
+宏重定义且 /WX 拒绝。分别保留 generated source 的 binary directory 位置、
+调整平台头文件次序，并追加生成文件 fixture 覆盖。最新修正 head 的 CI
+须重新通过，不复用旧 head 的结果。M5-36~39 保持 InProgress；其余
+Windows 首启、双向新图片、文件位置实际操作及安装包验收仍待补跑。

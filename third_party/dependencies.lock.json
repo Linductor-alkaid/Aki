@@ -29,10 +29,10 @@
                 {
                     "feedback": "EUI-20261001-002",
                     "path": "docs/eui_neo_feedback/patches/EUI-20261001-002-filtered-x11-keys.patch",
-                    "sha256": "eb3f5fa194ec71b5aaa7168258870a8cd9ab95980a4a54728d490b33da9eccb1",
+                    "sha256": "be7002ca48059b2aa83c05a69e31220cf34a1d1af176bde25654b41b1872b6bd",
                     "source": "3rd/glfw/src/x11_window.c",
                     "source_sha256": "7c5a60a507767c5b311437a74e85e547914df631be4f74fa75746063762019da",
-                    "patched_sha256": "89853a86fa0e6b972de09752c8500f0adc9b57461860257630a2deb86e337cbe",
+                    "patched_sha256": "7a484bf8727a812a3097eced62f3010bcc6c92e3084410eadeadbe02f41c8653",
                     "authorized": "2026-10-01: maintainer approved temporary Aki build patch and upstream issue"
                 }
             ]
