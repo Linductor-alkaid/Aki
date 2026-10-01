@@ -25,6 +25,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace aki::persistence {
 
@@ -43,6 +44,7 @@ struct RecoveredData {
     std::vector<aki::conversation::Conversation> conversations;
     std::vector<aki::conversation::Message> messages;
     std::vector<aki::transfer::Transfer> transfers;
+    std::vector<std::pair<aki::transfer::TransferId, CompletedFile>> local_files;
 };
 
 struct RecoveryResult {
@@ -59,6 +61,6 @@ inline constexpr const char* kDatabaseFileName = "aki.db3";
 // std::runtime_error / std::invalid_argument（目录创建、参数）——组合根捕获后
 // 输出原因并退出（§11.1 ② 干净失败，不静默）。
 [[nodiscard]] RecoveryResult perform_startup_recovery(const std::string& data_root,
-    const DatabaseWorkerOptions& options = {});
+    const DatabaseWorkerOptions& options = {}, std::size_t local_file_budget = 256);
 
 }  // namespace aki::persistence

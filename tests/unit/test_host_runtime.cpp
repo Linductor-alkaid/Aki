@@ -549,3 +549,25 @@ int main(int argc, char* argv[]) {
     // main 返回后执行：受控关闭已在用例内完成，析构为已停状态的空 teardown。
     return Catch::Session().run(argc, argv);
 }
+
+TEST_CASE("Startup restores archive availability without accepting paths outside its root",
+    "[unit][host_runtime][local_media]") {
+    const auto root = std::filesystem::temp_directory_path()
+        / ("aki-archive-seed-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(root / "files" / "image");
+    { std::ofstream out(root / "files" / "image" / "test.png"); out << "image"; }
+    aki::persistence::RecoveredData data;
+    aki::transfer::Transfer row;
+    row.id = aki::transfer::TransferId{"image"};
+    row.state = aki::transfer::TransferState::Completed;
+    data.transfers.push_back(row);
+    data.local_files.push_back({row.id, {"files/image/test.png", std::string(64, 'a'), 5}});
+    auto seed = aki::app::seeded_app_state(data, root.string());
+    REQUIRE(seed.transfers.local_artifacts[0].available);
+    std::filesystem::remove(root / "files" / "image" / "test.png");
+    seed = aki::app::seeded_app_state(data, root.string());
+    REQUIRE_FALSE(seed.transfers.local_artifacts[0].available);
+    data.local_files[0].second.relative_path = "files/image/../../secret";
+    REQUIRE_THROWS(aki::app::seeded_app_state(data, root.string()));
+    std::filesystem::remove_all(root);
+}

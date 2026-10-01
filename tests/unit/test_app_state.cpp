@@ -909,3 +909,60 @@ int main(int argc, char* argv[]) {
     executor.shutdown(true);
     return result;
 }
+
+TEST_CASE("Local archives publish only for completed transfers and remain immutable",
+    "[unit][app_state][local_media]") {
+    AppStateOwner owner;
+    REQUIRE(owner.submit_update(UpsertTransfer{make_transfer("ready", TransferState::Completed)}));
+    REQUIRE(owner.submit_update(UpsertTransfer{make_transfer("active", TransferState::Transferring)}));
+    owner.drain();
+    const auto before = owner.snapshot_sequence();
+    aki::app::LocalTransferArtifact file{{"ready"}, "files/ready/photo.png", std::string(64, 'a'), 3};
+    REQUIRE(owner.submit_update(aki::app::SetLocalTransferArtifact{file}));
+    owner.drain();
+    executor::comm::Snapshot<AppState> snapshot;
+    REQUIRE(owner.load_snapshot_newer_than(before, snapshot));
+    REQUIRE(snapshot.value.transfers.local_artifacts.size() == 1);
+    REQUIRE(snapshot.value.transfers.local_artifacts[0].available);
+    const auto rejected = owner.stats().updates_rejected;
+    auto bad = file;
+    bad.relative_path = "files/ready/../escape";
+    REQUIRE(owner.submit_update(aki::app::SetLocalTransferArtifact{bad}));
+    bad = file; bad.transfer = TransferId{"active"}; bad.relative_path = "files/active/photo.png";
+    REQUIRE(owner.submit_update(aki::app::SetLocalTransferArtifact{bad}));
+    bad = file; bad.transfer = TransferId{"unknown"}; bad.relative_path = "files/unknown/photo.png";
+    REQUIRE(owner.submit_update(aki::app::SetLocalTransferArtifact{bad}));
+    bad = file; bad.sha256 = std::string(64, 'b');
+    REQUIRE(owner.submit_update(aki::app::SetLocalTransferArtifact{bad}));
+    REQUIRE(owner.submit_update(aki::app::SetLocalTransferArtifactFailure{{"ready"}, "late error"}));
+    owner.drain();
+    REQUIRE(owner.stats().updates_rejected == rejected + 5);
+    file.available = false;
+    REQUIRE(owner.submit_update(aki::app::SetLocalTransferArtifact{file}));
+    owner.drain();
+    REQUIRE(owner.try_load_snapshot(snapshot));
+    REQUIRE_FALSE(snapshot.value.transfers.local_artifacts[0].available);
+    owner.close();
+    const auto closed = owner.submit_update_for(aki::app::SetLocalTransferArtifact{file}, 0ms);
+    REQUIRE(closed.error_code == executor::comm::CommErrorCode::Closed);
+}
+
+TEST_CASE("Archive failure and successful replay use the bounded update channel",
+    "[unit][app_state][local_media]") {
+    AppStateOwner owner{AppStateOwnerOptions{.update_capacity = 1}};
+    REQUIRE(owner.submit_update(UpsertTransfer{make_transfer("retry", TransferState::Completed)}));
+    owner.drain();
+    REQUIRE(owner.submit_update(aki::app::SetLocalTransferArtifactFailure{{"retry"}, "disk full"}));
+    const auto full = owner.submit_update_for(aki::app::SetLocalTransferArtifactFailure{{"retry"}, "more"}, 0ms);
+    REQUIRE_FALSE(full.ok);
+    owner.drain();
+    executor::comm::Snapshot<AppState> snapshot;
+    REQUIRE(owner.try_load_snapshot(snapshot));
+    REQUIRE(snapshot.value.transfers.local_artifacts[0].error == "disk full");
+    REQUIRE(owner.submit_update(aki::app::SetLocalTransferArtifact{{{"retry"},
+        "files/retry/image.png", std::string(64, '0'), 12}}));
+    owner.drain();
+    REQUIRE(owner.try_load_snapshot(snapshot));
+    REQUIRE(snapshot.value.transfers.local_artifacts[0].error.empty());
+    REQUIRE(snapshot.value.transfers.local_artifacts[0].available);
+}

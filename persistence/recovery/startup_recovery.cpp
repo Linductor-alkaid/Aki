@@ -12,7 +12,7 @@
 namespace aki::persistence {
 
 RecoveryResult perform_startup_recovery(const std::string& data_root,
-    const DatabaseWorkerOptions& options) {
+    const DatabaseWorkerOptions& options, std::size_t local_file_budget) {
     if (data_root.empty()) {
         throw std::invalid_argument(
             "startup recovery: data root must not be empty");
@@ -72,6 +72,14 @@ RecoveryResult perform_startup_recovery(const std::string& data_root,
             transfer.state = aki::transfer::TransferState::Paused;
             repos.transfers.upsert(transfer);
             ++orphan_rows_paused;
+        }
+    }
+
+    for (const auto& transfer : result.state.transfers) {
+        if (auto file = repos.transfers.stored_file(transfer.id)) {
+            if (result.state.local_files.size() >= local_file_budget)
+                throw std::runtime_error("recovered local archive budget exceeded");
+            result.state.local_files.emplace_back(transfer.id, std::move(*file));
         }
     }
 

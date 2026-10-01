@@ -94,6 +94,9 @@ struct CompleteTransfer {
     aki::transfer::TransferState final_state = aki::transfer::TransferState::Completed;
 };
 
+struct SetLocalTransferArtifact { LocalTransferArtifact file; };
+struct SetLocalTransferArtifactFailure { aki::transfer::TransferId transfer; std::string error; };
+
 using AppStateUpdate = std::variant<UpsertDevice,
     SetDeviceName,
     SetDeviceRemark,
@@ -106,6 +109,7 @@ using AppStateUpdate = std::variant<UpsertDevice,
     SetPairingFailure,
     SetPresence,
     SetDeliveryState,
-    CompleteTransfer>;
+    CompleteTransfer,
+    SetLocalTransferArtifact, SetLocalTransferArtifactFailure>;
 
 }  // namespace aki::app

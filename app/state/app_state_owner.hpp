@@ -585,8 +585,59 @@ private:
         return false;
     }
 
-    // 传输终态宣告：final_state 仅取终态（设计第 10.1 节），非法载荷直接拒绝；
-    // 其余经 TransferState 状态机校验（Paused -> Completed 被拒，终态不复活）。
+    // DEC-026: only a successfully archived Completed transfer publishes a file.
+    bool apply_impl(const SetLocalTransferArtifact& update) {
+        const auto& file = update.file;
+        if (!valid_local_transfer_artifact(file)) return false;
+        const auto& rows = current_.transfers.transfers;
+        const auto row = std::find_if(rows.begin(), rows.end(), [&](const auto& transfer) {
+            return transfer.id == file.transfer;
+        });
+        if (row == rows.end() || row->state != aki::transfer::TransferState::Completed) return false;
+        auto& files = current_.transfers.local_artifacts;
+        for (auto& existing : files) {
+            if (existing.transfer != file.transfer) continue;
+            if (existing.error.empty() && (existing.relative_path != file.relative_path || existing.sha256 != file.sha256
+                || existing.size_bytes != file.size_bytes)) return false;
+            existing = file;
+            snapshot_dirty_ = true;
+            return true;
+        }
+        if (files.size() >= limits_.max_transfers) return false;
+        files.push_back(file);
+        snapshot_dirty_ = true;
+        return true;
+    }
+
+    bool apply_impl(const SetLocalTransferArtifactFailure& update) {
+        if (update.error.empty() || update.error.size() > 512) return false;
+        LocalTransferArtifact file{update.transfer,
+            "files/" + update.transfer.value + "/file", std::string(64, '0')};
+        if (!valid_local_transfer_artifact(file)) return false;
+        const auto& rows = current_.transfers.transfers;
+        const auto row = std::find_if(rows.begin(), rows.end(), [&](const auto& transfer) {
+            return transfer.id == update.transfer;
+        });
+        if (row == rows.end() || row->state != aki::transfer::TransferState::Completed) return false;
+        auto& files = current_.transfers.local_artifacts;
+        for (auto& existing : files) {
+            if (existing.transfer != update.transfer) continue;
+            if (!existing.relative_path.empty()) return false; // late failure cannot hide a ready archive
+            existing.error = update.error;
+            snapshot_dirty_ = true;
+            return true;
+        }
+        if (files.size() >= limits_.max_transfers) return false;
+        file.relative_path.clear();
+        file.sha256.clear();
+        file.available = false;
+        file.error = update.error;
+        files.push_back(std::move(file));
+        snapshot_dirty_ = true;
+        return true;
+    }
+
+    // 传输终态宣告须经状态机校验；终态不得复活。
     bool apply_impl(const CompleteTransfer& completion) {
         if (!aki::transfer::is_terminal(completion.final_state)) {
             return false;

@@ -23,6 +23,7 @@
 #include "persistence/storage/sha256.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -245,8 +246,10 @@ TEST_CASE("Completed job group renames with SHA-256 and writes back",
     store.write_part("t-1", bytes_of(payload));
 
     WorkerFixture fx(std::move(control));
+    std::optional<aki::persistence::CompletedFile> published;
     auto complete_job = aki::persistence::make_transfer_complete_job(
-        std::make_shared<FileStore>(root), "t-1");
+        std::make_shared<FileStore>(root), "t-1", {},
+        [&published](const auto& file) { published = file; });
     auto complete_future = complete_job.done->get_future();
     REQUIRE(fx.control->enqueue(std::move(complete_job)));
     complete_future.get();  // worker 完成后再断言（消除计数竞态）
@@ -257,6 +260,10 @@ TEST_CASE("Completed job group renames with SHA-256 and writes back",
     const auto row = transfers.find(TransferId{"t-1"});
     REQUIRE(row.has_value());
     REQUIRE(row->state == TransferState::Completed);
+    REQUIRE(published.has_value());
+    REQUIRE(published->relative_path == "files/t-1/_____________.bin");
+    REQUIRE(published->size_bytes == payload.size());
+    REQUIRE(transfers.stored_file(TransferId{"t-1"})->sha256 == published->sha256);
     REQUIRE(row->file.name == "模型 权重.bin");   // 原始名仅存 DB
 
     // 回写位（stored_*）不入领域 Transfer，经 SQL 断言（M2-04 complete 落列）。
@@ -404,4 +411,40 @@ TEST_CASE("Data root resolution exposes a std::string path",
     const std::string root = aki::persistence::resolve_data_root();
     CHECK_FALSE(root.empty());
     CHECK(root == aki::persistence::resolve_data_root());  // 稳定
+}
+
+TEST_CASE("Archive callbacks fail visibly and republish an idempotent stored record",
+    "[unit][file_store][local_media]") {
+    const auto root = temp_root("publication");
+    FileStore store(root);
+    Database db = Database::open(":memory:");
+    (void)Migrator(aki::persistence::schema_steps()).bring_up_to_date(db);
+    auto control = std::make_shared<DatabaseWorkerControl>(
+        std::make_unique<Repositories>(std::move(db)));
+    auto row = make_transfer_for("archive", "picture.png");
+    row.state = TransferState::Transferring;
+    control->repositories().transfers.upsert(row);
+    WorkerFixture fx(control);
+    std::string failure;
+    auto job = aki::persistence::make_transfer_complete_job(std::make_shared<FileStore>(root),
+        "archive", {}, {}, [&failure](std::string error) { failure = std::move(error); });
+    auto done = job.done->get_future();
+    REQUIRE(control->enqueue(std::move(job)));
+    REQUIRE_THROWS(done.get());
+    REQUIRE_FALSE(failure.empty());
+    store.write_part("archive", bytes_of("png fixture body"));
+    job = aki::persistence::make_transfer_complete_job(std::make_shared<FileStore>(root),
+        "archive", {}, [](const auto&) { throw std::runtime_error("publication full"); });
+    done = job.done->get_future();
+    REQUIRE(control->enqueue(std::move(job)));
+    REQUIRE_THROWS_WITH(done.get(), "publication full");
+    std::optional<aki::persistence::CompletedFile> stored;
+    job = aki::persistence::make_transfer_complete_job(std::make_shared<FileStore>(root),
+        "archive", {}, [&stored](const auto& file) { stored = file; });
+    done = job.done->get_future();
+    REQUIRE(control->enqueue(std::move(job)));
+    done.get();
+    REQUIRE(stored.has_value());
+    REQUIRE(stored->relative_path == "files/archive/picture.png");
+    REQUIRE(fx.shutdown_with_drain().fully_stopped());
 }
