@@ -971,6 +971,12 @@ EUI-NEO 组合模型为 M5-01 探针实测——compose 为**保留模式、事�
   `std::exit`，沿 M3 宿主先例）。关闭路径的 DOD-02 六项在 console 测试 exe
   （不链 EUI-NEO）直接对 `HostRuntime` 验证；onShutdown 真实接线以本机运行
   日志证据归档（`RULE-11`，渲染层不进 CI）。
+- **Linux 窗口身份（M5-24 / DEC-024）**：平台适配层在 `dslAppConfig()`
+  首次构造时设置 GLFW Wayland app ID、X11 class/instance 为 `aki`，与
+  `aki.desktop` 匹配。pinned runner 先成功初始化 GLFW，再查询配置，
+  最后创建窗口；创建后端不重置字符串 hint。此有界兼容适配仅设置窗口
+  参数，不持有资源或启动任务，后续查询无副作用，Host 仍在首帧装配。
+  非 Linux 无操作；上游提供正式 app ID 配置并完成依赖升级后移除适配。
 - **关闭序（`EXEC-01`）**：`ExecutorOwner` 关闭编入
   `DslAppConfig::onShutdown`（主窗口 GPU 设备销毁前回调，主线程）——
   钩子内按第 8.3 节宿主钩子**原序**执行，不省略不重排：①请求取消各

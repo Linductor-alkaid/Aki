@@ -77,6 +77,9 @@
   版本升级跟进；本批落 `StartupWMClass=aki`（X11 会话关联）与文件
   选取的存在性过滤（EUI-20260929-001，
   [#76](https://github.com/sudoevolve/EUI-NEO/issues/76)）。
+  2026-09-30 用户复现后，Aki 窗口身份兼容适配由
+  [DEC-024](DEC-024-linux-desktop-window-identity.md) 补充；上游缺口及
+  不修改 pinned 依赖的约束保留，旧的“仅等待升级”处置不再适用。
 
 ## 验证方式
 

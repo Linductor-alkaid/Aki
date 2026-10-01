@@ -2,7 +2,7 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-09-30
+> 更新日期：2026-10-01
 > 设计依据：[Aki 设计方案](../design/aki_design.md)
 > 协作约束：[AGENTS.md](../../AGENTS.md)、[项目管理与工程规范](../project/project-standards.md)
 
@@ -12,6 +12,13 @@
   已修复的五项反馈；基础消息/文件策略按 DEC-023 接入并保持零 grant，
   接收方无密码批准另项推进。新回环、sanitizer 与 Linux/Windows 安装版
   验收跟踪在 M5；原 Linux 目标离线，Windows 目标尚未安装。
+
+- 2026-09-30：M5-24 Ubuntu 24.04 安装版 Dock 图标再次复现，依据
+  [DEC-024](../decisions/DEC-024-linux-desktop-window-identity.md) 在 Aki
+  Linux 平台层设置与桌面入口一致的 Wayland/X11 窗口身份。2026-10-01
+  七项 CI 全绿及 Ubuntu 24.04 安装版 Dock 复验通过，M5-24 Completed；
+  不修改 pinned EUI-NEO，上游 #77 继续独立跟踪。原目标 Linux 设备离线，
+  deb 补传条件与负责人记录在 M5 验证记录。
 
 - 2026-09-30：M5-32 双端交换重启顺序复现当前连接被历史关闭会话覆盖。
   Heyaki 快照同时包含当前与 finished 记录，Aki Adapter 按设备归并时

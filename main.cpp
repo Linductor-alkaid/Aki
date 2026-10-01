@@ -27,6 +27,7 @@
 #include "ui/models/ui_actions.hpp"
 #include "ui/models/ui_state_consumer.hpp"
 #include "ui/pages/main_window.hpp"
+#include "ui/platform/application_identity.hpp"
 #include "ui/platform/ime_guard.hpp"
 #include "ui/theme/aki_theme.hpp"
 
@@ -167,9 +168,11 @@ void log_shutdown(const aki::app::HostShutdownReport& report,
 }  // namespace
 
 const app::DslAppConfig& app::dslAppConfig() {
-    // const 配置查询函数——框架每帧消费（如 clearColor），保持纯查询语义；
-    // 首次构造只记录一条日志（static 局部标志）。
+    // 框架在 glfwInit 成功后、创建主窗口前首次查询配置；DEC-024 在这个
+    // 有界启动点补齐 Linux 窗口身份（EUI-20260929-002）。后续每帧查询
+    // 不再修改创建参数，也不装配 Host 或改变 GLFW 生命周期。
     static const bool first = [] {
+        aki::ui::platform::configure_application_identity();
         log_line("boot: dslAppConfig constructed (EUI-NEO framework main)");
         return true;
     }();
