@@ -90,6 +90,26 @@ PeerSession 纯映射（143 assertions）与真实连接状态回环（30 assert
 三目标均通过（18.21s/19.59s，非 skip）。回环覆盖停止后零事件及随后
 Node shutdown；ASAN 无内存报告。最新 head TSAN 仍须 CI 运行后确认。
 
+2026-10-01 修复 head 9d0a7fe 的五项测试 CI 已成功，TSAN ctest 44/44。
+旧回环 CI 使用 output-on-failure，成功项未输出 Catch 断言或 skip 内容，
+不能只凭 Passed 宣称关闭分支实际执行。为补上该具体证据缺口，在新
+无 skip 的基础回环中运行发现/连接状态观察、检查断开/重连事件，并在
+保持管道与 sink 存活时 stop→Node shutdown→Executor 排空。此轮只追加
+回归与证据，不改变安装包产品代码；最新 head CI 仍须完成后合并。
+
+
+2026-10-01 产品代码 gate：head 9d0a7fe15d89bf697aa2f0de19ceb7a54a13873a，
+CI run 36860880298 七项独立核实 completed/success（Linux Debug/ASAN/
+UBSAN/TSAN、Windows Debug、deb、setup）。TSAN ctest 44/44；新基础
+回环无 skip 出口，TSAN 66.19s。旧回环成功项输出不含断言/skip 细节，
+不宣称它们全部执行了网络分支。补充观察管道无 skip 回归在本地 Debug
+116 assertions / 3 cases（41.61s）、ASAN 115 assertions / 3 cases
+（44.35s）通过；差一断言来自已登记单侧文件取消 admission 路径。
+后续提交仅追加测试与证据，产品代码相同，须再经最新 head 七项门禁。
+Linux CI 包 SHA256：58878a74fb2df636e37de7a78f5b50cf3e54624f12624741fe3002ed389d8b7c，
+包内 aki SHA256：5291c24f87ae0a17c5732331ba0a427ead733f0db1d0a801390425425b4a7a89；
+amd64/0.1.0、desktop-file-validate 通过。安装版跨平台验收仍待操作者。
+
 ## M5-29~M5-30：历史会话恢复与基础通信权限
 
 > 状态：Completed；负责人：Linductor；依据：DEC-008、

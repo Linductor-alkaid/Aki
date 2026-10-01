@@ -1,6 +1,8 @@
 // M5-33/34: fresh identities, one Executor owner, no network skip exits.
 #include "app/lifecycle/executor_owner.hpp"
 #include "heyaki/session/runtime_node.hpp"
+#include "heyaki/adapter/lan_discovery.hpp"
+#include "heyaki/adapter/peer_sessions_pipeline.hpp"
 #include "persistence/storage/sha256.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -87,6 +89,17 @@ struct Pair {
     }
 };
 
+struct ShutdownGuard {
+    std::function<void()> stop;
+    ~ShutdownGuard() {
+        if (!stop) return;
+        try { stop(); }
+        catch (const std::exception& error) {
+            std::fprintf(stderr, "test cleanup failed: %s\n", error.what());
+        }
+    }
+};
+
 std::string hash_file(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     std::vector<char> bytes{std::istreambuf_iterator<char>(in), {}};
@@ -98,8 +111,26 @@ TEST_CASE("Untrusted devices exchange text image and inbox files both ways", "[i
     // Counters outlive the sessions and their callback teardown, including failures.
     std::atomic<unsigned> received_a{0}, received_b{0}, acked_a{0}, acked_b{0};
     std::atomic<unsigned> committed_a{0}, committed_b{0};
+    std::atomic<unsigned> connected{0}, disconnected{0}, discovered{0};
     Pair pair(true, true);
     pair.connect(); pair.no_grants();
+    aki::heyaki::LanDiscoveryPipeline discovery(pair.owner.executor(), *pair.a,
+        [&](const auto&) { ++discovered; });
+    aki::heyaki::PeerSessionEvents events;
+    events.on_connected = [&](const auto&, auto) { ++connected; };
+    events.on_disconnected = [&](const auto&) { ++disconnected; };
+    aki::heyaki::PeerSessionPipeline peers(pair.owner.executor(), *pair.a, std::move(events));
+    // Even a failed assertion must drain callbacks while both pipelines and
+    // their observer owners are alive. Timer cancellation alone is insufficient.
+    ShutdownGuard shutdown{[&] {
+        discovery.stop(); peers.stop();
+        if (pair.a) (void)pair.a->shutdown();
+        if (pair.b) (void)pair.b->shutdown();
+        (void)pair.owner.shutdown();
+    }};
+    REQUIRE(discovery.start(10ms));
+    REQUIRE(peers.start(10ms));
+    REQUIRE(await([&] { return discovered >= 1 && connected == 1; }));
     for (const auto* session : {&*pair.a, &*pair.b}) {
         const auto views = session->peer_session_views();
         REQUIRE(views.size() == 1);
@@ -145,7 +176,7 @@ TEST_CASE("Untrusted devices exchange text image and inbox files both ways", "[i
     REQUIRE(hash_file(pair.root + "/b/inbox/payload.bin") == hash);
     pair.no_grants();
     REQUIRE(pair.b->shutdown().node_stopped);
-    REQUIRE(await([&] { return !pair.a->session_linked(pair.b_id); }));
+    REQUIRE(await([&] { return !pair.a->session_linked(pair.b_id) && disconnected >= 1; }));
     // Wait for the old announcement lease to expire before issuing one dial.
     // Production retries stale directory candidates through ReconnectCoordinator.
     REQUIRE(await([&] { return !pair.a->endpoint_visible(pair.b_id); }));
@@ -157,15 +188,19 @@ TEST_CASE("Untrusted devices exchange text image and inbox files both ways", "[i
         .basic_communication = true}));
     handlers(*pair.b, received_b, acked_b);
     pair.connect("restarted peer");
+    REQUIRE(await([&] { return connected == 2; }));
     REQUIRE(pair.a->send_text(pair.b_id, aki::heyaki::new_message_id(), "basic text"));
     REQUIRE(await([&] { return received_b == 4 && acked_a == 4; }));
     pair.no_grants();
+    discovery.stop(); peers.stop();
+    REQUIRE_FALSE(discovery.running()); REQUIRE_FALSE(peers.running());
     const auto a_report = pair.a->shutdown(); const auto b_report = pair.b->shutdown();
     REQUIRE(a_report.node_stopped); REQUIRE(b_report.node_stopped);
     REQUIRE(a_report.runtime_stopped); REQUIRE(b_report.runtime_stopped);
     REQUIRE_FALSE(a_report.runtime_executor_shutdown_performed);
     REQUIRE_FALSE(b_report.runtime_executor_shutdown_performed);
     REQUIRE(pair.owner.shutdown().fully_stopped());
+    shutdown.stop = {};
 }
 
 TEST_CASE("One-sided basic policy refuses untrusted traffic explicitly", "[integration][basic_communication]") {
