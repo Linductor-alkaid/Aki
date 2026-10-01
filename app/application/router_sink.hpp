@@ -62,7 +62,12 @@ public:
     }
 
     bool on_message_received(aki::conversation::Message message) override {
-        return messages_.enqueue_message_received(std::move(message));
+        // CM establishes the FK first; the callback only admits the MM work.
+        // Host owns both targets and drains CM before MM during shutdown.
+        return conversations_.enqueue_incoming(std::move(message),
+            [target = &messages_](aki::conversation::Message incoming) {
+                return target->enqueue_message_received(std::move(incoming));
+            });
     }
 
     bool on_message_delivered(aki::conversation::ConversationId conversation,

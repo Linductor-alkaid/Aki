@@ -1,8 +1,11 @@
 // M5-33/34: fresh identities, one Executor owner, no network skip exits.
+#include "app/application/reconnect_loop.hpp"
+#include "app/application/router_sink.hpp"
 #include "app/lifecycle/executor_owner.hpp"
-#include "heyaki/session/runtime_node.hpp"
+#include "heyaki/adapter/heyaki_node_adapter.hpp"
 #include "heyaki/adapter/lan_discovery.hpp"
 #include "heyaki/adapter/peer_sessions_pipeline.hpp"
+#include "heyaki/session/runtime_node.hpp"
 #include "persistence/storage/sha256.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -92,6 +95,70 @@ struct Pair {
         REQUIRE(ad.has_value()); REQUIRE(bd.has_value());
         REQUIRE_FALSE(ad->issued); REQUIRE_FALSE(ad->received);
         REQUIRE_FALSE(bd->issued); REQUIRE_FALSE(bd->received);
+    }
+};
+
+// Product managers and adapter, sharing the pair's single Executor owner.
+// State is drained by the test thread, matching the host's snapshot boundary.
+struct ApplicationSide {
+    aki::app::AppStateOwner state;
+    aki::heyaki::HeyakiNodeAdapter adapter;
+    aki::app::DeviceManager devices;
+    aki::app::ConversationManager conversations;
+    aki::app::MessageManager messages;
+    aki::app::TransferManager transfers;
+    aki::app::RouterSink router;
+    aki::heyaki::PeerSessionPipeline peers;
+
+    ApplicationSide(executor::Executor& executor, LocalProfile& profile, NodeSession& session)
+        : adapter(executor,
+                  {.profile = &profile,
+                   .session = &session,
+                   .conversation_for =
+                       [](const DeviceId& remote) {
+                           return aki::conversation::ConversationId{"conv-" + remote.value};
+                       },
+                   .peer_observation = false}),
+          devices(executor, state, adapter), conversations(executor, state),
+          messages(executor, state, adapter, {.local_device = session.local_id()}),
+          transfers(executor, state, adapter), router(devices, conversations, messages, transfers),
+          peers(
+              executor, session,
+              {.on_connected = [this](const auto& peer,
+                                      auto path) { (void)router.on_device_connected(peer, path); },
+               .on_disconnected =
+                   [this](const auto& peer) { (void)router.on_device_disconnected(peer); },
+               .on_connection_path_changed =
+                   [this](const auto& peer, auto path) {
+                       (void)router.on_connection_path_changed(
+                           peer, aki::device::ConnectionPath::Unknown, path);
+                   },
+               .on_pairing_ready =
+                   [this, &session](const auto& peer) {
+                       for (const auto& endpoint : session.endpoints()) {
+                           if (endpoint.device_id == peer) {
+                               (void)router.on_pairing_ready(peer, endpoint.public_key);
+                               break;
+                           }
+                       }
+                   },
+               .on_trust_changed =
+                   [this](const auto& peer) { (void)devices.enqueue_trust_calibration(peer); }}) {
+        adapter.set_sink(&router);
+    }
+    void settle() {
+        if (!devices.flush(2s) || !conversations.flush(2s) || !messages.flush(2s) ||
+            !transfers.flush(2s)) {
+            throw std::runtime_error("application manager flush failed");
+        }
+        state.drain();
+    }
+    aki::app::AppState snapshot() {
+        settle();
+        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        if (!state.try_load_snapshot(snapshot))
+            throw std::runtime_error("snapshot unavailable");
+        return snapshot.value;
     }
 };
 
@@ -336,4 +403,90 @@ TEST_CASE("Password grants can be repaired in both directions on an authorized s
     REQUIRE(await([&] { return b_failure == 1; }, 25s));
     REQUIRE(pair.a->session_authenticated(pair.b_id));
     REQUIRE(pair.b->session_authenticated(pair.a_id));
+}
+
+TEST_CASE("Fresh discovery opens untrusted conversations and calibrates mutual grants",
+          "[integration][basic_communication][application_path][m541]") {
+    Pair pair(true, true);
+    ApplicationSide a(pair.owner.executor(), pair.a_profile, *pair.a);
+    ApplicationSide b(pair.owner.executor(), pair.b_profile, *pair.b);
+    ShutdownGuard shutdown{[&] {
+        a.peers.stop();
+        b.peers.stop();
+        (void)pair.a->shutdown();
+        (void)pair.b->shutdown();
+        a.settle();
+        b.settle();
+        a.state.close();
+        b.state.close();
+        (void)pair.owner.shutdown();
+    }};
+    REQUIRE(await([&] {
+        return pair.a->endpoint_visible(pair.b_id) && pair.b->endpoint_visible(pair.a_id);
+    }));
+    aki::heyaki::LanDiscoveryState discovery_state;
+    const auto discovered = aki::heyaki::diff_lan_discovery(pair.a->endpoints(), discovery_state);
+    const auto peer = std::find_if(discovered.discovered.begin(), discovered.discovered.end(),
+        [&](const auto& entry) { return entry.identity.id == pair.b_id; });
+    REQUIRE(peer != discovered.discovered.end());
+    REQUIRE(a.router.on_device_discovered(*peer));
+    auto snapshot = a.snapshot();
+    REQUIRE(snapshot.devices.devices.size() == 1);
+    REQUIRE(snapshot.devices.devices.front().trust_state == aki::device::TrustState::Unknown);
+    // This is the same connection selection predicate used by the host sweep.
+    REQUIRE(aki::app::should_reconnect_known_device(snapshot.devices.devices.front(), pair.a_id));
+    REQUIRE(pair.a->connect_lan(pair.b_id));
+    REQUIRE(a.peers.start(20ms));
+    REQUIRE(b.peers.start(20ms));
+    auto linked_in_ui = [](const aki::app::AppState& state) {
+        return !state.devices.connection_paths.empty() &&
+               state.devices.connection_paths.front().path != aki::device::ConnectionPath::Unknown;
+    };
+    REQUIRE(await([&] { return linked_in_ui(a.snapshot()) && linked_in_ui(b.snapshot()); }));
+    pair.no_grants();
+    REQUIRE(a.conversations.ensure_conversation(pair.a_id, pair.b_id));
+    REQUIRE(a.snapshot().conversations.conversations.front().state ==
+            aki::conversation::ConversationState::Active);
+    REQUIRE(b.snapshot().conversations.conversations.empty());
+    REQUIRE(a.messages.send_text(pair.b_id, aki::heyaki::new_message_id(), "untrusted a"));
+    REQUIRE(await([&] { return b.snapshot().messages.messages.size() == 1; }, 3s));
+    REQUIRE(b.snapshot().conversations.conversations.size() == 1);
+    REQUIRE(b.messages.send_text(pair.a_id, aki::heyaki::new_message_id(), "untrusted b"));
+    auto delivered = [](const aki::app::AppState& state) {
+        return state.messages.messages.size() == 2 &&
+               std::all_of(state.messages.messages.begin(), state.messages.messages.end(),
+                           [](const auto& message) {
+                               return message.state == aki::conversation::DeliveryState::Delivered;
+                           });
+    };
+    REQUIRE(await([&] { return delivered(a.snapshot()) && delivered(b.snapshot()); }, 30s));
+    pair.no_grants();
+    auto trust = [](const aki::app::AppState& state) {
+        return std::pair{state.devices.devices.front().trust_state,
+                         state.devices.devices.front().inbound_trust};
+    };
+    REQUIRE(trust(a.snapshot()).first != aki::device::TrustState::Trusted);
+    REQUIRE_FALSE(trust(a.snapshot()).second);
+    REQUIRE_FALSE(trust(b.snapshot()).second);
+    REQUIRE(a.devices.confirm_pairing(pair.b_id, "b-password"));
+    REQUIRE(await(
+        [&] {
+            return trust(a.snapshot()).first == aki::device::TrustState::Trusted &&
+                   trust(b.snapshot()).second;
+        },
+        25s));
+    REQUIRE_FALSE(trust(a.snapshot()).second);
+    REQUIRE(trust(b.snapshot()).first != aki::device::TrustState::Trusted);
+    // Reverse pairing does not change the already authorized connection state.
+    REQUIRE(b.devices.confirm_pairing(pair.a_id, "a-password"));
+    REQUIRE(await(
+        [&] {
+            return trust(a.snapshot()).first == aki::device::TrustState::Trusted &&
+                   trust(a.snapshot()).second &&
+                   trust(b.snapshot()).first == aki::device::TrustState::Trusted &&
+                   trust(b.snapshot()).second;
+        },
+        25s));
+    REQUIRE(linked_in_ui(a.snapshot()));
+    REQUIRE(linked_in_ui(b.snapshot()));
 }

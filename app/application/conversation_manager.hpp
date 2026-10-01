@@ -3,7 +3,8 @@
 // 只写 conversations Store：connected/disconnected 扇出事件按自建会话记录推导
 // UpsertConversation（Active <-> Disconnected，RULE-06 路径无关）；会话建立经
 // 显式 ensure_conversation(local, remote)（宿主/用户流程调用，不从事件隐式建
-// 会话）。新建/恢复记录只含 id 与端点（不复制 owner 权威状态）；消息或
+// 会话）。M5-41: RouterSink 显式要求入站消息先建立会话，再投递 MM。
+// 新建/恢复记录只含 id 与端点（不复制 owner 权威状态）；消息或
 // 连接事件到达时若既无恢复记录也未 ensure_conversation，会话推导为幂等空操作。
 //
 // M1 会话 id 由本 Manager 确定性派生（prefix + remote，RULE-08 稳定 id）；
@@ -14,9 +15,11 @@
 #include "app/state/app_state_owner.hpp"
 #include "app/state/app_state_updates.hpp"
 #include "conversation/conversation/conversation_types.hpp"
+#include "conversation/message/message_types.hpp"
 #include "device/device/device_types.hpp"
 
 #include <chrono>
+#include <functional>
 #include <map>
 #include <string>
 #include <utility>
@@ -38,9 +41,17 @@ struct EnsureConversationWork {
     aki::device::DeviceId remote;
 };
 
+using IncomingMessageDelivery = std::function<bool(aki::conversation::Message)>;
+
+struct IncomingConversationWork {
+    aki::conversation::Message message;
+    IncomingMessageDelivery deliver;
+};
+
 using ConversationManagerWork = std::variant<PeerConnectedWork,
     PeerDisconnectedWork,
-    EnsureConversationWork>;
+    EnsureConversationWork,
+    IncomingConversationWork>;
 
 // 构造选项置于命名空间作用域：类内嵌套 Options 的默认实参 `= {}` 在 GCC 下
 // 非法（同 app_state_owner.hpp 的 AppStateOwnerOptions 处理）。
@@ -86,6 +97,13 @@ public:
     [[nodiscard]] bool ensure_conversation(
         aki::device::DeviceId local, aki::device::DeviceId remote) {
         return pump_.enqueue(EnsureConversationWork{std::move(local), std::move(remote)});
+    }
+
+    // The external owner keeps the delivery target alive until CM then MM
+    // have drained. This continuation runs on the existing CM pump only.
+    [[nodiscard]] bool enqueue_incoming(aki::conversation::Message message,
+        IncomingMessageDelivery deliver) {
+        return pump_.enqueue(IncomingConversationWork{std::move(message), std::move(deliver)});
     }
 
     [[nodiscard]] bool flush(std::chrono::milliseconds budget) {
@@ -139,6 +157,18 @@ private:
         conversation.remote_device = it->second.remote;
         conversation.state = aki::conversation::ConversationState::Disconnected;
         return state_owner_.submit_update(UpsertConversation{std::move(conversation)});
+    }
+
+    bool handle(IncomingConversationWork& work) {
+        if (work.message.id.empty() || work.message.sender.empty()
+            || work.message.receiver.empty() || !work.deliver) {
+            return false;
+        }
+        EnsureConversationWork ensure{work.message.receiver, work.message.sender};
+        if (!handle(ensure)) return false;
+        // The Conversation update is already admitted to the owner channel
+        // before the Message Manager can enqueue its message update.
+        return work.deliver(std::move(work.message));
     }
 
     bool handle(EnsureConversationWork& work) {

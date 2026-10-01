@@ -180,7 +180,7 @@ private:
             work.message.timestamp = std::chrono::system_clock::now();
         }
         // 收到的消息在本地记录为 Delivered（设计第 6 节）；会话归属由
-        // sender 派生（DEC-009 ②；会话须已由 ensure_conversation 建立，
+        // sender 派生（DEC-009 ②；RouterSink 经 CM 先建立会话，
         // 未知会话经 owner FK 前置校验拒绝可观测）。
         work.message.state = aki::conversation::DeliveryState::Delivered;
         const bool posted = post_event(MessageReceivedEvent{work.message});
