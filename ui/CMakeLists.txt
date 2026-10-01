@@ -28,8 +28,10 @@ aki_apply_warnings(aki_ui_models PRIVATE)
 # 主题数值回归对照由 EUI-NEO 无关的 ui/theme/aki_theme_values.hpp +
 # tests/unit/test_ui_theme_values.cpp 承载。
 add_library(aki_ui STATIC
+    platform/local_files.cpp
     theme/aki_theme.cpp
     components/transfer_card.cpp
+    components/local_file_location.cpp
     pages/main_window.cpp
     pages/conversations_page.cpp
     pages/settings_page.cpp
@@ -38,3 +40,11 @@ target_compile_features(aki_ui PUBLIC cxx_std_20)
 target_include_directories(aki_ui PUBLIC ${PROJECT_SOURCE_DIR})
 target_link_libraries(aki_ui PUBLIC aki_ui_models eui::neo)
 aki_apply_warnings(aki_ui PRIVATE)
+
+if(WIN32)
+    target_link_libraries(aki_ui PRIVATE shell32 ole32)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(AKI_UI_GIO REQUIRED IMPORTED_TARGET gio-2.0)
+    target_link_libraries(aki_ui PRIVATE PkgConfig::AKI_UI_GIO)
+endif()

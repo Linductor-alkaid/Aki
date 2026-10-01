@@ -184,6 +184,16 @@ std::vector<MessageView> derive_message_views(
                 }
             }
         }
+        if (view.transfer_state == aki::transfer::TransferState::Completed) {
+            for (const auto& file : transfers.local_artifacts) {
+                if (file.transfer == view.transfer_id && (aki::app::valid_local_transfer_artifact(file) || !file.error.empty())) {
+                    view.local_relative_path = file.relative_path;
+                    view.local_file_available = file.available;
+                    view.local_file_error = file.error;
+                    break;
+                }
+            }
+        }
         views.push_back(std::move(view));
     }
     return views;
@@ -209,6 +219,16 @@ std::vector<TransferView> derive_transfer_views(
             : 0.0;
         view.outbound = transfer.sender == local_device;
         view.terminal = aki::transfer::is_terminal(transfer.state);
+        if (transfer.state == aki::transfer::TransferState::Completed) {
+            for (const auto& file : store.local_artifacts) {
+                if (file.transfer == transfer.id && (aki::app::valid_local_transfer_artifact(file) || !file.error.empty())) {
+                    view.local_relative_path = file.relative_path;
+                    view.local_file_available = file.available;
+                    view.local_file_error = file.error;
+                    break;
+                }
+            }
+        }
         views.push_back(std::move(view));
     }
     return views;

@@ -136,7 +136,7 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
 
     const float width = std::max(screen.width, 1.0f);
     const float height = std::max(screen.height, 1.0f);
-    if (model.needs_password_setup) {
+    if (model.needs_password_setup && !model.profile_probe_failed) {
         const float panel_w = std::max(200.0f,
             std::min(500.0f, width - 64.0f));
         const float panel_x = (width - panel_w) * 0.5f;
@@ -423,6 +423,15 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                 .maxWidth(content_width - metrics.spacing.section * 2.0f)
                 .color(tokens.text)
                 .build();
+            if (model.profile_probe_failed) {
+                components::button(ui, "aki.profile.retry")
+                    .position(content_x + metrics.spacing.section,
+                        metrics.spacing.section + metrics.typography.subtitle
+                            + metrics.typography.body * 4.0f + metrics.spacing.panel)
+                    .size(metrics.control.field * 3.0f, metrics.control.field)
+                    .text(tr("Retry")).theme(tokens, false)
+                    .onClick([&model] { model.retry_profile_probe = true; }).build();
+            }
         } else if (model.page == NavPage::Devices) {
             // ---- Devices 页（M5-04，SCOPE-04/02/03/10 展示面）----
             components::text(ui, "aki.content.placeholder")

@@ -59,10 +59,12 @@ struct HostAssemblyReport {
 // 启动恢复播种策略（M5-11，§8.1/§11.1；组合根公开面供单测）：恢复行中
 // trust_state == Unknown 的设备是历史扫描残留（从未被用户确认，非 §8.1
 // 「已知设备记录」）——不进入会话 DeviceStore，避免设备列表跨会话累积；
+// 非空数据根同时在启动期检查归档文件存在性；非法记录/超预算显式失败。
 // 其重新出现在网时经发现观察管道以真实存活状态再次进入。Pending（在途
 // 确认）与 Trusted/Rejected/Revoked（用户决策/授权记录）原值恢复。
 [[nodiscard]] AppState seeded_app_state(
-    const aki::persistence::RecoveredData& data);
+    const aki::persistence::RecoveredData& data,
+    const std::string& data_root = {});
 
 // 受控关闭证据（§8.3 宿主钩子原序 + EXEC-01 步骤 2~5 + 写路径复验）。
 // hook_sequence 按实际执行顺序记录钩子步名，测试据此刻画「不省略不重排」。

@@ -104,6 +104,9 @@ public:
         const aki::transfer::TransferId& transfer_id);
     [[nodiscard]] std::vector<aki::transfer::Transfer> load_all();
 
+    [[nodiscard]] std::optional<CompletedFile> stored_file(
+        const aki::transfer::TransferId& transfer_id);
+
     // 设计第 11.1 节 ①：UpdateTransferProgress → 列更新，不新建行。
     void update_progress(const aki::transfer::TransferId& transfer_id,
         std::uint64_t transferred, std::uint64_t total);

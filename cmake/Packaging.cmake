@@ -7,7 +7,7 @@
 # 安装布局（DEC-017）：自包含目录——Windows <ProgramFiles>\Aki、Linux
 # /opt/aki。assets/ 必须与可执行文件同级：main.cpp 的 iconPath 与框架的
 # cwd 修复（repairCurrentWorkingDirectory → exe 目录）均按 exe 目录解析，
-# aki-run.log 也落在同级。用户数据根经 XDG/%APPDATA% 解析（DEC-004），
+# 日志写入用户数据根的 logs/aki-run.log。用户数据根经 XDG/%APPDATA% 解析（DEC-004），
 # 与安装位置无关，故只读安装目录（/opt/aki）可正常运行。
 
 install(TARGETS aki RUNTIME DESTINATION .)

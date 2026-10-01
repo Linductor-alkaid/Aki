@@ -8,6 +8,7 @@
 #include "conversation/message/message_types.hpp"
 #include "device/device/device_types.hpp"
 #include "transfer/transfer/transfer_types.hpp"
+#include "app/state/local_transfer_artifact.hpp"
 
 #include <cstddef>
 #include <vector>
@@ -49,6 +50,7 @@ struct MessageStore {
 
 struct TransferStore {
     std::vector<aki::transfer::Transfer> transfers;
+    std::vector<LocalTransferArtifact> local_artifacts;
 };
 
 struct AppState {

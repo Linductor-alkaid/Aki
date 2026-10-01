@@ -118,6 +118,7 @@ struct WritePathSink {
     std::shared_ptr<DatabaseWorkerControl> control;
     std::shared_ptr<FileStore> store;
     std::string receive_dir;
+    AppStateOwner* artifact_owner = nullptr;
     std::vector<std::future<void>> futures;
     std::uint64_t admitted = 0;
     std::uint64_t enqueue_rejected = 0;
@@ -188,7 +189,22 @@ private:
                     if (concrete.final_state == TransferState::Completed) {
                         jobs.push_back(
                             aki::persistence::make_transfer_complete_job(
-                                store, concrete.transfer.value, receive_dir));
+                                store, concrete.transfer.value, receive_dir,
+                                [owner = artifact_owner, id = concrete.transfer](const auto& file) {
+                                    if (owner == nullptr) return;
+                                    auto result = owner->submit_update_for(
+                                        aki::app::SetLocalTransferArtifact{{id, file.relative_path,
+                                            file.sha256, file.size_bytes, true}}, std::chrono::milliseconds{0});
+                                    if (!result && result.error_code != executor::comm::CommErrorCode::Closed)
+                                        throw std::runtime_error("local file publication rejected: " + result.message);
+                                }, [owner = artifact_owner, id = concrete.transfer](std::string error) {
+                                    if (owner == nullptr) return;
+                                    const auto result = owner->submit_update_for(
+                                        aki::app::SetLocalTransferArtifactFailure{id, std::move(error)},
+                                        std::chrono::milliseconds{0});
+                                    if (!result && result.error_code != executor::comm::CommErrorCode::Closed)
+                                        throw std::runtime_error("archive failure publication rejected: " + result.message);
+                                }));
                     } else {
                         jobs.push_back(
                             aki::persistence::make_transfer_terminal_job(
@@ -211,11 +227,38 @@ private:
 // 启动恢复播种策略（M5-11，见 host_runtime.hpp 契约）：Unknown 恢复行是
 // 历史扫描残留，不进入会话 DeviceStore；其余信任态原值恢复（会话/消息/
 // 传输域不受影响——它们有各自的 FK 语义与恢复条款）。
-AppState seeded_app_state(const aki::persistence::RecoveredData& data) {
+AppState seeded_app_state(const aki::persistence::RecoveredData& data,
+    const std::string& root) {
     AppState state;
     state.conversations.conversations = data.conversations;
     state.messages.messages = data.messages;
     state.transfers.transfers = data.transfers;
+    if (data.local_files.size() > aki::app::AppStateLimits{}.max_transfers)
+        throw std::runtime_error("recovered local archive budget exceeded");
+    for (const auto& [id, file] : data.local_files) {
+        aki::app::LocalTransferArtifact artifact{id, file.relative_path, file.sha256, file.size_bytes};
+        if (!aki::app::valid_local_transfer_artifact(artifact))
+            throw std::runtime_error("invalid recovered local archive record");
+        std::error_code error;
+        artifact.available = !root.empty() && std::filesystem::is_regular_file(
+            std::filesystem::path{root} / artifact.relative_path, error);
+        if (error && error != std::errc::no_such_file_or_directory)
+            throw std::runtime_error("cannot inspect recovered local archive: " + error.message());
+        const auto row = std::find_if(data.transfers.begin(), data.transfers.end(),
+            [&](const auto& transfer) { return transfer.id == id; });
+        if (row == data.transfers.end() || row->state != aki::transfer::TransferState::Completed)
+            throw std::runtime_error("recovered archive has no completed transfer");
+        state.transfers.local_artifacts.push_back(std::move(artifact));
+    }
+    for (const auto& row : state.transfers.transfers) {
+        if (row.state != aki::transfer::TransferState::Completed) continue;
+        const auto stored = std::find_if(state.transfers.local_artifacts.begin(), state.transfers.local_artifacts.end(),
+            [&](const auto& file) { return file.transfer == row.id; });
+        if (stored != state.transfers.local_artifacts.end()) continue;
+        if (state.transfers.local_artifacts.size() >= aki::app::AppStateLimits{}.max_transfers)
+            throw std::runtime_error("recovered local archive budget exceeded");
+        state.transfers.local_artifacts.push_back({row.id, {}, {}, 0, false, "Archive record is missing"});
+    }
     state.devices.devices.reserve(data.devices.size());
     for (const auto& device : data.devices) {
         if (device.trust_state == aki::device::TrustState::Unknown) {
@@ -444,8 +487,10 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
         }
     };
     impl.state_owner.emplace(std::move(owner_options),
-        seeded_app_state(impl.recovery->state),
+        seeded_app_state(impl.recovery->state, run_root),
         [&sink = impl.sink](const AppStateUpdate& update) { sink(update); });
+
+    impl.sink.artifact_owner = &*impl.state_owner;
 
     // 本地身份经 UpsertDevice 进入 Application State（SCOPE-01）。
     auto local_device = make_local_device_identity(identity,

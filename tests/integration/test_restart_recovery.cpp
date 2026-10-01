@@ -311,6 +311,11 @@ TEST_CASE("Restart recovery restores every domain after a drained shutdown",
     REQUIRE(reopened.state.transfers[1].id == TransferId{"t-2"});
     REQUIRE(reopened.state.transfers[1].state == TransferState::Cancelled);
 
+    REQUIRE_THROWS(aki::persistence::perform_startup_recovery(root, {}, 0));
+    REQUIRE(reopened.state.local_files.size() == 1);
+    REQUIRE(reopened.state.local_files[0].first == TransferId{"t-1"});
+    REQUIRE(reopened.state.local_files[0].second.relative_path == "files/t-1/notes.txt");
+    REQUIRE(reopened.state.local_files[0].second.size_bytes == payload.size());
     // Completed 文件本体与 stored_* 回写位（M2-06 契约）。
     REQUIRE(std::filesystem::exists(root + "/files/t-1/notes.txt"));
     REQUIRE_FALSE(std::filesystem::exists(root + "/files/tmp/t-1.part"));

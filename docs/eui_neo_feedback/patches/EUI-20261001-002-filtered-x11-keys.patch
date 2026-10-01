@@ -1,0 +1,15 @@
+--- a/3rd/glfw/src/x11_window.c
++++ b/3rd/glfw/src/x11_window.c
+@@ -1256,7 +1256,11 @@
+                 //       (the server never sends a timestamp of zero)
+                 // NOTE: Timestamp difference is compared to handle wrap-around
+                 Time diff = event->xkey.time - window->x11.keyPressTimes[keycode];
+-                if (diff == event->xkey.time || (diff > 0 && diff < ((Time)1 << 31)))
++                // Filtered events belong to the input method. Do not advance
++                // the timestamp: an unconsumed key can be forwarded later by
++                // XIM with the same timestamp and must still reach the app.
++                if (!filtered && (diff == event->xkey.time ||
++                                  (diff > 0 && diff < ((Time)1 << 31))))
+                 {
+                     if (keycode)
+                         _glfwInputKey(window, key, keycode, GLFW_PRESS, mods);

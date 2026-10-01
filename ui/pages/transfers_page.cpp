@@ -6,6 +6,8 @@
 #include "ui/pages/transfers_page.hpp"
 
 #include "ui/components/transfer_card.hpp"
+#include "ui/components/local_file_location.hpp"
+#include "ui/theme/aki_theme_values.hpp"
 #include "ui/pages/main_window.hpp"
 
 #include "components/button.h"
@@ -47,9 +49,10 @@ void compose_transfer_row(eui::Ui& ui, const ThemeColorTokens& tokens,
     MainWindowModel& model) {
     const auto& metrics = tokens.metrics;
     const float pad = metrics.spacing.content;
+    const float base_height = kTransferRowHeight * metrics.typography.body / theme_values::kTypographyBody;
     const float button_column = kActionButtonWidth + metrics.spacing.content;
     const float body_width = std::max(
-        width - pad * 2.0f - button_column - 170.0f, 160.0f);
+        width - pad * 2.0f - button_column, 160.0f);
 
     ui.stack(id)
         .size(width, row_height)
@@ -81,6 +84,17 @@ void compose_transfer_row(eui::Ui& ui, const ThemeColorTokens& tokens,
                 })
                 .build();
 
+            if (transfer.state == aki::transfer::TransferState::Completed) {
+                ui.stack(id + ".local.wrap").position(pad, base_height)
+                    .width(width - pad * 2.0f).wrapContent().content([&] {
+                        widgets::compose_local_file_location(ui, tokens, semantic,
+                            id + ".local", model.data_directory, transfer.local_relative_path,
+                            transfer.local_file_available, transfer.local_file_error, width - pad * 2.0f, true,
+                            model.actions.get(), [&model](std::string feedback) {
+                                model.last_action_feedback = std::move(feedback);
+                            });
+                    }).build();
+            }
             // 方向 + 对端（行底 caption 中性）。
             components::text(ui, id + ".peer")
                 .text(std::string(language() == Language::Chinese
@@ -163,6 +177,9 @@ void composeTransfersPage(eui::Ui& ui, const ThemeColorTokens& tokens,
     const AkiSemanticPalette& semantic, float x, float y, float width,
     float height, MainWindowModel& model) {
     const auto& metrics = tokens.metrics;
+    const float base_height = kTransferRowHeight * metrics.typography.body / theme_values::kTypographyBody;
+    const float row_height = base_height + metrics.typography.hint * 2.0f
+        + metrics.control.menuItem + metrics.spacing.tiny * 2.0f + metrics.spacing.panel;
 
     components::text(ui, "aki.transfers.title")
         .text(tr("Transfers"))
@@ -208,7 +225,7 @@ void composeTransfersPage(eui::Ui& ui, const ThemeColorTokens& tokens,
             .size(width - metrics.spacing.section * 2.0f, list_height)
             .theme(tokens)
             .gap(metrics.spacing.tiny)
-            .step(kTransferRowHeight)
+            .step(row_height)
             .contentKey("aki.transfers.rows:"
                 + std::to_string(model.state_view.transfers.size()))
             .content([&](eui::Ui& list_ui, float row_width, float) {
@@ -216,7 +233,8 @@ void composeTransfersPage(eui::Ui& ui, const ThemeColorTokens& tokens,
                     model.state_view.transfers) {
                     compose_transfer_row(list_ui, tokens, semantic,
                         "aki.transfers.row." + transfer.id.value, transfer,
-                        row_width, kTransferRowHeight, model);
+                        row_width, transfer.state == aki::transfer::TransferState::Completed
+                            ? row_height : base_height, model);
                 }
             })
             .build();

@@ -165,6 +165,10 @@ struct MessageView {
     aki::transfer::TransferState transfer_state = aki::transfer::TransferState::Queued;
     // 进度 fraction ∈ [0,1]；total==0 → 0（不除零，与 TransferView 同口径）。
     double transfer_progress = 0.0;
+    // DEC-026: local archive facts, absent until persistence succeeds.
+    std::string local_relative_path;
+    bool local_file_available = false;
+    std::string local_file_error;
 };
 
 // 选中会话的消息视图流（端点归属守卫同 derive_conversation_messages；
@@ -190,6 +194,9 @@ struct TransferView {
     double progress = 0.0;
     bool outbound = false;  // sender==local_device。
     bool terminal = false;  // is_terminal(state)。
+    std::string local_relative_path;
+    bool local_file_available = false;
+    std::string local_file_error;
 
     // 操作可用性（M5-06 Transfers 页操作面；§3/§7 状态机固定边派生——
     // 返回值只作 UI 门控，操作本身经 UiActions 传输三接口下达，admission

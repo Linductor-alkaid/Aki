@@ -635,6 +635,19 @@ std::vector<Transfer> TransferRepository::load_all() {
         });
 }
 
+std::optional<CompletedFile> TransferRepository::stored_file(const TransferId& id) {
+    return run_cached(cache_,
+        "SELECT stored_relative_path, stored_sha256, stored_size_bytes FROM transfer"
+        " WHERE transfer_id = ?1 AND state = ?2 AND stored_relative_path IS NOT NULL;",
+        [&](Statement& row) -> std::optional<CompletedFile> {
+            row.bind(1, id.value);
+            row.bind(2, to_int(TransferState::Completed));
+            if (!row.step()) return std::nullopt;
+            return CompletedFile{row.column_text(0), row.column_text(1),
+                static_cast<std::uint64_t>(row.column_int64(2))};
+        });
+}
+
 void TransferRepository::update_progress(const TransferId& transfer_id,
     std::uint64_t transferred, std::uint64_t total) {
     run_cached(cache_,

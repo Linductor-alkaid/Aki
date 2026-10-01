@@ -851,3 +851,7 @@ pair_peer））。
 2026-09-21 复核 `RISK-2026-003`：本机 w64devkit GCC 15.2 工具链未随附 sanitizer
 运行时，asan preset configure 即失败（`cannot find -lasan`），证据见
 [M1 验证记录](m1-domain-state.md)。
+
+2026-10-01：M5-33 依赖升级已合并；M5-34 跨平台 GUI 实测暴露四项缺陷，
+按 M5-36~39 / DEC-025~026 修复中文输入、首次密码、默认图片预览和
+传输文件位置，未通过实测部分保持未完成。

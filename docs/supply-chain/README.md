@@ -18,3 +18,13 @@
 submodule/文件与锁文件、说明版本差异与许可证变化、回归通过后在本目录登记
 审计结论。vendored 依赖升级前必须先复跑既有缺陷规避的复现脚本（见
 [sqlite-3.53.4.md](sqlite-3.53.4.md) 上游缺陷处置节）。
+
+## 2026-10-01：授权的 EUI X11 临时构建补丁
+
+用户明确授权 EUI-20261001-002，见 [台账](../eui_neo_feedback/ledger.md)和
+[上游 #78](https://github.com/sudoevolve/EUI-NEO/issues/78)。EUI pin 不变。
+`cmake/EuiX11ImePatch.cmake` 仅在 Linux + X11 为 GLFW target 替换单一
+编译单元：原源文件复制到构建目录后应用仓库补丁，原件/补丁/产物三项
+SHA256 按 dependencies.lock.json 校验。原 checkout 不改，漂移即失败，
+Windows 不覆盖。每次 configure 从原件重新生成，升级后必须重新评审或
+移除此边界；上游正式修复升级并通过 GUI 验证后删除补丁和 manifest。

@@ -13,6 +13,7 @@
 #include "persistence/storage/file_store.hpp"
 
 #include <memory>
+#include <functional>
 #include <string>
 #include <utility>
 
@@ -21,9 +22,14 @@ namespace aki::persistence {
 // Completed 终态作业组（幂等；供源见 FileStore::complete_transfer——
 // M4-05 参数化：.part → 接收根回退，全部缺失时作业以 runtime_error 失败）。
 // receive_dir 为空 = 仅发送侧供源（M2-06 既有语义）。
+// on_stored runs on the database worker after the archive record is committed.
+// It must be bounded and outlive this job; exceptions settle the job future as
+// failure. Replaying a Completed job republishes the same immutable record.
 [[nodiscard]] DbJob make_transfer_complete_job(
     std::shared_ptr<FileStore> store, std::string transfer_id,
-    std::string receive_dir = {});
+    std::string receive_dir = {},
+    std::function<void(const CompletedFile&)> on_stored = {},
+    std::function<void(std::string)> on_failure = {});
 
 // Failed / Cancelled：.part 幂等删除作业。
 [[nodiscard]] DbJob make_transfer_discard_job(

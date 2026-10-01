@@ -45,6 +45,8 @@ struct MainWindowModel {
     // 数据目录（HostRuntime::data_root() 装配面；Settings 页只读展示，
     // std::string 公开面 RULE-10）。
     std::string data_directory;
+    bool profile_probe_failed = false;
+    bool retry_profile_probe = false;
     // HostRuntime 装配失败降级占位（§9.1 启动↔关闭配对：错误占位 UI + 关窗
     // 仍经 onShutdown 闭合）；空 = 装配成功。
     std::string startup_error;
