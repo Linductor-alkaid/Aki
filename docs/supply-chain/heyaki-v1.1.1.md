@@ -67,3 +67,8 @@ runner 已通过（71.14s）；本地 UBSAN 基础回环通过（47.54s）。
 12 cases 两档通过。旧发送回环两档均在握手前置门 skip（15.65s/16.05s），
 未执行传输或停止顺序断言，不记为竞态修复验收。真实关闭链路及 TSAN
 由修复后最新 head 的 CI 补跑；负责人 Linductor，条件为 CI runner 可用。
+
+2026-10-01 连接状态停止修复后：Debug/ASAN 的 Adapter（137 assertions）、
+PeerSession 纯映射（143 assertions）与真实连接状态回环（30 assertions）
+三目标均通过（18.21s/19.59s，非 skip）。回环覆盖停止后零事件及随后
+Node shutdown；ASAN 无内存报告。最新 head TSAN 仍须 CI 运行后确认。

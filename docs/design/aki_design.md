@@ -771,7 +771,7 @@ Store 所有权：
   ConversationManager → conversations、MessageManager → messages、TransferManager →
   transfers；写入一律以第 10.1 节的类型化更新指令经 `MpscChannel` 汇聚到状态 owner
   （`RULE-02` / `EXEC-03`），Manager 不直写快照。
-- LAN 发现的 stop 在查询互斥边界内失效 timer；已排队或旧扫描代次的
+- LAN 发现与连接状态观察的 stop 在查询互斥边界内失效 timer；已排队或旧扫描代次的
   tick 不得继续访问 Node。stop 等待当前端点查询结束，已合成事件仍可能
   投递；管道与 sink 必须存活至 Executor 排空，Node 在发现停止后关闭。
 - 出站操作按域切分：发现启停（`start_discovery` / `stop_discovery`）归
