@@ -37,14 +37,30 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <exception>
 #include <memory>
 #include <string>
 
 namespace {
 
-// 小型文件日志（证据归档面；cwd 已由框架 repairCurrentWorkingDirectory 修复
-// 到 exe 目录——aki-run.log 落在可执行文件旁，与 assets/ 同级）。
-std::string g_log_path = "aki-run.log";
+// Per-user diagnostics must remain writable in installed Program Files / /opt builds.
+std::string g_log_path;
+void initialize_log_path() {
+    try {
+        const auto logs = std::filesystem::path{aki::persistence::resolve_data_root()} / "logs";
+        std::filesystem::create_directories(logs);
+        g_log_path = (logs / "aki-run.log").string();
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "Aki: cannot initialize diagnostics: %s\n", error.what());
+    }
+}
+
+// Public GLFW hints must precede the framework's main/glfwInit. This does
+// not initialize a window, task, or second platform lifecycle.
+[[maybe_unused]] const bool g_window_backend_policy = [] {
+    aki::ui::platform::configure_window_backend_before_init();
+    return true;
+}();
 
 std::string steady_ms() {
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
@@ -57,11 +73,13 @@ void log_line(const std::string& line) {
 #if defined(_MSC_VER)
     FILE* file = nullptr;
     if (fopen_s(&file, g_log_path.c_str(), "a") != 0 || file == nullptr) {
+        std::fprintf(stderr, "Aki: %s\n", line.c_str());
         return;
     }
 #else
     FILE* file = std::fopen(g_log_path.c_str(), "a");
     if (file == nullptr) {
+        std::fprintf(stderr, "Aki: %s\n", line.c_str());
         return;
     }
 #endif
@@ -173,7 +191,12 @@ const app::DslAppConfig& app::dslAppConfig() {
     // 有界启动点补齐 Linux 窗口身份（EUI-20260929-002）。后续每帧查询
     // 不再修改创建参数，也不装配 Host 或改变 GLFW 生命周期。
     static const bool first = [] {
+        initialize_log_path();
         aki::ui::platform::configure_application_identity();
+#if defined(__linux__)
+        log_line(std::string("boot: GLFW platform=")
+            + (glfwGetPlatform() == GLFW_PLATFORM_X11 ? "X11" : "Wayland/other"));
+#endif
         log_line("boot: dslAppConfig constructed (EUI-NEO framework main)");
         return true;
     }();
@@ -214,28 +237,41 @@ void app::compose(eui::Ui& ui, const eui::Screen& screen) {
     auto& host = aki::app::HostRuntime::instance();
     aki::ui::platform::install_ime_backspace_guard();
 
+    if (model.retry_profile_probe) {
+        model.retry_profile_probe = false;
+        model.profile_probe_failed = false;
+        model.startup_error.clear();
+        setup_checked = false;
+    }
     if (!setup_checked) {
         setup_checked = true;
-        model.data_directory = aki::persistence::resolve_data_root();
-        {
-            std::ifstream preference(model.data_directory + "/ui-language.txt");
-            std::string code;
-            if (preference >> code && code == "en")
-                model.language = aki::ui::Language::English;
-            aki::ui::set_language(model.language);
-        }
         try {
+            model.data_directory = aki::persistence::resolve_data_root();
+            {
+                std::ifstream preference(model.data_directory + "/ui-language.txt");
+                std::string code;
+                if (preference >> code && code == "en")
+                    model.language = aki::ui::Language::English;
+                aki::ui::set_language(model.language);
+            }
             model.needs_password_setup =
                 aki::heyaki::LocalProfile::requires_password_setup(
                     model.data_directory);
             model.language_selection_pending = model.needs_password_setup;
+            log_line("startup: profile data_root=" + model.data_directory
+                + "; password_setup_required=" + (model.needs_password_setup ? "yes" : "no"));
+        } catch (const std::exception& error) {
+            model.profile_probe_failed = true;
+            model.startup_error = std::string("Cannot inspect local device profile: ") + error.what();
+            log_line("startup: " + model.startup_error);
         } catch (...) {
-            // HostRuntime will report the profile failure through startup_error.
-            model.needs_password_setup = false;
+            model.profile_probe_failed = true;
+            model.startup_error = "Cannot inspect local device profile (unknown error).";
+            log_line("startup: " + model.startup_error);
         }
     }
 
-    if (!assembly_started && !model.needs_password_setup) {
+    if (!assembly_started && !model.needs_password_setup && !model.profile_probe_failed) {
         assembly_started = true;
         // §9.1 首帧装配例外（唯一）：主线程、主循环首帧同步装配组合根；
         // 装配期间事件源尚未接通，无唤醒先于装配的竞态。窗口以 clearColor

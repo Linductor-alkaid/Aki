@@ -20,6 +20,7 @@
 #include "ui/models/ui_state_consumer.hpp"
 #include "ui/models/view_models.hpp"
 #include "ui/models/local_file_path.hpp"
+#include "ui/platform/window_backend_policy.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -714,4 +715,11 @@ TEST_CASE("Archived images join both directions and survive unavailable local fi
     REQUIRE(local_file_path("", "files/in/photo.png").empty());
     transfers.local_artifacts.clear();
     REQUIRE(derive_message_views(messages, conversation, conversation.local_device, transfers)[0].local_relative_path.empty());
+}
+
+TEST_CASE("Linux window backend keeps the XIM path when DISPLAY is available",
+    "[unit][ui_models][linux_ime]") {
+    using namespace aki::ui::platform;
+    REQUIRE(linux_window_backend(true) == LinuxWindowBackend::X11);
+    REQUIRE(linux_window_backend(false) == LinuxWindowBackend::Automatic);
 }

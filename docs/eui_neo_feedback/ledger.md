@@ -65,3 +65,17 @@ Executor 反馈台账的纪律：先核对 pinned 版本的公开头文件与实
   该适配不创建线程/资源、不改后端或依赖；依赖升级须复核启动次序，
   正式 app ID 配置接口上线并完成升级验收后移除。运行验证见 M5-24。
 - **上游 issue**：[sudoevolve/EUI-NEO#77](https://github.com/sudoevolve/EUI-NEO/issues/77)。
+
+## EUI-20261001-001：Linux 原生 Wayland 缺中文输入协议
+
+- pinned EUI-NEO v0.6.0 b9032a8，GLFW 的 wl_window.c 不含 text-input /
+  input-method；ime_bridge.c 的 Linux 分支所有方法为空，is_composing=0。
+- 用户在 Ubuntu 24 安装版 9d0a7fe 的文本框无法切换中文。本机会话
+  wayland，有 DISPLAY=:0、WAYLAND_DISPLAY=wayland-0、XMODIFIERS=@im=ibus。
+  会话类型不单独作为窗口后端实测证据；适配后日志记录 glfwGetPlatform。
+- 影响中文文本输入/组合串/候选定位。期望上游正式支持原生 Wayland 的
+  输入法协议及公开窗口后端选择，不需要应用初始化第二套 GUI 生命周期。
+- Aki 临时方案 DEC-025：GLFW 初始化前选择 X11（仅有 DISPLAY 时），
+  LC_CTYPE 用户 locale；不修改上游、不增加线程。移除条件为正式能力
+  上线并升级，真实中文与 Dock 回归通过。M5-36 尚待 GUI 复验。
+- 上游 issue 尚未创建；本记录保留公开 API 与 pinned 证据，后续单独反馈。

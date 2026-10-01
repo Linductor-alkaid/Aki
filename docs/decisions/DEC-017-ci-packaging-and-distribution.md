@@ -32,7 +32,7 @@ M0~M5 的 CI 门禁（`.github/workflows/ci.yml` 五档矩阵）只产出测试�
   安装器脚本（NSIS 手写模板/Inno Setup/WiX），打包配置与构建图同源。
 - **安装布局：自包含目录**。Windows `%ProgramFiles%\Aki`，Linux
   `/opt/aki`；`assets/` 与可执行文件同级（main.cpp 的 `iconPath` 与
-  框架 cwd 修复均按 exe 目录解析，aki-run.log 落同级）。用户数据根经
+  框架 cwd 修复均按 exe 目录解析；自 2026-10-01 起，日志写入用户数据根的 logs/aki-run.log）。用户数据根经
   XDG/%APPDATA% 解析（DEC-004），与安装位置无关，只读安装目录可运行。
   Linux 桌面集成文件（desktop 入口、hicolor 256x256 图标）装系统绝对
   路径 `/usr/share/...`。不修改应用代码的路径解析。
