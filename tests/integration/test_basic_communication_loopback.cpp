@@ -6,6 +6,7 @@
 #include "persistence/storage/sha256.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -52,18 +53,23 @@ struct Pair {
     DeviceId a_id = a_profile.identity().id;
     DeviceId b_id = b_profile.identity().id;
 
-    Pair(bool a_basic, bool b_basic) {
+    Pair(bool a_basic, bool b_basic, std::chrono::milliseconds offer_timeout = 0ms,
+         bool b_receive_root = true) {
         if (!owner.initialize()) throw std::runtime_error("executor admission failed");
         std::filesystem::create_directories(root + "/a/inbox");
         std::filesystem::create_directories(root + "/b/inbox");
         a.emplace(NodeSession::create(owner.executor(), {.profile = &a_profile,
             .worker_name = "basic-a",
             .file_receive_roots = {{.name = "inbox", .directory = root + "/a/inbox"}},
-            .basic_communication = a_basic}));
+            .basic_communication = a_basic,
+            .file_offer_timeout = offer_timeout}));
         b.emplace(NodeSession::create(owner.executor(), {.profile = &b_profile,
             .worker_name = "basic-b",
-            .file_receive_roots = {{.name = "inbox", .directory = root + "/b/inbox"}},
-            .basic_communication = b_basic}));
+            .file_receive_roots = b_receive_root
+                ? std::vector<::heyaki::FileRootConfig>{{.name = "inbox", .directory = root + "/b/inbox"}}
+                : std::vector<::heyaki::FileRootConfig>{},
+            .basic_communication = b_basic,
+            .file_offer_timeout = offer_timeout}));
     }
     ~Pair() {
         if (a) (void)a->shutdown();
@@ -204,8 +210,8 @@ TEST_CASE("Untrusted devices exchange text image and inbox files both ways", "[i
 }
 
 TEST_CASE("One-sided basic policy refuses untrusted traffic explicitly", "[integration][basic_communication]") {
-    std::atomic<unsigned> received{0}, failed{0}, file_terminal{0}, file_committed{0};
-    Pair pair(true, false); pair.connect(); pair.no_grants();
+    std::atomic<unsigned> received{0}, failed{0}, file_terminal{0}, file_committed{0}, file_paused{0}, file_offered{0};
+    Pair pair(true, false, 700ms); pair.connect(); pair.no_grants();
     pair.b->set_message_handlers([&](const auto&, const auto&, const auto&, const auto&) { ++received; }, {});
     pair.a->set_message_handlers({}, [&](const auto&, const auto&, const std::string& event) { if (event == "failed") ++failed; });
     const bool admitted = pair.a->send_text(pair.b_id, aki::heyaki::new_message_id(), "basic text");
@@ -215,29 +221,102 @@ TEST_CASE("One-sided basic policy refuses untrusted traffic explicitly", "[integ
     pair.a->set_file_event_observer([&](const auto&, const NodeSession::FileTransferEventView& event) {
         const auto phase = static_cast<::heyaki::FileTransferPhase>(event.phase);
         if (phase == ::heyaki::FileTransferPhase::committed) ++file_committed;
+        if (phase == ::heyaki::FileTransferPhase::paused) ++file_paused;
+        if (phase == ::heyaki::FileTransferPhase::offered) ++file_offered;
         if (phase == ::heyaki::FileTransferPhase::failed || phase == ::heyaki::FileTransferPhase::cancelled) ++file_terminal;
     });
     const auto source = std::filesystem::path(pair.root) / "blocked.bin";
     { std::ofstream out(source, std::ios::binary); out << "blocked bytes"; }
     const auto transfer = NodeSession::new_transfer_id();
     const bool file_admitted = pair.a->push_file(pair.b_id, "inbox", "blocked.bin", source, transfer);
-    if (file_admitted) {
-        const bool resolved = await([&] { return file_terminal > 0; }, 3s);
-        INFO("One-sided file refusal terminal observed: " << resolved);
-        // HEY-20261001-001: no bounded rejection outcome in v1.1.1.
-        // Verify refusal has no disk effects and cancellation remains available.
-        std::printf("[policy-refusal] file admitted=1 terminal-before-cancel=%d\n", resolved);
-        const bool cancellation_admitted = pair.a->cancel_file_transfer(pair.b_id, transfer);
-        std::printf("[policy-refusal] cancellation-admitted=%d\n", cancellation_admitted);
-        if (cancellation_admitted) REQUIRE(await([&] { return file_terminal > 0; }));
-        // Rejection is an observable API result; v1.1.1 may already have
-        // retired the violating channel without resolving its file observer.
-        // This known hole remains open in HEY-20261001-001, not counted as fixed.
+    REQUIRE(file_admitted);
+    // HEY-20261002-001: refusal can retire the cached business channel; the upstream known
+    // follow-up then loses this session and parks a subsequent push. Session
+    // loss is Paused by contract, not an offer-expiry terminal. Both outcomes
+    // must be observable within the budget, never an endless offered state.
+    const bool resolved = await([&] { return file_terminal == 1 || file_paused > 0; }, 5s);
+    INFO("post-message refusal: terminal=" << file_terminal.load()
+        << " paused=" << file_paused.load() << " offered=" << file_offered.load()
+        << " linked=" << pair.a->session_linked(pair.b_id));
+    REQUIRE(resolved);
+    if (file_terminal == 0) {
+        REQUIRE(file_paused > 0);
+        // The paused callback precedes publication of the failed session snapshot.
+        REQUIRE(await([&] { return !pair.a->session_linked(pair.b_id); }, 5s));
     }
+    // Expired and session-parked IDs both refuse this later cancellation.
+    // This does not claim that cancelling a parked transfer is implemented.
+    REQUIRE_FALSE(pair.a->cancel_file_transfer(pair.b_id, transfer));
     REQUIRE(file_committed == 0);
     REQUIRE_FALSE(std::filesystem::exists(pair.root + "/b/inbox/blocked.bin"));
     pair.no_grants();
     REQUIRE(pair.a->shutdown().node_stopped);
+    REQUIRE(pair.b->shutdown().node_stopped);
+    REQUIRE(pair.owner.shutdown().fully_stopped());
+    REQUIRE(file_terminal <= 1);
+}
+
+TEST_CASE("Unanswered file offers produce one failure without grants or disk effects", "[integration][basic_communication][file_offer]") {
+    std::atomic<unsigned> failed{0}, cancelled{0}, committed{0}, wrong_id{0};
+    std::atomic<bool> offer_expired{false};
+    const bool strict_peer = GENERATE(true, false);
+    Pair pair(true, !strict_peer, 700ms, strict_peer);
+    pair.connect(); pair.no_grants();
+    const auto transfer = NodeSession::new_transfer_id();
+    pair.a->set_file_event_observer([&, transfer](const auto&, const NodeSession::FileTransferEventView& event) {
+        if (event.transfer != transfer) ++wrong_id;
+        const auto phase = static_cast<::heyaki::FileTransferPhase>(event.phase);
+        if (phase == ::heyaki::FileTransferPhase::failed) {
+            offer_expired = event.error == "offer_expired";
+            ++failed;
+        }
+        if (phase == ::heyaki::FileTransferPhase::cancelled) ++cancelled;
+        if (phase == ::heyaki::FileTransferPhase::committed) ++committed;
+    });
+    const auto source = std::filesystem::path(pair.root) / "refused.bin";
+    { std::ofstream out(source, std::ios::binary); out << "refused payload"; }
+    REQUIRE(pair.a->push_file(pair.b_id, "inbox", "refused.bin", source, transfer));
+    REQUIRE(await([&] { return failed == 1; }, 5s));
+    if (strict_peer) REQUIRE(offer_expired.load());
+    REQUIRE_FALSE(pair.a->cancel_file_transfer(pair.b_id, transfer));
+    pair.no_grants();
+    REQUIRE_FALSE(std::filesystem::exists(pair.root + "/b/inbox/refused.bin"));
+    REQUIRE(pair.a->shutdown().node_stopped);
+    REQUIRE(pair.b->shutdown().node_stopped);
+    REQUIRE(pair.owner.shutdown().fully_stopped());
+    REQUIRE(failed == 1);
+    REQUIRE(cancelled == 0);
+    REQUIRE(committed == 0);
+    REQUIRE(wrong_id == 0);
+}
+
+TEST_CASE("Cancelling an unanswered offer wins before expiry with one terminal", "[integration][basic_communication][file_offer]") {
+    std::atomic<unsigned> offered{0}, failed{0}, cancelled{0}, committed{0};
+    Pair pair(true, false, 5s);
+    pair.connect(); pair.no_grants();
+    const auto transfer = NodeSession::new_transfer_id();
+    pair.a->set_file_event_observer([&](const auto&, const NodeSession::FileTransferEventView& event) {
+        const auto phase = static_cast<::heyaki::FileTransferPhase>(event.phase);
+        if (phase == ::heyaki::FileTransferPhase::offered) ++offered;
+        if (phase == ::heyaki::FileTransferPhase::failed) ++failed;
+        if (phase == ::heyaki::FileTransferPhase::cancelled) ++cancelled;
+        if (phase == ::heyaki::FileTransferPhase::committed) ++committed;
+    });
+    const auto source = std::filesystem::path(pair.root) / "cancelled.bin";
+    { std::ofstream out(source, std::ios::binary); out << "cancelled payload"; }
+    REQUIRE(pair.a->push_file(pair.b_id, "inbox", "cancelled.bin", source, transfer));
+    REQUIRE(await([&] { return offered > 0; }));
+    REQUIRE(pair.a->cancel_file_transfer(pair.b_id, transfer));
+    REQUIRE(await([&] { return cancelled == 1; }));
+    REQUIRE_FALSE(pair.a->cancel_file_transfer(pair.b_id, transfer));
+    pair.no_grants();
+    REQUIRE_FALSE(std::filesystem::exists(pair.root + "/b/inbox/cancelled.bin"));
+    REQUIRE(pair.a->shutdown().node_stopped);
+    REQUIRE(pair.b->shutdown().node_stopped);
+    REQUIRE(pair.owner.shutdown().fully_stopped());
+    REQUIRE(cancelled == 1);
+    REQUIRE(failed == 0);
+    REQUIRE(committed == 0);
 }
 
 TEST_CASE("Password grants can be repaired in both directions on an authorized session", "[integration][pairing]") {
