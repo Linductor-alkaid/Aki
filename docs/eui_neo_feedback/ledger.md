@@ -1,7 +1,7 @@
 # EUI-NEO 缺陷与缺口反馈台账
 
 > 状态：Active
-> 更新日期：2026-09-29
+> 更新日期：2026-09-30
 
 本台账记录 Aki 对 pinned `third_party/EUI-NEO` 的缺陷与能力缺口反馈（对齐
 Executor 反馈台账的纪律：先核对 pinned 版本的公开头文件与实现，只写"不支持"
@@ -58,4 +58,10 @@ Executor 反馈台账的纪律：先核对 pinned 版本的公开头文件与实
 - **Aki 侧临时方案**：`packaging/linux/aki.desktop` 增加
   `StartupWMClass=aki`（仅 X11 生效）；Wayland 治本依赖上游修复，
   Aki 不修改 pinned 依赖。
+  2026-09-30 用户再次复现，按
+  [DEC-024](../decisions/DEC-024-linux-desktop-window-identity.md)
+  在 `ui/platform/application_identity.hpp` 使用公开 GLFW API 设置三个
+  创建 hint；唯一调用点为 GLFW 初始化后、窗口创建前的配置首次构造。
+  该适配不创建线程/资源、不改后端或依赖；依赖升级须复核启动次序，
+  正式 app ID 配置接口上线并完成升级验收后移除。运行验证见 M5-24。
 - **上游 issue**：[sudoevolve/EUI-NEO#77](https://github.com/sudoevolve/EUI-NEO/issues/77)。
