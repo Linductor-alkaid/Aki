@@ -7,6 +7,7 @@
 # eui_neo_configure_app(aki) 链入（根 CMakeLists）。
 add_library(aki_ui_models STATIC
     models/view_models.cpp
+    models/message_time.cpp
     models/ui_state_consumer.cpp
     models/ui_actions.cpp)
 target_compile_features(aki_ui_models PUBLIC cxx_std_20)

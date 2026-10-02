@@ -87,6 +87,8 @@ struct UiActions {
     // 事件隐式建，设计 §8.3）。
     std::function<bool(aki::device::DeviceId, aki::device::DeviceId)>
         ensure_conversation;
+    std::function<bool(aki::conversation::ConversationId, bool)> set_conversation_pinned;
+    std::function<bool(aki::conversation::ConversationId)> hide_conversation;
 };
 
 // 组合根绑定：四 Manager + wire id 生成器 + 图片 hash-first 编排 → UiActions。

@@ -10,11 +10,12 @@
 // 处理）执行；出站操作全经 UiActions（RULE-01/RULE-02/DEC-008）。
 #include "ui/pages/conversations_page.hpp"
 
-#include "ui/components/transfer_card.hpp"
 #include "ui/components/local_file_location.hpp"
+#include "ui/components/transfer_card.hpp"
 #include "ui/models/local_file_path.hpp"
-#include "ui/theme/aki_theme_values.hpp"
+#include "ui/models/message_time.hpp"
 #include "ui/pages/main_window.hpp"
+#include "ui/theme/aki_theme_values.hpp"
 
 #include "components/button.h"
 #include "components/card.h"
@@ -40,10 +41,8 @@ namespace {
 
 using components::theme::ThemeColorTokens;
 
-constexpr float kConvRowHeight = 64.0f;
 constexpr float kBubbleMaxWidth = 340.0f;
 constexpr float kBubbleWidthRatio = 0.72f;
-constexpr float kLineHeightFactor = 1.35f;  // 文本行高经验档（引擎同量级）。
 
 // ---- 快照只读 join（设备/会话预算 256，线性查找在预算内，RULE-09）----
 
@@ -65,7 +64,7 @@ const aki::conversation::Conversation* conversation_of(
     for (const aki::conversation::Conversation& conversation :
         model.state_view.state.conversations.conversations) {
         if (conversation.id == id) {
-            return &conversation;
+            return conversation.hidden ? nullptr : &conversation;
         }
     }
     return nullptr;
@@ -130,22 +129,7 @@ core::Color delivery_color(const AkiSemanticPalette& semantic,
 }
 
 std::string time_label(std::chrono::system_clock::time_point timestamp) {
-    if (timestamp.time_since_epoch().count() == 0) return "--:--";
-    const std::time_t time = std::chrono::system_clock::to_time_t(timestamp);
-    std::tm local{};
-#if defined(_MSC_VER)
-    if (localtime_s(&local, &time) != 0) {
-        return "--:--";
-    }
-#else
-    if (localtime_r(&time, &local) == nullptr) {
-        return "--:--";
-    }
-#endif
-    char buffer[8] = {};
-    std::snprintf(buffer, sizeof(buffer), "%02d:%02d", local.tm_hour,
-        local.tm_min);
-    return buffer;
+    return models::format_message_time(timestamp, std::chrono::system_clock::now(), language());
 }
 
 // 出站图片本地源路径查找（预览弹窗；容量预算 kOutboundSourceBudget，线性）。
@@ -208,10 +192,19 @@ void set_feedback(MainWindowModel& model, std::string text) {
     model.last_action_feedback = std::move(text);
 }
 
+bool can_send_to(const MainWindowModel& model, const aki::device::DeviceId& to) {
+    const auto* remote = device_view_of(model, to);
+    return remote != nullptr && remote->can_send_basic();
+}
+
 // ---- 出站操作（点击回调上下文；页面只经 UiActions，RULE-01/RULE-02）----
 
 void send_draft(MainWindowModel& model, const aki::device::DeviceId& to) {
     if (!model.actions) {
+        return;
+    }
+    if (!can_send_to(model, to)) {
+        set_feedback(model, tr("Device is disconnected; wait for reconnection"));
         return;
     }
     if (model.conversations.draft.empty()) {
@@ -232,6 +225,10 @@ void send_draft(MainWindowModel& model, const aki::device::DeviceId& to) {
 void pick_and_send_media(MainWindowModel& model,
     const aki::device::DeviceId& to, bool image) {
     if (!model.actions) {
+        return;
+    }
+    if (!can_send_to(model, to)) {
+        set_feedback(model, tr("Device is disconnected; wait for reconnection"));
         return;
     }
     // 文件对话框只读选取（M5-01 复核：openFileDialog 满足发送选取链路）。
@@ -316,12 +313,17 @@ void compose_bubble_meta(eui::Ui& ui, const ThemeColorTokens& tokens,
     const AkiSemanticPalette& semantic, const std::string& id,
     const models::MessageView& message, float inner_width) {
     const auto& metrics = tokens.metrics;
-    const float line_height = metrics.typography.micro * kLineHeightFactor;
     ui.stack(id)
-        .size(inner_width, line_height)
+        .width(inner_width)
+        .wrapContent()
         .content([&] {
             components::text(ui, id + ".time")
                 .text(time_label(message.timestamp))
+                .wrap(true)
+                .maxWidth(std::max(
+                    inner_width -
+                        (message.outbound ? metrics.typography.micro + metrics.spacing.tiny : 0.0f),
+                    metrics.spacing.tiny))
                 .position(0.0f, 0.0f)
                 .fontSize(metrics.typography.micro)
                 .color(semantic.text_subtlest)
@@ -593,6 +595,7 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
     MainWindowModel& model) {
     const auto& metrics = tokens.metrics;
     ConversationsPageModel& chat = model.conversations;
+    const float row_height = metrics.control.menuItem * 3.0f;
 
     // 聊天依赖已连接会话；Heyaki trust 单独承载更高权限能力。
     components::button(ui, "aki.convs.new")
@@ -625,9 +628,9 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
             .size(width - metrics.spacing.tiny * 2.0f, list_height)
             .theme(tokens)
             .gap(metrics.spacing.tiny)
-            .step(kConvRowHeight)
-            .contentKey("aki.convs.rows:"
-                + std::to_string(model.state_view.conversations.size()))
+            .step(row_height)
+            .contentKey("aki.convs.rows:" + std::to_string(model.watermark.snapshot_sequence) +
+                        ":" + std::to_string(static_cast<int>(language())))
             .content([&](eui::Ui& list_ui, float row_width, float) {
                 const auto& row_metrics = tokens.metrics;
                 bool odd = false;
@@ -637,65 +640,70 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
                         "aki.convs.row." + conversation.id.value;
                     const bool selected = chat.selected == conversation.id;
                     odd = !odd;
-                    const models::DeviceView* remote =
-                        device_view_of(model, conversation.remote_device);
-                    // 连接事实与信任状态分离（DEC-019）：入口按连接/会话
-                    // 事实门控——已连接或会话仍活跃即可打开；Rejected/
-                    // Revoked 仅显示 destructive 徽标，不裁剪点击面。
-                    const bool entry_disabled = remote != nullptr
-                        && remote->connection_path
-                            == aki::device::ConnectionPath::Unknown
-                        && conversation.state
-                            != aki::conversation::ConversationState::Active;
+                    const float pin_slot = row_metrics.control.field + row_metrics.spacing.tiny;
+                    std::string preview = conversation.last_message.has_value
+                                              ? tr_preview(conversation.last_message.preview)
+                                              : tr("no messages yet");
+                    if (conversation.state != aki::conversation::ConversationState::Active) {
+                        preview =
+                            tr(aki::conversation::to_string(conversation.state)) + " · " + preview;
+                    }
 
                     list_ui.stack(row_id)
-                        .size(row_width, kConvRowHeight)
+                        .size(row_width, row_height)
                         .content([&] {
                             list_ui.rect(row_id + ".bg")
-                                .size(row_width, kConvRowHeight)
-                                .color(selected
-                                        ? semantic.surface_overlay_strong
-                                    : odd ? semantic.surface_overlay
-                                          : semantic.card)
+                                .size(row_width, row_height)
+                                .color(selected ? semantic.surface_overlay_strong
+                                       : odd    ? semantic.surface_overlay
+                                                : semantic.card)
                                 .radius(row_metrics.radius.small)
                                 .build();
                             components::text(list_ui, row_id + ".name")
-                                .text(remote_label(model,
-                                    conversation.remote_device))
-                                .position(row_metrics.spacing.content,
-                                    row_metrics.spacing.compact)
+                                .text(remote_label(model, conversation.remote_device))
+                                .position(row_metrics.spacing.content, row_metrics.spacing.compact)
                                 .fontSize(row_metrics.typography.body)
                                 .fontWeight(600)
-                                .maxWidth(row_width
-                                    - row_metrics.spacing.content * 2.0f
-                                    - 56.0f)
-                                .color(entry_disabled
-                                        ? semantic.text_subtlest
-                                        : tokens.text)
+                                .maxWidth(row_width - row_metrics.spacing.content * 2.0f -
+                                          (conversation.pinned ? pin_slot : 0.0f))
+                                .color(tokens.text)
                                 .build();
+                            if (conversation.pinned) {
+                                components::text(list_ui, row_id + ".pinned")
+                                    .text(tr("Pinned"))
+                                    .position(row_width - row_metrics.spacing.content - pin_slot,
+                                              row_metrics.spacing.compact)
+                                    .fontSize(row_metrics.typography.micro)
+                                    .color(semantic.text_subtle)
+                                    .build();
+                            }
                             components::text(list_ui, row_id + ".time")
                                 .text(conversation.last_message.has_value
-                                        ? time_label(conversation.last_message
-                                              .timestamp)
-                                        : "")
-                                .position(row_width
-                                        - row_metrics.spacing.content - 40.0f,
-                                    row_metrics.spacing.compact)
+                                          ? time_label(conversation.last_message.timestamp)
+                                          : "")
+                                .position(row_metrics.spacing.content,
+                                          row_metrics.spacing.compact +
+                                              row_metrics.typography.body +
+                                              row_metrics.typography.caption +
+                                              row_metrics.spacing.compact)
+                                .maxWidth(row_width - row_metrics.spacing.content * 2.0f)
+                                .wrap(true)
                                 .fontSize(row_metrics.typography.micro)
                                 .color(semantic.text_subtlest)
                                 .build();
                             components::text(list_ui, row_id + ".preview")
-                                .text(conversation.last_message.has_value
-                                        ? tr_preview(conversation.last_message.preview)
-                                        : tr("no messages yet"))
+                                .text(preview)
                                 .position(row_metrics.spacing.content,
-                                    row_metrics.spacing.compact
-                                        + row_metrics.typography.body + 2.0f)
+                                          row_metrics.spacing.compact +
+                                              row_metrics.typography.body + 2.0f)
                                 .fontSize(row_metrics.typography.caption)
-                                .maxWidth(row_width
-                                    - row_metrics.spacing.content * 2.0f
-                                    - 48.0f)
-                                .color(semantic.text_subtle)
+                                .maxWidth(row_width - row_metrics.spacing.content * 2.0f -
+                                          row_metrics.typography.micro -
+                                          row_metrics.spacing.compact)
+                                .color(conversation.state ==
+                                               aki::conversation::ConversationState::Disconnected
+                                           ? semantic.warning
+                                           : semantic.text_subtle)
                                 .build();
                             // 己方最后消息的投递徽标（§3）。
                             if (conversation.last_message.has_value
@@ -714,58 +722,20 @@ void composeConversationList(eui::Ui& ui, const ThemeColorTokens& tokens,
                                         conversation.last_message.delivery))
                                     .build();
                             }
-                            // Disconnected/Archived 徽标（§3）。
-                            if (conversation.state
-                                != aki::conversation::ConversationState::
-                                    Active) {
-                                components::text(list_ui, row_id + ".state")
-                                    .text(tr(aki::conversation::to_string(
-                                            conversation.state)))
-                                    .position(row_metrics.spacing.content,
-                                        kConvRowHeight
-                                            - row_metrics.spacing.compact
-                                            - row_metrics.typography.micro)
-                                    .fontSize(row_metrics.typography.micro)
-                                    .color(conversation.state
-                                            == aki::conversation::
-                                                ConversationState::
-                                                    Disconnected
-                                        ? semantic.warning
-                                        : semantic.text_subtlest)
-                                    .build();
-                            }
-                            if (entry_disabled && remote != nullptr) {
-                                components::text(list_ui, row_id + ".trust")
-                                    .text(tr(remote->trust_relation_key()))
-                                    .position(row_width
-                                            - row_metrics.spacing.content
-                                            - 70.0f,
-                                        kConvRowHeight
-                                            - row_metrics.spacing.compact
-                                            - row_metrics.typography.micro)
-                                    .fontSize(row_metrics.typography.micro)
-                                    .color(trust_color(semantic,
-                                        remote->trust_state,
-                                        remote->inbound_trust))
-                                    .build();
-                            }
-                            // 行点击面（透明按钮；入口按连接/会话事实
-                            // 门控——DEC-019，不按信任状态裁剪）。
-                            if (!entry_disabled) {
+                            // Offline history and list management remain available (DEC-027).
+                            {
                                 const core::Color transparent(0.0f, 0.0f,
                                     0.0f, 0.0f);
                                 components::button(list_ui, row_id + ".hit")
                                     .position(0.0f, 0.0f)
-                                    .size(row_width, kConvRowHeight)
+                                    .size(row_width, row_height)
                                     .text(tr(""))
                                     .theme(tokens, false)
                                     .radius(row_metrics.radius.small)
-                                    .colors(transparent,
-                                        semantic.surface_overlay_strong,
-                                        transparent)
+                                    .colors(transparent, semantic.surface_overlay_strong,
+                                            transparent)
                                     .shadow(0.0f, 0.0f, 0.0f, transparent)
-                                    .onClick([&model,
-                                                 id = conversation.id] {
+                                    .onClick([&model, id = conversation.id] {
                                         if (model.conversations.selected
                                             == id) {
                                             return;
@@ -886,6 +856,14 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
     MainWindowModel& model) {
     const auto& metrics = tokens.metrics;
     ConversationsPageModel& chat = model.conversations;
+    for (const auto& row : model.state_view.state.conversations.conversations) {
+        if (row.id == chat.selected && row.hidden) {
+            chat.selected = {};
+            chat.draft.clear();
+            chat.preview_message = {};
+            break;
+        }
+    }
 
     refresh_chat_stream(model);
     const aki::conversation::Conversation* conversation =
@@ -940,9 +918,41 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
             .build();
     }
 
-    float history_y = y + metrics.spacing.section + metrics.typography.subtitle
-        + metrics.spacing.tiny + metrics.typography.caption
-        + metrics.spacing.compact;
+    const float actions_y = y + metrics.spacing.section + metrics.typography.subtitle +
+                            metrics.spacing.tiny + metrics.typography.caption +
+                            metrics.spacing.compact;
+    const float pin_width = metrics.control.field * 3.0f;
+    const float hide_width = metrics.control.field * 3.0f;
+    components::button(ui, "aki.chat.pin")
+        .position(x + metrics.spacing.section, actions_y)
+        .size(pin_width, metrics.control.menuItem)
+        .text(tr(conversation->pinned ? "Unpin chat" : "Pin chat"))
+        .fontSize(metrics.typography.hint)
+        .theme(tokens, false)
+        .radius(metrics.radius.small)
+        .onClick([&model, id = conversation->id, pin = !conversation->pinned] {
+            const bool admitted = model.actions && model.actions->set_conversation_pinned &&
+                                  model.actions->set_conversation_pinned(id, pin);
+            set_feedback(model, admitted ? tr("Chat update requested")
+                                         : tr("Chat update rejected; retry"));
+        })
+        .build();
+    components::button(ui, "aki.chat.hide")
+        .position(x + metrics.spacing.section + pin_width + metrics.spacing.compact, actions_y)
+        .size(hide_width, metrics.control.menuItem)
+        .text(tr("Remove chat"))
+        .fontSize(metrics.typography.hint)
+        .theme(tokens, false)
+        .radius(metrics.radius.small)
+        .onClick([&model, id = conversation->id] {
+            const bool admitted = model.actions && model.actions->hide_conversation &&
+                                  model.actions->hide_conversation(id);
+            set_feedback(model, admitted ? tr("Removal requested; history is kept")
+                                         : tr("Chat update rejected; retry"));
+        })
+        .build();
+
+    float history_y = actions_y + metrics.control.menuItem + metrics.spacing.compact;
     // §3：Conversation Disconnected → 会话头部 warning 横条「连接断开，等待
     // 恢复」（恢复不新建会话）。
     if (conversation->state
@@ -998,6 +1008,7 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
             .text(tr(""))
             .icon(eui::utf8(0xF03E))  // §2.6 图片
             .fontSize(metrics.typography.body)
+            .disabled(!can_send_to(model, conversation->remote_device))
             .theme(tokens, false)
             .radius(metrics.radius.small)
             .onClick([&model, to = conversation->remote_device] {
@@ -1012,6 +1023,7 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
             .text(tr(""))
             .icon(eui::utf8(0xF0C6))
             .fontSize(metrics.typography.body)
+            .disabled(!can_send_to(model, conversation->remote_device))
             .theme(tokens, false)
             .radius(metrics.radius.small)
             .onClick([&model, to = conversation->remote_device] {
@@ -1026,6 +1038,7 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
             .text(tr(""))
             .icon(eui::utf8(0xF1D8))  // §2.6 发送
             .fontSize(metrics.typography.body)
+            .disabled(!can_send_to(model, conversation->remote_device))
             .theme(tokens, true)
             .iconColor(semantic.primary_foreground)
             .radius(metrics.radius.small)
@@ -1042,10 +1055,13 @@ void composeChatWindow(eui::Ui& ui, const ThemeColorTokens& tokens,
         metrics.control.menuItem);
     const std::string history_id =
         "aki.chat.history." + std::to_string(chat.history_scroll_gen);
-    const std::string measure_key = history_id + ":"
-        + std::to_string(chat.open_messages.size()) + ":"
-        + (chat.open_messages.empty() ? std::string()
-                                      : chat.open_messages.back().id.value);
+    const std::string measure_key =
+        history_id + ":" + std::to_string(chat.open_messages.size()) + ":" +
+        (chat.open_messages.empty() ? std::string() : chat.open_messages.back().id.value) + ":" +
+        std::to_string(static_cast<int>(language())) + ":" +
+        std::to_string(std::chrono::duration_cast<std::chrono::minutes>(
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count());
     components::scrollView(ui, history_id)
         .position(x + metrics.spacing.section, history_y)
         .size(width - metrics.spacing.section * 2.0f, history_height)

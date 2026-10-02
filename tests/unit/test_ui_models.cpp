@@ -17,14 +17,16 @@
 #include "app/lifecycle/executor_owner.hpp"
 #include "app/state/app_state_owner.hpp"
 #include "app/state/app_state_updates.hpp"
+#include "ui/models/local_file_path.hpp"
+#include "ui/models/message_time.hpp"
 #include "ui/models/ui_state_consumer.hpp"
 #include "ui/models/view_models.hpp"
-#include "ui/models/local_file_path.hpp"
 #include "ui/platform/window_backend_policy.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
+#include <ctime>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -253,15 +255,15 @@ TEST_CASE("Conversation views carry last-message summary per endpoints",
         make_text_message("m3", "local", "beta", "other conversation"));
 
     const auto views = derive_conversation_views(conversations, messages);
-    REQUIRE(views[0].last_message.has_value);
-    REQUIRE(views[0].last_message.id.value == "m2");
-    REQUIRE(views[0].last_message.type == aki::conversation::MessageType::Image);
-    REQUIRE(views[0].last_message.preview == "[image] cat.png");
-    // M5-05：最后消息方向（入站消息 → outbound=false，投递徽标不展示）。
-    REQUIRE_FALSE(views[0].last_message.outbound);
     REQUIRE(views[1].last_message.has_value);
-    REQUIRE(views[1].last_message.preview == "other conversation");
-    REQUIRE(views[1].last_message.outbound);
+    REQUIRE(views[1].last_message.id.value == "m2");
+    REQUIRE(views[1].last_message.type == aki::conversation::MessageType::Image);
+    REQUIRE(views[1].last_message.preview == "[image] cat.png");
+    // M5-05：最后消息方向（入站消息 → outbound=false，投递徽标不展示）。
+    REQUIRE_FALSE(views[1].last_message.outbound);
+    REQUIRE(views[0].last_message.has_value);
+    REQUIRE(views[0].last_message.preview == "other conversation");
+    REQUIRE(views[0].last_message.outbound);
 }
 
 TEST_CASE("Message views expose direction, media join and fallback",
@@ -722,4 +724,97 @@ TEST_CASE("Linux window backend keeps the XIM path when DISPLAY is available",
     using namespace aki::ui::platform;
     REQUIRE(linux_window_backend(true) == LinuxWindowBackend::X11);
     REQUIRE(linux_window_backend(false) == LinuxWindowBackend::Automatic);
+}
+
+TEST_CASE("Chat rows group pins then follow local message acceptance order",
+          "[unit][ui_models][dec027]") {
+    using namespace aki::conversation;
+    ConversationStore chats;
+    for (const auto* id : {"empty-a", "pin-old", "regular", "hidden", "pin-new", "empty-b"}) {
+        chats.conversations.push_back({ConversationId{id}, aki::device::DeviceId{"local"},
+                                       aki::device::DeviceId{id}, ConversationState::Disconnected});
+    }
+    chats.conversations[1].pinned = true;
+    chats.conversations[3].hidden = true;
+    chats.conversations[4].pinned = true;
+    MessageStore messages;
+    for (const auto* id : {"pin-old", "pin-new", "hidden", "regular"}) {
+        auto message = make_text_message(id, id, "local", id);
+        // Later accepted messages may carry older sender timestamps.
+        message.timestamp = std::chrono::system_clock::time_point{
+            std::chrono::seconds{100 - static_cast<int>(messages.messages.size())}};
+        messages.messages.push_back(message);
+    }
+    const auto rows = derive_conversation_views(chats, messages);
+    REQUIRE(rows.size() == 5);
+    REQUIRE(rows[0].id.value == "pin-new");
+    REQUIRE(rows[1].id.value == "pin-old");
+    REQUIRE(rows[2].id.value == "regular");
+    REQUIRE(rows[3].id.value == "empty-a");
+    REQUIRE(rows[4].id.value == "empty-b");
+    REQUIRE(rows[0].pinned);
+    REQUIRE_FALSE(rows[2].pinned);
+    REQUIRE(rows[2].state == ConversationState::Disconnected);
+}
+
+TEST_CASE("Message labels use local calendar weeks and yesterday precedence",
+          "[unit][ui_models][dec027]") {
+    using namespace std::chrono;
+    using aki::ui::Language;
+    const auto label = [](year_month_day date, year_month_day today,
+                          Language language = Language::Chinese) {
+        return format_local_message_time({date, 8, 5}, {today, 12, 0}, language);
+    };
+    const auto today = 2026y / October / 2; // Friday
+    REQUIRE(label(today, today) == "08:05");
+    REQUIRE(label(2026y / October / 1, today) == "昨天 08:05");
+    REQUIRE(label(2026y / September / 30, today) == "星期三 08:05");
+    REQUIRE(label(2026y / September / 28, today) == "星期一 08:05");
+    REQUIRE(label(2026y / September / 27, today) == "上周星期日 08:05");
+    REQUIRE(label(2026y / September / 21, today) == "上周星期一 08:05");
+    REQUIRE(label(2026y / September / 20, today) == "2026 年 09 月 20 日 08:05");
+    REQUIRE(label(2026y / September / 27, 2026y / September / 28) == "昨天 08:05");
+    REQUIRE(label(2025y / December / 31, 2026y / January / 1) == "昨天 08:05");
+    REQUIRE(label(2024y / February / 29, 2024y / March / 1) == "昨天 08:05");
+    REQUIRE(label(2026y / October / 3, today) == "2026 年 10 月 03 日 08:05");
+    REQUIRE(label(2026y / September / 27, today, Language::English) == "Last week Sunday 08:05");
+    REQUIRE(label(2026y / September / 20, today, Language::English) == "2026-09-20 08:05");
+    REQUIRE(label(2026y / October / 1, today, Language::English) == "Yesterday 08:05");
+    REQUIRE(label(2026y / February / 30, today) == "--:--");
+    REQUIRE(format_local_message_time({today, 24, 0}, {today, 0, 0}, Language::Chinese) == "--:--");
+    REQUIRE(format_message_time({}, system_clock::now(), Language::Chinese) == "--:--");
+    const auto now = system_clock::now();
+    REQUIRE(format_message_time(now, now, Language::Chinese).size() == 5);
+}
+
+TEST_CASE("Local message labels compare civil days across daylight saving changes", "[unit][ui_models][dec027]") {
+    const auto local_point = [](int day, int hour) {
+        std::tm value{};
+        value.tm_year = 2026 - 1900;
+        value.tm_mon = 2;
+        value.tm_mday = day;
+        value.tm_hour = hour;
+        value.tm_min = 30;
+        value.tm_isdst = -1;
+        const auto raw = std::mktime(&value);
+        REQUIRE(raw != std::time_t{-1});
+        return std::chrono::system_clock::from_time_t(raw);
+    };
+    REQUIRE(format_message_time(local_point(8, 1), local_point(9, 0), aki::ui::Language::Chinese)
+        == "昨天 01:30");
+}
+
+TEST_CASE("Basic send availability follows connection rather than trust", "[unit][ui_models][dec027]") {
+    DeviceView peer;
+    for (const auto trust : {aki::device::TrustState::Unknown, aki::device::TrustState::Pending,
+        aki::device::TrustState::Trusted, aki::device::TrustState::Rejected, aki::device::TrustState::Revoked}) {
+        peer.trust_state = trust;
+        peer.connection_path = aki::device::ConnectionPath::Unknown;
+        REQUIRE_FALSE(peer.can_send_basic());
+        for (const auto path : {aki::device::ConnectionPath::Lan, aki::device::ConnectionPath::P2p,
+            aki::device::ConnectionPath::Relay}) {
+            peer.connection_path = path;
+            REQUIRE(peer.can_send_basic());
+        }
+    }
 }
