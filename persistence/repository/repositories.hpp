@@ -62,6 +62,8 @@ public:
         std::size_t cache_capacity = 16);
 
     void upsert(const aki::conversation::Conversation& conversation);
+    void set_pinned(const aki::conversation::ConversationId& id, bool pinned);
+    void set_hidden(const aki::conversation::ConversationId& id, bool hidden);
     [[nodiscard]] std::optional<aki::conversation::Conversation> find(
         const aki::conversation::ConversationId& conversation_id);
     [[nodiscard]] std::vector<aki::conversation::Conversation> load_all();

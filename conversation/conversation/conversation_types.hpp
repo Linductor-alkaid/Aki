@@ -72,6 +72,9 @@ struct Conversation {
     DeviceId local_device;
     DeviceId remote_device;
     ConversationState state = ConversationState::Active;
+    // Local list preferences, independent from reachability/Archived. DEC-027.
+    bool pinned = false;
+    bool hidden = false;
 
     friend bool operator==(const Conversation&, const Conversation&) = default;
 };

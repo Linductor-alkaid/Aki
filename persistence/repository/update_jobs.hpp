@@ -38,6 +38,9 @@ namespace aki::persistence {
 [[nodiscard]] DbJob make_device_inbound_trust_job(aki::device::DeviceId device,
     bool inbound_trust);
 
+[[nodiscard]] DbJob make_conversation_pin_job(aki::conversation::ConversationId id, bool pinned);
+[[nodiscard]] DbJob make_conversation_hidden_job(aki::conversation::ConversationId id, bool hidden);
+
 // UpsertConversation → CONVERSATION 整行 upsert。
 [[nodiscard]] DbJob make_conversation_upsert_job(
     aki::conversation::Conversation conversation);

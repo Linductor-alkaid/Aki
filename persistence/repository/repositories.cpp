@@ -45,6 +45,13 @@ using aki::transfer::TransferState;
         + " for " + column + " (database content is not a known enum)");
 }
 
+bool preference_from(std::int64_t value, const char* column) {
+    if (value != 0 && value != 1) {
+        throw std::runtime_error(std::string("persistence: invalid boolean for ") + column);
+    }
+    return value == 1;
+}
+
 int to_int(TrustState v) noexcept { return static_cast<int>(v); }
 int to_int(DeviceClass v) noexcept { return static_cast<int>(v); }
 int to_int(MessageType v) noexcept { return static_cast<int>(v); }
@@ -337,25 +344,28 @@ ConversationRepository::ConversationRepository(Database& database,
 
 void ConversationRepository::upsert(const Conversation& conversation) {
     run_cached(cache_,
-        "INSERT INTO conversation (conversation_id, local_device,"
-        " remote_device, state) VALUES (?1, ?2, ?3, ?4)"
-        " ON CONFLICT (conversation_id) DO UPDATE SET"
-        " local_device = excluded.local_device,"
-        " remote_device = excluded.remote_device,"
-        " state = excluded.state;",
-        [&](Statement& statement) {
-            statement.bind(1, conversation.id.value);
-            statement.bind(2, conversation.local_device.value);
-            statement.bind(3, conversation.remote_device.value);
-            statement.bind(4, to_int(conversation.state));
-            (void)statement.step();
-        });
+               "INSERT INTO conversation (conversation_id, local_device,"
+               " remote_device, state, pinned, hidden) VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+               " ON CONFLICT (conversation_id) DO UPDATE SET"
+               " local_device = excluded.local_device,"
+               " remote_device = excluded.remote_device,"
+               " state = excluded.state;",
+               [&](Statement& statement) {
+                   statement.bind(1, conversation.id.value);
+                   statement.bind(2, conversation.local_device.value);
+                   statement.bind(3, conversation.remote_device.value);
+                   statement.bind(4, to_int(conversation.state));
+                   statement.bind(5, conversation.pinned ? 1 : 0);
+                   statement.bind(6, conversation.hidden ? 1 : 0);
+                   (void)statement.step();
+               });
 }
 
 std::optional<Conversation> ConversationRepository::find(
     const ConversationId& conversation_id) {
-    return run_cached(cache_,
-        "SELECT conversation_id, local_device, remote_device, state"
+    return run_cached(
+        cache_,
+        "SELECT conversation_id, local_device, remote_device, state, pinned, hidden"
         " FROM conversation WHERE conversation_id = ?1;",
         [&](Statement& statement) -> std::optional<Conversation> {
             statement.bind(1, conversation_id.value);
@@ -368,13 +378,19 @@ std::optional<Conversation> ConversationRepository::find(
             conversation.remote_device = DeviceId{statement.column_text(2)};
             conversation.state = conversation_state_from(
                 static_cast<int>(statement.column_int64(3)));
+            conversation.pinned = preference_from(statement.column_int64(4), "pinned");
+            conversation.hidden = preference_from(statement.column_int64(5), "hidden");
+            if (conversation.hidden && conversation.pinned) {
+                throw std::runtime_error("persistence: hidden conversation cannot be pinned");
+            }
             return conversation;
         });
 }
 
 std::vector<Conversation> ConversationRepository::load_all() {
-    return run_cached(cache_,
-        "SELECT conversation_id, local_device, remote_device, state"
+    return run_cached(
+        cache_,
+        "SELECT conversation_id, local_device, remote_device, state, pinned, hidden"
         " FROM conversation ORDER BY rowid;",
         [&](Statement& statement) {
             std::vector<Conversation> result;
@@ -385,10 +401,39 @@ std::vector<Conversation> ConversationRepository::load_all() {
                 conversation.remote_device = DeviceId{statement.column_text(2)};
                 conversation.state = conversation_state_from(
                     static_cast<int>(statement.column_int64(3)));
+                conversation.pinned = preference_from(statement.column_int64(4), "pinned");
+                conversation.hidden = preference_from(statement.column_int64(5), "hidden");
+                if (conversation.hidden && conversation.pinned) {
+                    throw std::runtime_error("persistence: hidden conversation cannot be pinned");
+                }
                 result.push_back(std::move(conversation));
             }
             return result;
         });
+}
+
+void ConversationRepository::set_pinned(const ConversationId& id, bool pinned) {
+    run_cached(cache_, "UPDATE conversation SET pinned=?2 WHERE conversation_id=?1;",
+               [&](Statement& statement) {
+                   statement.bind(1, id.value);
+                   statement.bind(2, pinned ? 1 : 0);
+                   (void)statement.step();
+                   if (database_->changes() == 0)
+                       throw_unknown_row("conversation pin");
+               });
+}
+
+void ConversationRepository::set_hidden(const ConversationId& id, bool hidden) {
+    run_cached(cache_,
+               "UPDATE conversation SET hidden=?2, pinned=CASE WHEN ?2=1 THEN 0 ELSE pinned END "
+               "WHERE conversation_id=?1;",
+               [&](Statement& statement) {
+                   statement.bind(1, id.value);
+                   statement.bind(2, hidden ? 1 : 0);
+                   (void)statement.step();
+                   if (database_->changes() == 0)
+                       throw_unknown_row("conversation visibility");
+               });
 }
 
 // ---- MessageRepository ----

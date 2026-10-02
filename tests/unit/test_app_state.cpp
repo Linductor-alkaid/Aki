@@ -822,10 +822,8 @@ TEST_CASE("UpsertMessage with unknown conversation is rejected by the owner",
 TEST_CASE("Idempotent no-op acceptance enqueues and is absorbed by the job",
     "[unit][app_state][dec009]") {
     auto db = aki::persistence::Database::open(":memory:");
-    // DEC-021：schema_steps 增至三步（第 3 步 device-inbound-trust）。
-    REQUIRE(aki::persistence::Migrator(aki::persistence::schema_steps())
-                .bring_up_to_date(db)
-        == 3);
+    // DEC-027：schema_steps 增至四步。
+    REQUIRE(aki::persistence::Migrator(aki::persistence::schema_steps()).bring_up_to_date(db) == 4);
     auto control = std::make_shared<aki::persistence::DatabaseWorkerControl>(
         std::make_unique<aki::persistence::Repositories>(std::move(db)));
     control->repositories().transfers.upsert(
@@ -965,4 +963,59 @@ TEST_CASE("Archive failure and successful replay use the bounded update channel"
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.transfers.local_artifacts[0].error.empty());
     REQUIRE(snapshot.value.transfers.local_artifacts[0].available);
+}
+
+TEST_CASE("Local chat preferences survive connection updates and reveal atomically",
+          "[unit][app_state][dec027]") {
+    AppState seed;
+    auto conversation = make_conversation("chat", ConversationState::Active);
+    seed.conversations.conversations.push_back(conversation);
+    AppStateOwnerOptions options;
+    options.limits.max_messages = 1;
+    AppStateOwner owner{options, seed};
+    const auto apply = [&](AppStateUpdate update) {
+        REQUIRE(owner.submit_update(std::move(update)));
+        owner.drain();
+    };
+    const auto current = [&] {
+        executor::comm::Snapshot<AppState> snapshot;
+        REQUIRE(owner.try_load_snapshot(snapshot));
+        return snapshot.value;
+    };
+    const ConversationId id{"chat"};
+    apply(aki::app::SetConversationPinned{id, true});
+    REQUIRE(current().conversations.conversations[0].pinned);
+    conversation.state = ConversationState::Disconnected;
+    apply(UpsertConversation{conversation});
+    REQUIRE(current().conversations.conversations[0].pinned);
+    apply(aki::app::SetConversationHidden{id, true});
+    REQUIRE(current().conversations.conversations[0].hidden);
+    REQUIRE_FALSE(current().conversations.conversations[0].pinned);
+    const auto rejected = owner.stats().updates_rejected;
+    apply(aki::app::SetConversationPinned{id, true});
+    apply(aki::app::SetConversationHidden{ConversationId{"missing"}, true});
+    REQUIRE(owner.stats().updates_rejected == rejected + 2);
+    // Outbound insertion, ACK and duplicate replay retain the hidden row.
+    auto outbound = make_message("old", DeliveryState::Sent);
+    apply(UpsertMessage{outbound, id});
+    apply(aki::app::SetDeliveryState{outbound.id, DeliveryState::Delivered});
+    outbound.state = DeliveryState::Delivered;
+    apply(UpsertMessage{outbound, id});
+    REQUIRE(current().conversations.conversations[0].hidden);
+    auto inbound = make_message("new", DeliveryState::Delivered);
+    std::swap(inbound.sender, inbound.receiver);
+    apply(UpsertMessage{inbound, id}); // Rejected by max_messages: do not reveal.
+    REQUIRE(current().conversations.conversations[0].hidden);
+    REQUIRE(current().messages.messages.size() == 1);
+    REQUIRE(owner.stats().updates_rejected == rejected + 3);
+
+    AppState hidden_seed = current();
+    hidden_seed.messages.messages.clear();
+    AppStateOwner accepting{AppStateOwnerOptions{}, hidden_seed};
+    REQUIRE(accepting.submit_update(UpsertMessage{inbound, id}));
+    accepting.drain();
+    executor::comm::Snapshot<AppState> restored;
+    REQUIRE(accepting.try_load_snapshot(restored));
+    REQUIRE_FALSE(restored.value.conversations.conversations[0].hidden);
+    REQUIRE(restored.value.messages.messages.size() == 1);
 }

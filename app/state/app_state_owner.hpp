@@ -417,6 +417,8 @@ private:
     }
 
     bool apply_impl(const UpsertConversation& upsert) {
+        if (upsert.conversation.pinned && upsert.conversation.hidden)
+            return false;
         auto& conversations = current_.conversations.conversations;
         for (auto& existing : conversations) {
             if (!(existing.id == upsert.conversation.id)) {
@@ -425,7 +427,11 @@ private:
             if (!state_machine_allows(existing.state, upsert.conversation.state)) {
                 return false;
             }
+            const bool pinned = existing.pinned;
+            const bool hidden = existing.hidden;
             existing = upsert.conversation;
+            existing.pinned = pinned;
+            existing.hidden = hidden;
             snapshot_dirty_ = true;
             return true;
         }
@@ -435,6 +441,34 @@ private:
         conversations.push_back(upsert.conversation);
         snapshot_dirty_ = true;
         return true;
+    }
+
+    bool apply_impl(const SetConversationPinned& update) {
+        for (auto& row : current_.conversations.conversations) {
+            if (row.id != update.conversation)
+                continue;
+            if (row.hidden && update.pinned)
+                return false;
+            row.pinned = update.pinned;
+            snapshot_dirty_ = true;
+            return true;
+        }
+        return false;
+    }
+
+    bool apply_impl(const SetConversationHidden& update) {
+        for (auto& row : current_.conversations.conversations) {
+            if (row.id != update.conversation)
+                continue;
+            if (!update.hidden && aki::conversation::is_terminal(row.state))
+                return false;
+            row.hidden = update.hidden;
+            if (row.hidden)
+                row.pinned = false;
+            snapshot_dirty_ = true;
+            return true;
+        }
+        return false;
     }
 
     bool apply_impl(const UpsertMessage& upsert) {
@@ -466,6 +500,16 @@ private:
             return false;
         }
         messages.push_back(upsert.message);
+        // Reveal only a successfully inserted, new inbound message. Delivery
+        // updates and replayed IDs above never reopen a dismissed row.
+        for (auto& row : current_.conversations.conversations) {
+            if (row.id == upsert.conversation && row.remote_device == upsert.message.sender &&
+                row.local_device == upsert.message.receiver &&
+                !aki::conversation::is_terminal(row.state)) {
+                row.hidden = false;
+                break;
+            }
+        }
         snapshot_dirty_ = true;
         return true;
     }

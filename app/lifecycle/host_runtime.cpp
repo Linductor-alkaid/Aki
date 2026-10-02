@@ -164,29 +164,30 @@ private:
                     jobs.push_back(
                         aki::persistence::make_conversation_upsert_job(
                             concrete.conversation));
-                } else if constexpr (std::is_same_v<Update,
-                                       aki::app::UpsertMessage>) {
+                } else if constexpr (std::is_same_v<Update, aki::app::SetConversationPinned>) {
+                    jobs.push_back(aki::persistence::make_conversation_pin_job(
+                        concrete.conversation, concrete.pinned));
+                } else if constexpr (std::is_same_v<Update, aki::app::SetConversationHidden>) {
+                    jobs.push_back(aki::persistence::make_conversation_hidden_job(
+                        concrete.conversation, concrete.hidden));
+                } else if constexpr (std::is_same_v<Update, aki::app::UpsertMessage>) {
                     jobs.push_back(
                         aki::persistence::make_message_upsert_job(
                             concrete.message, concrete.conversation));
-                } else if constexpr (std::is_same_v<Update,
-                                       aki::app::UpsertTransfer>) {
+                } else if constexpr (std::is_same_v<Update, aki::app::UpsertTransfer>) {
                     jobs.push_back(
                         aki::persistence::make_transfer_upsert_job(
                             concrete.transfer));
-                } else if constexpr (std::is_same_v<Update,
-                                       aki::app::UpdateTransferProgress>) {
+                } else if constexpr (std::is_same_v<Update, aki::app::UpdateTransferProgress>) {
                     jobs.push_back(
                         aki::persistence::make_transfer_progress_job(
                             concrete.transfer, concrete.transferred,
                             concrete.total));
-                } else if constexpr (std::is_same_v<Update,
-                                       aki::app::SetDeliveryState>) {
+                } else if constexpr (std::is_same_v<Update, aki::app::SetDeliveryState>) {
                     jobs.push_back(
                         aki::persistence::make_message_delivery_job(
                             concrete.message, concrete.state));
-                } else if constexpr (std::is_same_v<Update,
-                                       aki::app::CompleteTransfer>) {
+                } else if constexpr (std::is_same_v<Update, aki::app::CompleteTransfer>) {
                     if (concrete.final_state == TransferState::Completed) {
                         jobs.push_back(
                             aki::persistence::make_transfer_complete_job(

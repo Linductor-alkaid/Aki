@@ -41,6 +41,22 @@ DbJob make_device_inbound_trust_job(aki::device::DeviceId device,
                  }, std::move(done)};
 }
 
+DbJob make_conversation_pin_job(aki::conversation::ConversationId id, bool pinned) {
+    auto done = std::make_shared<std::promise<void>>();
+    return DbJob{[id = std::move(id), pinned](Repositories& repos) {
+                     repos.conversations.set_pinned(id, pinned);
+                 },
+                 std::move(done)};
+}
+
+DbJob make_conversation_hidden_job(aki::conversation::ConversationId id, bool hidden) {
+    auto done = std::make_shared<std::promise<void>>();
+    return DbJob{[id = std::move(id), hidden](Repositories& repos) {
+                     repos.conversations.set_hidden(id, hidden);
+                 },
+                 std::move(done)};
+}
+
 DbJob make_conversation_upsert_job(
     aki::conversation::Conversation conversation) {
     auto done = std::make_shared<std::promise<void>>();
@@ -54,12 +70,21 @@ DbJob make_conversation_upsert_job(
 DbJob make_message_upsert_job(aki::conversation::Message message,
     aki::conversation::ConversationId conversation_id) {
     auto done = std::make_shared<std::promise<void>>();
-    return DbJob{
-        [message = std::move(message),
-            conversation_id = std::move(conversation_id)](Repositories& repos) {
-            repos.messages.upsert(message, conversation_id);
-        },
-        std::move(done)};
+    return DbJob{[message = std::move(message),
+                  conversation_id = std::move(conversation_id)](Repositories& repos) {
+                     Transaction transaction(repos.database);
+                     const bool inserted = !repos.messages.find(message.id).has_value();
+                     const auto conversation = repos.conversations.find(conversation_id);
+                     repos.messages.upsert(message, conversation_id);
+                     if (inserted && conversation && conversation->hidden &&
+                         !aki::conversation::is_terminal(conversation->state) &&
+                         message.sender == conversation->remote_device &&
+                         message.receiver == conversation->local_device) {
+                         repos.conversations.set_hidden(conversation_id, false);
+                     }
+                     transaction.commit();
+                 },
+                 std::move(done)};
 }
 
 DbJob make_message_delivery_job(aki::conversation::MessageId message,

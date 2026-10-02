@@ -107,7 +107,7 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     restored.state = aki::conversation::ConversationState::Disconnected;
     {
         auto seeded = aki::persistence::perform_startup_recovery(data_root.string());
-        REQUIRE(seeded.diagnostics.migrations_applied == 3);
+        REQUIRE(seeded.diagnostics.migrations_applied == 4);
         for (const auto& id : {restored.local_device, restored.remote_device}) {
             aki::device::DeviceIdentity row;
             row.id = id;

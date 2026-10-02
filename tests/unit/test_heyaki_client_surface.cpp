@@ -73,10 +73,9 @@ int main() {
     // 就是该副本的版本（RULE-10：本 TU 不直接接触 sqlite3.h）。
     aki::persistence::Database db =
         aki::persistence::Database::open(":memory:");
-    if (aki::persistence::Migrator(aki::persistence::schema_steps())
-            .bring_up_to_date(db)
-        // DEC-021：迁移第 3 步 device-inbound-trust——2→3。
-        != 3) {
+    if (aki::persistence::Migrator(aki::persistence::schema_steps()).bring_up_to_date(db)
+        // DEC-027：完整迁移链增至四步。
+        != 4) {
         std::puts("[FAIL] current schema migration should apply three steps");
         return 1;
     }
