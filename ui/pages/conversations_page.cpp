@@ -315,7 +315,7 @@ void compose_bubble_meta(eui::Ui& ui, const ThemeColorTokens& tokens,
     const auto& metrics = tokens.metrics;
     ui.stack(id)
         .width(inner_width)
-        .wrapContent()
+        .height(core::SizeValue::wrapContent())
         .content([&] {
             components::text(ui, id + ".time")
                 .text(time_label(message.timestamp))
