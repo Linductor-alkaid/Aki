@@ -357,6 +357,8 @@ TEST_CASE("Unanswered file offers produce one failure without grants or disk eff
     REQUIRE(wrong_id == 0);
 }
 
+// HEY-20261002-002 / Heyaki #16: keep this cancellation regression enabled.
+// send_abort may synchronously retire the session; ASAN/TSAN catch stale sender/service access.
 TEST_CASE("Cancelling an unanswered offer wins before expiry with one terminal", "[integration][basic_communication][file_offer]") {
     std::atomic<unsigned> offered{0}, failed{0}, cancelled{0}, committed{0};
     Pair pair(true, false, 5s);

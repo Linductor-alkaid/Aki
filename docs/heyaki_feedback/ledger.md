@@ -189,3 +189,33 @@ paused=1 / linked=0，是上游明确保留的“拒绝后后续 push 破坏会�
   shutdown 与两种拒绝序列；独立管理上游，Aki 不直接改依赖。
 - Aki 回归保留 budget 内 Failed 或 Paused+最终断连可见，未声称保持会话已
   修复。补跑条件为上游固定后复验 ASAN/TSAN/双端策略矩阵。
+
+
+## HEY-20261002-002：取消文件同步关闭会话后访问已释放状态
+
+- 状态 Reported：[Heyaki #16](https://github.com/Linductor-alkaid/heyaki/issues/16)。
+  关联 M5-42 的 CI 门禁及 M5-34/40 的文件取消；负责人 Linductor/Heyaki 上游。
+- 版本 516815cbfb76f93f60acd4b58e5b6a7976e4417f，Aki head
+  c3eab1a41299c1bd46f10c254a01a7af0d789d3a；CI run 36979577214。
+  ASAN job 110751103417、TSAN job 110751103502 的全量测试均 44/45，
+  唯一失败为 test_basic_communication_loopback。TSAN 248 assertions /
+  6 cases 虽通过，真实 heap-use-after-free 使进程失败，不标为通过。
+- 原有“Cancelling an unanswered offer wins before expiry with one terminal”
+  用例：新身份、零 grant、单 Executor/two borrowed Runtime；A basic=true、
+  B=false，push→offered→到期前 public Node cancel。Nodes/observer owner
+  均仍存活，未提前关闭 Aki；不属于应用 shutdown 误用。
+- 同一 strand 内 cancel_transfer 获得 SenderState*，file_service.cpp:372
+  send_abort→PeerSession send_frame/pump/fail/notify→Node teardown_peer_services
+  →FileService handle_session_closed:466→senders_.clear；返回 :373 再写
+  sender->terminal，ASAN/TSAN 均报告已释放 map 节点。同一线程同步重入。
+  TSAN 后续还报告退役 FileService 的成员访问，须同时保留 service 的生命期。
+- 影响：取消尚未接收的 offer 可能访问释放内存；本地曾通过不能替代本次
+  两类 sanitizer 证据。与 #15 的通道拒绝后复用/断连停车分开跟踪。
+- 期望最小修复：不跨 send/callback 持有 map 裸引用，先快照/退役状态或
+  每次可重入调用后按稳定 TransferId 重新校验，保留当前 service 所有权；
+  审查 receiver cancel/相邻 abort 路径。终态、book/磁盘清理幂等，结果明确。
+- 验收：注入 send_abort 同步失败→teardown 的确定性回归，再跑取消先于
+  deadline、迟到/重复取消、严格策略拒绝、重连/关闭的 Debug/ASAN/TSAN。
+  Aki 不修改 pinned 源码、不压制报告或删测试；PR #68 的合并/新包交付
+  暂缓。上游 master 当前仅新增 Executor pin 升级，未修改此 FileService
+  路径。待上游修复后独立接入、重跑完整七项 CI 与双端验收。

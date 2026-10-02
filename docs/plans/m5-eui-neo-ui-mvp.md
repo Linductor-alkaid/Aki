@@ -140,6 +140,15 @@ DST 定向 30 assertions / 3 cases 通过，civil day 比较正确处理不足 2
 置顶/移除/重开和跨设备新收件恢复由操作者验收，不标完成。负责人
 Linductor/操作者，补跑条件为新包安装；跨设备部分待 Windows 恢复在线。
 
+M5-42 CI 阻塞（2026-10-02）：源代码 head c3eab1a / run 36979577214
+的 ASAN、TSAN 各 44/45，均在既有 basic communication 文件取消回环
+报告 Heyaki cancel_transfer:373 的 heap-use-after-free；源于 abort 同步
+会话退役清空 sender 后仍写旧指针，并非新增会话字段/日期单测失败。
+已登记 HEY-20261002-002 并提交 Heyaki #16；遵循独立依赖管理，不直接
+修改 third_party、不重跑掩盖内存错误。PR #68 保留待修复，未合并/交付
+新安装包。负责人 Linductor/Heyaki 上游；上游固定修复后独立接入，补
+完整七项 CI 与安装版验收，M5-42 继续 In Progress。
+
 ## M5-41：免信任首次建链与双向信任实时校准
 
 > 状态：In Progress；日期：2026-10-02；负责人：Linductor。
