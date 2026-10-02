@@ -868,3 +868,7 @@ pair_peer））。
 免信任首次建链、同连接上的双向 grant 校准以及接收端首条消息的会话归属
 顺序。使用现有 Executor timer / Manager MpscChannel，控制权限保持独立，
 代码、sanitizer/CI 与两端安装版验收见 M5 工作项，当前 In Progress。
+
+2026-10-02：新增 M5-42 会话列表管理与跨日期时间（DEC-027）。用户确认
+移除仅隐藏列表并保留历史，新消息恢复；偏好落库、置顶/最近活动排序及
+本地日历时间由 Application/Presentation 边界接入，当前 In Progress。

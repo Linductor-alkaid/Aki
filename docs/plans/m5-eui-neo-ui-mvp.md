@@ -110,6 +110,36 @@ Linux CI 包 SHA256：58878a74fb2df636e37de7a78f5b50cf3e54624f12624741fe3002ed38
 包内 aki SHA256：5291c24f87ae0a17c5732331ba0a427ead733f0db1d0a801390425425b4a7a89；
 amd64/0.1.0、desktop-file-validate 通过。安装版跨平台验收仍待操作者。
 
+## M5-42：会话列表管理与跨日期时间
+
+> 状态：In Progress；日期：2026-10-02；负责人：Linductor。
+> 依据：[DEC-027](../decisions/DEC-027-conversation-list-management.md)。
+
+- [ ] `M5-42` 移出列表并保留历史，新消息恢复；置顶/取消置顶与本地偏好
+  持久化；置顶组优先、组内新消息按接受顺序提升；离线历史可选中管理。
+  今天/昨天/本周/上周/完整日期，中英文、本地日历和窄栏换行均有定义。
+  迁移、重开、Manager/owner 顺序与失败、排序和日历边界单测；Debug /
+  sanitizer / 最新 head 七项 CI 与桌面实测后完成。Windows 当前离线，
+  跨平台安装版验收待恢复在线，负责人 Linductor/操作者。
+
+M5-42 实现复核：现有 ManagerPump/owner/DB worker 承载字段更新，未引入
+线程、队列或 timer。迁移旧库保留历史，连接 upsert 保留偏好；新收件与
+重新显示同一事务，故障注入证明回滚时两者都不落地；重复消息/ACK、
+出站消息及预算拒绝保持隐藏。离线历史可打开，发送控件与 Enter 仅按
+连接路径门控，Unknown/Pending/Rejected/Revoked 不影响基础发送。
+
+验证过程：首轮 Debug 因旧迁移步数断言与新增探针版本冲突失败，更新
+全量迁移 fixture 和第五步探针后，全量 Debug 45/45（76.33s）。首轮 ASAN
+定位 Statement 移动赋值遗漏 finalize，泄漏 113712 bytes；修正 RAII 与
+独立关闭回归后，ASAN 9/9（10.75s）、UBSAN 9/9（13.24s）。纽约时区
+DST 定向 30 assertions / 3 cases 通过，civil day 比较正确处理不足 24h
+的“昨天”。最后发送可用性 UI 两项 Debug 回归 2/2（0.03s），纽约 DST 与连接/信任
+策略定向 50 assertions / 4 cases 通过；最终 ASAN 9/9（15.53s）、UBSAN
+9/9（16.55s）。aki GUI 构建通过；精确 head CI 和安装版实测仍待记录。
+本机无法通过当前工具操作 native GUI；深浅色、中英文、窄栏时间换行、
+置顶/移除/重开和跨设备新收件恢复由操作者验收，不标完成。负责人
+Linductor/操作者，补跑条件为新包安装；跨设备部分待 Windows 恢复在线。
+
 ## M5-41：免信任首次建链与双向信任实时校准
 
 > 状态：In Progress；日期：2026-10-02；负责人：Linductor。
@@ -151,6 +181,14 @@ UBSAN 同组 2/2（9.97s）。本机 TSAN 的既有 memory mapping 环境限制
 待补跑：最新 head 七项 CI；Ubuntu/Windows 新安装版未授权建聊、首条
 收件与回复、双向密码认证后两端同步显示互信。负责人 Linductor/操作者，
 条件为两端安装本次 CI 包并保持同一局域网；M5-41 继续 In Progress。
+
+M5-41 CI/交付补充：PR #67 的精确 head 857c11f1e145e2869354e71c93b9dd4fe9738368，
+run 36912291056 首轮 Windows checkout 网络失败；attempt 2 七项全部
+completed/success 后 Squash 合入 master 2c930608db8759a89753f02f4d623c96a3185293。
+操作者已安装并重开 Ubuntu，运行 /opt/aki/aki SHA256 为
+2ddc43f1013ca8a7936f6fdfb5a989007a5d605ae64e42041b994157702b1481，
+与 CI 包一致。Windows 已离线，双端未信任收发及双向信任刷新仍待复验；
+先前“最新 head CI 待补”已完成，M5-41 保持 In Progress。
 
 ## M5-40：Heyaki 文件协商终态修复接入
 
