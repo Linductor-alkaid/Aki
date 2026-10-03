@@ -9,9 +9,9 @@
 
 | 依赖 | 引入方式 | 版本 | 许可证 | 审计记录 |
 | --- | --- | --- | --- | --- |
-| executor | submodule（pinned `74a9419`） | v0.5.0-7 | MIT | [DEC-003](../decisions/DEC-003-dependency-locking.md)（M0 冻结，升级走独立变更后在此补登记） |
+| executor | submodule（pinned `e236273`） | v0.5.2-20-ge236273 | MIT | [heyaki-file-cancel-reentry.md](heyaki-file-cancel-reentry.md)（M5-43 同步升级）；[DEC-003](../decisions/DEC-003-dependency-locking.md) |
 | EUI-NEO | submodule（pinned `b9032a8`） | v0.6.0 | Apache-2.0 | 同上；assets 许可证审计为发行前检查项（设计第 9 节） |
-| heyaki | submodule（pinned `516815c`） | v1.1.1-2-g516815c | MIT | [heyaki-file-offer-deadline.md](heyaki-file-offer-deadline.md)（M5-40，回归进行中）；[原升级](heyaki-v1.1.1.md) |
+| heyaki | submodule（pinned `7e9758a`） | v1.1.1-4-g7e9758a | MIT | [heyaki-file-cancel-reentry.md](heyaki-file-cancel-reentry.md)（M5-43）；[offer 修复](heyaki-file-offer-deadline.md)；[原升级](heyaki-v1.1.1.md) |
 | sqlite | vendored（仅 `sqlite3.c`/`sqlite3.h`） | 3.53.4 | public domain | [sqlite-3.53.4.md](sqlite-3.53.4.md)（M2-08，2026-09-23） |
 
 升级流程（DEC-003 / 工程规范 10.7）：任何依赖升级为独立变更——更新

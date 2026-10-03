@@ -6,13 +6,13 @@
             "name": "executor",
             "path": "third_party/executor",
             "url": "https://github.com/Linductor-alkaid/executor.git",
-            "commit": "74a94198fbe0f2a4081cd260658a26f969986870",
-            "version": "v0.5.0-7-g74a9419",
+            "commit": "e2362736c697cb215e914b3f1cdfeedb0c1544d6",
+            "version": "v0.5.2-20-ge236273",
             "license": "MIT",
             "license_file": "third_party/executor/LICENSE",
             "class": "pinned",
             "submodule": true,
-            "used_by": "M3-01 起经 heyaki 单图间接进入构建（DEC-006：双侧同 pin 74a94198，构建图内单份 executor；configure 三方一致性校验）"
+            "used_by": "M3-01 起经 heyaki 单图间接进入构建（DEC-006；M5-43 双侧同步 pin e2362736，configure 三方一致性校验）"
         },
         {
             "name": "EUI-NEO",
@@ -41,8 +41,8 @@
             "name": "heyaki",
             "path": "third_party/heyaki",
             "url": "https://github.com/Linductor-alkaid/heyaki.git",
-            "commit": "516815cbfb76f93f60acd4b58e5b6a7976e4417f",
-            "version": "v1.1.1-2-g516815c",
+            "commit": "7e9758a370d047db1e511b50627c7f3b3edc78e2",
+            "version": "v1.1.1-4-g7e9758a",
             "license": "MIT",
             "license_file": "third_party/heyaki/LICENSE",
             "class": "pinned",
