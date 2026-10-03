@@ -104,11 +104,10 @@ struct WorkerFixture {
         DatabaseWorkerOptions worker_options = {})
         : path(temp_db_path(tag)) {
         auto database = Database::open(path);
-        REQUIRE(aki::persistence::Migrator(
-                    aki::persistence::schema_steps())
-                    .bring_up_to_date(database)
-            // DEC-021：迁移第 3 步 device-inbound-trust——2→3。
-            == 3);
+        REQUIRE(
+            aki::persistence::Migrator(aki::persistence::schema_steps()).bring_up_to_date(database)
+            // DEC-027：完整迁移链增至四步。
+            == 4);
         control = std::make_shared<DatabaseWorkerControl>(
             std::make_unique<Repositories>(std::move(database),
                 worker_options.repository_cache_capacity),

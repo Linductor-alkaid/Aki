@@ -210,3 +210,65 @@ TEST_CASE("UiActions wire id generation is canonical and unique",
     });
     REQUIRE(report.fully_stopped());
 }
+
+TEST_CASE("Chat actions preserve hidden history and only new inbound messages reveal it",
+          "[unit][ui_actions][dec027]") {
+    ActionStack stack{"chat-controls"};
+    const aki::conversation::ConversationId id{"conv-alpha"};
+    REQUIRE(stack.actions.ensure_conversation(aki::device::DeviceId{"local"},
+                                              aki::device::DeviceId{"alpha"}));
+    stack.quiesce();
+    auto message = aki::conversation::Message{};
+    message.id = aki::conversation::MessageId{"existing"};
+    message.sender = aki::device::DeviceId{"alpha"};
+    message.receiver = aki::device::DeviceId{"local"};
+    message.payload = aki::conversation::TextPayload{"history"};
+    message.state = aki::conversation::DeliveryState::Delivered;
+    REQUIRE(stack.state.submit_update(UpsertMessage{message, id}));
+    stack.quiesce();
+    REQUIRE(stack.actions.set_conversation_pinned(id, true));
+    stack.quiesce();
+    executor::comm::Snapshot<AppState> snapshot;
+    REQUIRE(stack.state.try_load_snapshot(snapshot));
+    REQUIRE(snapshot.value.conversations.conversations[0].pinned);
+    REQUIRE(stack.actions.hide_conversation(id));
+    stack.quiesce();
+    REQUIRE(stack.state.try_load_snapshot(snapshot));
+    REQUIRE(snapshot.value.conversations.conversations[0].hidden);
+    REQUIRE_FALSE(snapshot.value.conversations.conversations[0].pinned);
+    REQUIRE(snapshot.value.messages.messages.size() == 1);
+
+    REQUIRE(stack.conversations.enqueue_peer_connected(aki::device::DeviceId{"alpha"}));
+    REQUIRE(stack.conversations.enqueue_peer_disconnected(aki::device::DeviceId{"alpha"}));
+    // The incoming CM continuation must not itself reveal a duplicate message.
+    REQUIRE(stack.conversations.enqueue_incoming(message, [&stack](const auto& incoming) {
+        return stack.state.submit_update(
+            UpsertMessage{incoming, aki::conversation::ConversationId{"conv-alpha"}});
+    }));
+    stack.quiesce();
+    REQUIRE(stack.state.try_load_snapshot(snapshot));
+    REQUIRE(snapshot.value.conversations.conversations[0].hidden);
+    REQUIRE(snapshot.value.messages.messages.size() == 1);
+    message.id = aki::conversation::MessageId{"new-inbound"};
+    REQUIRE(stack.conversations.enqueue_incoming(message, [&stack](const auto& incoming) {
+        return stack.state.submit_update(
+            UpsertMessage{incoming, aki::conversation::ConversationId{"conv-alpha"}});
+    }));
+    stack.quiesce();
+    REQUIRE(stack.state.try_load_snapshot(snapshot));
+    REQUIRE_FALSE(snapshot.value.conversations.conversations[0].hidden);
+    REQUIRE(snapshot.value.messages.messages.size() == 2);
+
+    REQUIRE(stack.actions.hide_conversation(id));
+    stack.quiesce();
+    REQUIRE(stack.actions.ensure_conversation(aki::device::DeviceId{"local"},
+                                              aki::device::DeviceId{"alpha"}));
+    stack.quiesce();
+    REQUIRE(stack.state.try_load_snapshot(snapshot));
+    REQUIRE_FALSE(snapshot.value.conversations.conversations[0].hidden);
+    REQUIRE(snapshot.value.messages.messages.size() == 2);
+    stack.state.close();
+    REQUIRE(stack.actions.hide_conversation(id));
+    REQUIRE(stack.conversations.flush(2s));
+    REQUIRE(stack.conversations.stats().handler_rejections == 1);
+}

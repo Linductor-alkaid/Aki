@@ -1,6 +1,6 @@
 # Heyaki 文件取消重入与 Executor 同步升级审计
 
-> 状态：In Progress；日期：2026-10-03；负责人：Linductor；工作项 M5-43。
+> 状态：Completed；日期：2026-10-03；负责人：Linductor；工作项 M5-43。
 
 ## 来源与差异
 
@@ -77,3 +77,12 @@ Linductor/Heyaki 上游；补跑条件为第三方正式对齐修复被独立消
 日志位于本机 /tmp/aki-m5-43-*（临时保留至本轮结束，非持久附件）；准确
 命令、计数和限制在此留档。文档链接 191 项无断链，git diff --check 通过。
 最新 Aki head 七项 CI 尚待验证，M5-43 维持 In Progress。
+
+2026-10-03 依赖接入闭环：精确 Aki head
+6eaf5ea0bce71c739e9e15389f95d1304c5d7600 的 [CI run 37124555173](https://github.com/Linductor-alkaid/Aki/actions/runs/37124555173)
+七项 completed/success（Linux Debug/ASAN/UBSAN/TSAN、Windows Debug、
+Ubuntu 20.04 deb、Windows setup）。[PR #69](https://github.com/Linductor-alkaid/Aki/pull/69)
+Squash 合入 84b8c3cd2b259cb5f474b18516c93e84675afecd；远程/本地依赖分支
+已删除，主目录 master 已 fast-forward 同步且干净。M5-43 Completed，
+HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保留。
+该结论只关闭取消重入修复的依赖接入，不关闭 M5-34/41/42 的桌面双端验收。

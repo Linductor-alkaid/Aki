@@ -66,6 +66,11 @@ std::vector<MigrationStep> schema_steps() {
         "ALTER TABLE device ADD COLUMN remark TEXT NOT NULL DEFAULT '';"});
     steps.push_back(MigrationStep{3, "device-inbound-trust",
         "ALTER TABLE device ADD COLUMN inbound_trust INTEGER NOT NULL DEFAULT 0;"});
+    steps.push_back(MigrationStep{4, "conversation-list-preferences",
+                                  "ALTER TABLE conversation ADD COLUMN pinned INTEGER NOT NULL "
+                                  "DEFAULT 0 CHECK(pinned IN(0,1));"
+                                  "ALTER TABLE conversation ADD COLUMN hidden INTEGER NOT NULL "
+                                  "DEFAULT 0 CHECK(hidden IN(0,1) AND(hidden=0 OR pinned=0));"});
     return steps;
 }
 

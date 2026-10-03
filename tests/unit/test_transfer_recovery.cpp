@@ -135,8 +135,8 @@ void seed_database(const std::string& root,
     Database database = Database::open(
         (std::filesystem::path{root} / "db" / "aki.db3").string());
     const Migrator seed_migrator{schema_steps()};
-    // DEC-021：迁移第 3 步 device-inbound-trust——2→3。
-    if (seed_migrator.bring_up_to_date(database) != 3) {
+    // DEC-027：完整迁移链增至四步。
+    if (seed_migrator.bring_up_to_date(database) != 4) {
         throw std::runtime_error("seed: migration failed");
     }
     aki::persistence::Repositories repos{std::move(database)};
@@ -373,7 +373,7 @@ TEST_CASE("Full-chain combo: archive, image message, receive merge, "
         (std::filesystem::path{root} / "db" / "aki.db3").string());
     {
         const Migrator combo_migrator{schema_steps()};
-        REQUIRE(combo_migrator.bring_up_to_date(database) == 3);  // DEC-021。
+        REQUIRE(combo_migrator.bring_up_to_date(database) == 4); // DEC-027。
     }
     auto db = std::make_shared<aki::persistence::DatabaseWorkerControl>(
         std::make_unique<aki::persistence::Repositories>(std::move(database)),

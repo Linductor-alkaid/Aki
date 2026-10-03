@@ -150,10 +150,10 @@ TEST_CASE("Restart recovery restores every domain after a drained shutdown",
     ExecutorOwner owner;
     REQUIRE(owner.initialize());
 
-    // 启动恢复（主线程同步，§11.1 ②）：空库首开 → 全量迁移（DEC-021 后
-    // 三步）+ 全域空。
+    // 启动恢复（主线程同步，§11.1 ②）：空库首开 → 全量迁移（DEC-027 后
+    // 四步）+ 全域空。
     RecoveryResult first = perform_startup_recovery(root);
-    REQUIRE(first.diagnostics.migrations_applied == 3);
+    REQUIRE(first.diagnostics.migrations_applied == 4);
     REQUIRE(first.diagnostics.tmp_orphans_removed == 0);
     REQUIRE(first.state.devices.empty());
     REQUIRE(first.state.conversations.empty());
@@ -225,6 +225,12 @@ TEST_CASE("Restart recovery restores every domain after a drained shutdown",
     track(aki::persistence::make_message_upsert_job(
         m2, ConversationId{"conv-alpha-01"}));
 
+    // Local preferences use the same FIFO worker and survive a drained shutdown.
+    track(aki::persistence::make_conversation_pin_job(conversation.id, true));
+    track(aki::persistence::make_conversation_hidden_job(conversation.id, true));
+    track(aki::persistence::make_message_upsert_job(m2,
+                                                    conversation.id)); // Duplicate does not reveal.
+
     // 传输历史：t-1 字节源驱动 Completed（文件作业组）+ t-2 Cancelled。
     const std::string payload = "restart recovery payload";
     first.store->write_part("t-1", bytes_of(payload));
@@ -284,6 +290,8 @@ TEST_CASE("Restart recovery restores every domain after a drained shutdown",
     REQUIRE(reopened.state.conversations[0].id
         == ConversationId{"conv-alpha-01"});
     REQUIRE(reopened.state.conversations[0].state == ConversationState::Active);
+    REQUIRE(reopened.state.conversations[0].hidden);
+    REQUIRE_FALSE(reopened.state.conversations[0].pinned);
     REQUIRE(reopened.state.conversations[0].local_device == DeviceId{"local-1"});
     REQUIRE(reopened.state.conversations[0].remote_device
         == DeviceId{"alpha-01"});
@@ -365,7 +373,7 @@ TEST_CASE("Corrupted database file fails recovery open cleanly",
     // 失败不残留半初始化状态：同组件对有效根仍正常工作。
     const std::string other = temp_root("corrupt-clean");
     RecoveryResult ok = perform_startup_recovery(other);
-    CHECK(ok.diagnostics.migrations_applied == 3);  // DEC-021：三步。
+    CHECK(ok.diagnostics.migrations_applied == 4); // DEC-027：四步。
     CHECK(ok.state.devices.empty());
 }
 

@@ -227,8 +227,8 @@ TEST_CASE("Two-node full transfer chain: image message, archive, control, "
     // A 侧发送组合（真实 Adapter + 归档 IO worker + TM）。
     auto store = std::make_shared<FileStore>(root);
     auto database = aki::persistence::Database::open(root + "/test-state.sqlite");
-    REQUIRE(aki::persistence::Migrator{aki::persistence::schema_steps()}
-        .bring_up_to_date(database) == 3);
+    REQUIRE(aki::persistence::Migrator{aki::persistence::schema_steps()}.bring_up_to_date(
+                database) == 4);
     auto db = std::make_shared<aki::persistence::DatabaseWorkerControl>(
         std::make_unique<aki::persistence::Repositories>(std::move(database)));
     std::vector<std::future<void>> db_futures;

@@ -39,6 +39,15 @@ struct PeerDisconnectedWork {
 struct EnsureConversationWork {
     aki::device::DeviceId local;
     aki::device::DeviceId remote;
+    bool reveal_existing = true;
+};
+
+struct PinConversationWork {
+    aki::conversation::ConversationId id;
+    bool pinned;
+};
+struct HideConversationWork {
+    aki::conversation::ConversationId id;
 };
 
 using IncomingMessageDelivery = std::function<bool(aki::conversation::Message)>;
@@ -48,10 +57,9 @@ struct IncomingConversationWork {
     IncomingMessageDelivery deliver;
 };
 
-using ConversationManagerWork = std::variant<PeerConnectedWork,
-    PeerDisconnectedWork,
-    EnsureConversationWork,
-    IncomingConversationWork>;
+using ConversationManagerWork =
+    std::variant<PeerConnectedWork, PeerDisconnectedWork, EnsureConversationWork,
+                 IncomingConversationWork, PinConversationWork, HideConversationWork>;
 
 // 构造选项置于命名空间作用域：类内嵌套 Options 的默认实参 `= {}` 在 GCC 下
 // 非法（同 app_state_owner.hpp 的 AppStateOwnerOptions 处理）。
@@ -104,6 +112,14 @@ public:
     [[nodiscard]] bool enqueue_incoming(aki::conversation::Message message,
         IncomingMessageDelivery deliver) {
         return pump_.enqueue(IncomingConversationWork{std::move(message), std::move(deliver)});
+    }
+
+    [[nodiscard]] bool set_pinned(aki::conversation::ConversationId id, bool pinned) {
+        return pump_.enqueue(PinConversationWork{std::move(id), pinned});
+    }
+
+    [[nodiscard]] bool hide(aki::conversation::ConversationId id) {
+        return pump_.enqueue(HideConversationWork{std::move(id)});
     }
 
     [[nodiscard]] bool flush(std::chrono::milliseconds budget) {
@@ -159,12 +175,21 @@ private:
         return state_owner_.submit_update(UpsertConversation{std::move(conversation)});
     }
 
+    bool handle(PinConversationWork& work) {
+        return !work.id.empty() &&
+               state_owner_.submit_update(SetConversationPinned{work.id, work.pinned});
+    }
+
+    bool handle(HideConversationWork& work) {
+        return !work.id.empty() && state_owner_.submit_update(SetConversationHidden{work.id, true});
+    }
+
     bool handle(IncomingConversationWork& work) {
         if (work.message.id.empty() || work.message.sender.empty()
             || work.message.receiver.empty() || !work.deliver) {
             return false;
         }
-        EnsureConversationWork ensure{work.message.receiver, work.message.sender};
+        EnsureConversationWork ensure{work.message.receiver, work.message.sender, false};
         if (!handle(ensure)) return false;
         // The Conversation update is already admitted to the owner channel
         // before the Message Manager can enqueue its message update.
@@ -176,7 +201,8 @@ private:
             return false;
         }
         if (created_.count(work.remote.value) != 0) {
-            return true;  // 已建：幂等 no-op，不回写（避免覆盖 owner 权威状态）。
+            return !work.reveal_existing || state_owner_.submit_update(SetConversationHidden{
+                                                created_.at(work.remote.value).id, false});
         }
         ConversationRecord record;
         record.id = aki::conversation::ConversationId{

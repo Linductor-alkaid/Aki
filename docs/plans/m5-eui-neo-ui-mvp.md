@@ -16,10 +16,10 @@
 
 ## M5-43：Heyaki 文件取消重入修复与 Executor 同步升级
 
-> 状态：In Progress；日期：2026-10-03；负责人：Linductor。
+> 状态：Completed；日期：2026-10-03；负责人：Linductor。
 > 依据：DEC-003、DEC-006、EXEC-01/04；HEY-20261002-002。
 
-- [ ] `M5-43` 独立依赖 PR 将 Heyaki 从 516815c 固定至官方修复
+- [x] `M5-43` 独立依赖 PR 将 Heyaki 从 516815c 固定至官方修复
   7e9758a370d047db1e511b50627c7f3b3edc78e2；按 2026-10-03 用户明确授权，
   同步 Executor 74a9419→e2362736c697cb215e914b3f1cdfeedb0c1544d6，保持
   Aki lock、Heyaki lock、实际 checkout 三方一致。保留文件取消的真实回环，
@@ -66,6 +66,16 @@ Linductor/Heyaki 上游；补跑条件为第三方正式对齐修复被独立消
 日志位于本机 /tmp/aki-m5-43-*（临时保留至本轮结束，非持久附件）；准确
 命令、计数和限制在此留档。文档链接 191 项无断链，git diff --check 通过。
 最新 Aki head 七项 CI 尚待验证，M5-43 维持 In Progress。
+
+
+2026-10-03 依赖接入闭环：精确 Aki head
+6eaf5ea0bce71c739e9e15389f95d1304c5d7600 的 [CI run 37124555173](https://github.com/Linductor-alkaid/Aki/actions/runs/37124555173)
+七项 completed/success（Linux Debug/ASAN/UBSAN/TSAN、Windows Debug、
+Ubuntu 20.04 deb、Windows setup）。[PR #69](https://github.com/Linductor-alkaid/Aki/pull/69)
+Squash 合入 84b8c3cd2b259cb5f474b18516c93e84675afecd；远程/本地依赖分支
+已删除，主目录 master 已 fast-forward 同步且干净。M5-43 Completed，
+HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保留。
+该结论只关闭取消重入修复的依赖接入，不关闭 M5-34/41/42 的桌面双端验收。
 
 ## M5-33~M5-35：Heyaki v1.1.1 接入
 
@@ -163,6 +173,61 @@ Linux CI 包 SHA256：58878a74fb2df636e37de7a78f5b50cf3e54624f12624741fe3002ed38
 包内 aki SHA256：5291c24f87ae0a17c5732331ba0a427ead733f0db1d0a801390425425b4a7a89；
 amd64/0.1.0、desktop-file-validate 通过。安装版跨平台验收仍待操作者。
 
+## M5-42：会话列表管理与跨日期时间
+
+> 状态：In Progress；日期：2026-10-02；负责人：Linductor。
+> 依据：[DEC-027](../decisions/DEC-027-conversation-list-management.md)。
+
+- [ ] `M5-42` 移出列表并保留历史，新消息恢复；置顶/取消置顶与本地偏好
+  持久化；置顶组优先、组内新消息按接受顺序提升；离线历史可选中管理。
+  今天/昨天/本周/上周/完整日期，中英文、本地日历和窄栏换行均有定义。
+  迁移、重开、Manager/owner 顺序与失败、排序和日历边界单测；Debug /
+  sanitizer / 最新 head 七项 CI 与桌面实测后完成。Windows 当前离线，
+  跨平台安装版验收待恢复在线，负责人 Linductor/操作者。
+
+M5-42 实现复核：现有 ManagerPump/owner/DB worker 承载字段更新，未引入
+线程、队列或 timer。迁移旧库保留历史，连接 upsert 保留偏好；新收件与
+重新显示同一事务，故障注入证明回滚时两者都不落地；重复消息/ACK、
+出站消息及预算拒绝保持隐藏。离线历史可打开，发送控件与 Enter 仅按
+连接路径门控，Unknown/Pending/Rejected/Revoked 不影响基础发送。
+
+验证过程：首轮 Debug 因旧迁移步数断言与新增探针版本冲突失败，更新
+全量迁移 fixture 和第五步探针后，全量 Debug 45/45（76.33s）。首轮 ASAN
+定位 Statement 移动赋值遗漏 finalize，泄漏 113712 bytes；修正 RAII 与
+独立关闭回归后，ASAN 9/9（10.75s）、UBSAN 9/9（13.24s）。纽约时区
+DST 定向 30 assertions / 3 cases 通过，civil day 比较正确处理不足 24h
+的“昨天”。最后发送可用性 UI 两项 Debug 回归 2/2（0.03s），纽约 DST 与连接/信任
+策略定向 50 assertions / 4 cases 通过；最终 ASAN 9/9（15.53s）、UBSAN
+9/9（16.55s）。aki GUI 构建通过；精确 head CI 和安装版实测仍待记录。
+本机无法通过当前工具操作 native GUI；深浅色、中英文、窄栏时间换行、
+置顶/移除/重开和跨设备新收件恢复由操作者验收，不标完成。负责人
+Linductor/操作者，补跑条件为新包安装；跨设备部分待 Windows 恢复在线。
+
+M5-42 CI 阻塞（2026-10-02）：源代码 head c3eab1a / run 36979577214
+的 ASAN、TSAN 各 44/45，均在既有 basic communication 文件取消回环
+报告 Heyaki cancel_transfer:373 的 heap-use-after-free；源于 abort 同步
+会话退役清空 sender 后仍写旧指针，并非新增会话字段/日期单测失败。
+已登记 HEY-20261002-002 并提交 Heyaki #16；遵循独立依赖管理，不直接
+修改 third_party、不重跑掩盖内存错误。PR #68 保留待修复，未合并/交付
+新安装包。负责人 Linductor/Heyaki 上游；上游固定修复后独立接入，补
+完整七项 CI 与安装版验收，M5-42 继续 In Progress。
+
+
+2026-10-03 M5-42 恢复接续：已同步 master 84b8c3c 的 M5-43 修复，
+仅反馈台账的原始记录/新增跟进发生合并冲突，保留两者，无产品代码冲突。
+HEY-20261002-002 的依赖阻塞已解除；原失败记录不删除。
+本批源码复核：CM→owner typed 更新和 DB 事务一致，连接 upsert 保留偏好；
+全新端点匹配收件才显示隐藏行，排序按接受顺序，日期按本地日历。界面操作
+消费 ZCode metrics/语义色，长时间文字 wrap/maxWidth 和高度缓存键已覆盖。
+未发现本批新增阻塞问题；未执行原生截图/键盘焦点/深浅色/窄栏视觉验收，
+不以源码复核替代运行结果。负责人 Linductor/操作者，新 CI 包安装后补跑；
+双端新收件恢复另需 Windows/LAN 在线，M5-42 继续 In Progress。
+
+本阶段组合回归的验收证据入口为
+[PR #68 checks](https://github.com/Linductor-alkaid/Aki/pull/68/checks) 和 PR 的
+实际测试记录，合入前必须核实其最新 head 七项 completed/success，
+不复用升级前的 CI 36981562692。旧本地结果保持原日期，本轮不冒充重跑。
+
 ## M5-41：免信任首次建链与双向信任实时校准
 
 > 状态：In Progress；日期：2026-10-02；负责人：Linductor。
@@ -204,6 +269,14 @@ UBSAN 同组 2/2（9.97s）。本机 TSAN 的既有 memory mapping 环境限制
 待补跑：最新 head 七项 CI；Ubuntu/Windows 新安装版未授权建聊、首条
 收件与回复、双向密码认证后两端同步显示互信。负责人 Linductor/操作者，
 条件为两端安装本次 CI 包并保持同一局域网；M5-41 继续 In Progress。
+
+M5-41 CI/交付补充：PR #67 的精确 head 857c11f1e145e2869354e71c93b9dd4fe9738368，
+run 36912291056 首轮 Windows checkout 网络失败；attempt 2 七项全部
+completed/success 后 Squash 合入 master 2c930608db8759a89753f02f4d623c96a3185293。
+操作者已安装并重开 Ubuntu，运行 /opt/aki/aki SHA256 为
+2ddc43f1013ca8a7936f6fdfb5a989007a5d605ae64e42041b994157702b1481，
+与 CI 包一致。Windows 已离线，双端未信任收发及双向信任刷新仍待复验；
+先前“最新 head CI 待补”已完成，M5-41 保持 In Progress。
 
 ## M5-40：Heyaki 文件协商终态修复接入
 

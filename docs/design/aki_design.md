@@ -187,6 +187,8 @@ struct Conversation {
     DeviceId local_device;
     DeviceId remote_device;
     ConversationState state;
+    bool pinned = false;
+    bool hidden = false;
 };
 ```
 
@@ -199,6 +201,14 @@ Conversation
 不绑定具体网络路径。同一段会话可能最初走局域网直连，之后切换到 Internet
 P2P，在无法直连时再经过 Relay。路径切换不创建新的
 Conversation，也不改变已有消息历史。
+
+会话列表本地偏好 `pinned / hidden` 独立于可达性状态（DEC-027）。移除
+隐藏列表行并取消置顶，历史保留；显式新建或成功接受全新入站消息重新
+显示。重复消息、送达回报和连接事件不重新显示。字段经 CM 命令和 owner
+单写边界更新，收件的重新显示由 owner 与消息插入共同推进；持久化迁移
+v4 默认 false，DB 收件与显示恢复使用同一事务。列表置顶组在前，组内
+按最后消息接受顺序排序，不受对端时钟影响。时间显示遵循本地日历和
+周一起点，具体规则见 DEC-027。离线会话可查看历史/管理，发送仍受连接门控。
 
 `ConversationState` 取 `Active / Disconnected / Archived`：
 `Active <-> Disconnected` 表达远端可达性的变化（断线恢复后回到

@@ -81,8 +81,11 @@ std::vector<ConversationView> derive_conversation_views(
     views.reserve(conversations.conversations.size());
     for (const aki::conversation::Conversation& conversation :
         conversations.conversations) {
+        if (conversation.hidden)
+            continue;
         ConversationView view{conversation.id, conversation.remote_device,
             conversation.state, LastMessageSummary{}};
+        view.pinned = conversation.pinned;
         // 最后消息摘要：Store 顺序即权威追加序（owner 单写者按接受顺序
         // push_back）；倒序扫描取首个归属消息，避免全量时间排序。
         for (auto it = messages.messages.rbegin();
@@ -90,17 +93,24 @@ std::vector<ConversationView> derive_conversation_views(
             if (!message_belongs_to(*it, conversation)) {
                 continue;
             }
-        view.last_message.has_value = true;
-        view.last_message.id = it->id;
-        view.last_message.type = it->type;
-        view.last_message.delivery = it->state;
-        view.last_message.timestamp = it->timestamp;
-        view.last_message.preview = message_preview(*it);
-        view.last_message.outbound = it->sender == conversation.local_device;
-        break;
+            view.last_activity_order =
+                static_cast<std::size_t>(std::distance(it, messages.messages.rend()));
+            view.last_message.has_value = true;
+            view.last_message.id = it->id;
+            view.last_message.type = it->type;
+            view.last_message.delivery = it->state;
+            view.last_message.timestamp = it->timestamp;
+            view.last_message.preview = message_preview(*it);
+            view.last_message.outbound = it->sender == conversation.local_device;
+            break;
         }
         views.push_back(std::move(view));
     }
+    std::stable_sort(views.begin(), views.end(), [](const auto& left, const auto& right) {
+        if (left.pinned != right.pinned)
+            return left.pinned;
+        return left.last_activity_order > right.last_activity_order;
+    });
     return views;
 }
 

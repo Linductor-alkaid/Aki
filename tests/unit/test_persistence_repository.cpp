@@ -16,6 +16,7 @@
 #include "persistence/migration/schema_v1.hpp"
 #include "persistence/repository/repositories.hpp"
 #include "persistence/repository/statement_cache.hpp"
+#include "persistence/repository/update_jobs.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -61,11 +62,9 @@ using aki::transfer::TransferState;
 
 Database migrated_memory_db() {
     Database db = Database::open(":memory:");
-    // DEC-021：迁移第 3 步 device-inbound-trust（ALTER TABLE device ADD
-    // COLUMN inbound_trust）——步数 2→3。
-    REQUIRE(aki::persistence::schema_steps().size() == 3);
-    REQUIRE(Migrator(aki::persistence::schema_steps()).bring_up_to_date(db)
-        == 3);
+    // DEC-027：完整迁移链含会话列表偏好，步数 3→4。
+    REQUIRE(aki::persistence::schema_steps().size() == 4);
+    REQUIRE(Migrator(aki::persistence::schema_steps()).bring_up_to_date(db) == 4);
     return db;
 }
 
@@ -241,7 +240,9 @@ TEST_CASE("Schema step 3 appends idempotently onto a two-step database (DEC-021)
     "[unit][persistence][migration][dec021]") {
     // 旧库：仅第 1/2 步（er-v1-core + device-local-remark）。
     auto old_steps = aki::persistence::schema_steps();
-    REQUIRE(old_steps.size() == 3);
+    REQUIRE(old_steps.size() == 4);
+    old_steps.resize(3);
+    auto step_three = old_steps;
     old_steps.pop_back();
     Database db = Database::open(":memory:");
     REQUIRE(Migrator(old_steps).bring_up_to_date(db) == 2);
@@ -263,7 +264,7 @@ TEST_CASE("Schema step 3 appends idempotently onto a two-step database (DEC-021)
     }
 
     // 追加第 3 步：恰一步，user_version 前进到 3；存量行按 DEFAULT 0 读出。
-    const Migrator full{aki::persistence::schema_steps()};
+    const Migrator full{step_three};
     REQUIRE(full.bring_up_to_date(db) == 1);
     aki::persistence::Statement version = db.prepare("PRAGMA user_version;");
     REQUIRE(version.step());
@@ -571,4 +572,85 @@ TEST_CASE("Statement cache rejects a zero capacity at construction",
     "[unit][persistence][repository]") {
     Database db = Database::open(":memory:");
     REQUIRE_THROWS_AS(StatementCache(db, 0), std::invalid_argument);
+}
+
+TEST_CASE("Schema v4 preserves v3 chat history and defaults list preferences",
+          "[unit][persistence][dec027]") {
+    Database db = Database::open(":memory:");
+    auto steps = aki::persistence::schema_steps();
+    steps.resize(3);
+    REQUIRE(Migrator(steps).bring_up_to_date(db) == 3);
+    aki::persistence::DeviceRepository devices(db);
+    devices.upsert(make_device("local-1", TrustState::Unknown));
+    devices.upsert(make_device("alpha-01", TrustState::Unknown));
+    auto seed =
+        db.prepare("INSERT INTO conversation(conversation_id,local_device,remote_device,state) "
+                   "VALUES('old','local-1','alpha-01',0);");
+    (void)seed.step();
+    aki::persistence::MessageRepository messages(db);
+    messages.upsert(make_message("legacy", TextPayload{"kept"}), ConversationId{"old"});
+    const Migrator full{aki::persistence::schema_steps()};
+    REQUIRE(full.bring_up_to_date(db) == 1);
+    REQUIRE(full.bring_up_to_date(db) == 0);
+    aki::persistence::ConversationRepository chats(db);
+    REQUIRE_FALSE(chats.find(ConversationId{"old"})->pinned);
+    REQUIRE_FALSE(chats.find(ConversationId{"old"})->hidden);
+    REQUIRE(messages.find(MessageId{"legacy"}).has_value());
+    chats.set_pinned(ConversationId{"old"}, true);
+    auto row = *chats.find(ConversationId{"old"});
+    row.pinned = false;
+    row.state = ConversationState::Disconnected;
+    chats.upsert(row); // Connection updates cannot erase local preferences.
+    REQUIRE(chats.find(row.id)->pinned);
+    chats.set_hidden(row.id, true);
+    REQUIRE(chats.find(row.id)->hidden);
+    REQUIRE_FALSE(chats.find(row.id)->pinned);
+    REQUIRE_THROWS_AS(chats.set_pinned(row.id, true), SqliteError);
+    REQUIRE_THROWS_AS(chats.set_hidden(ConversationId{"missing"}, true), std::runtime_error);
+    REQUIRE_THROWS_AS(chats.set_pinned(ConversationId{"missing"}, true), std::runtime_error);
+    REQUIRE(messages.find(MessageId{"legacy"}).has_value());
+    chats.set_hidden(row.id, false);
+    REQUIRE_FALSE(chats.find(row.id)->hidden);
+    auto tamper = db.prepare("PRAGMA ignore_check_constraints=ON;");
+    (void)tamper.step();
+    tamper = db.prepare("UPDATE conversation SET pinned=7 WHERE conversation_id='old';");
+    (void)tamper.step();
+    REQUIRE_THROWS_AS(chats.find(row.id), std::runtime_error);
+    REQUIRE_THROWS_AS(chats.load_all(), std::runtime_error);
+}
+
+TEST_CASE("New inbound history and visibility commit together or roll back together",
+          "[unit][persistence][dec027]") {
+    aki::persistence::Repositories repos{migrated_memory_db()};
+    repos.devices.upsert(make_device("local-1", TrustState::Unknown));
+    repos.devices.upsert(make_device("alpha-01", TrustState::Unknown));
+    Conversation conversation{ConversationId{"chat"}, DeviceId{"local-1"}, DeviceId{"alpha-01"},
+                              ConversationState::Active};
+    repos.conversations.upsert(conversation);
+    repos.conversations.set_hidden(conversation.id, true);
+    auto inbound = make_message("new", TextPayload{"hello"});
+    std::swap(inbound.sender, inbound.receiver);
+    auto fault = repos.database.prepare(
+        "CREATE TRIGGER fail_reveal BEFORE UPDATE OF hidden ON conversation WHEN NEW.hidden=0 "
+        "BEGIN SELECT RAISE(ABORT,'injected visibility failure'); END;");
+    (void)fault.step();
+    auto job = aki::persistence::make_message_upsert_job(inbound, conversation.id);
+    REQUIRE_THROWS_AS(job.work(repos), SqliteError);
+    REQUIRE_FALSE(repos.messages.find(inbound.id).has_value());
+    REQUIRE(repos.conversations.find(conversation.id)->hidden);
+    auto clear = repos.database.prepare("DROP TRIGGER fail_reveal;");
+    (void)clear.step();
+    REQUIRE_NOTHROW(job.work(repos));
+    REQUIRE(repos.messages.find(inbound.id).has_value());
+    REQUIRE_FALSE(repos.conversations.find(conversation.id)->hidden);
+    repos.conversations.set_hidden(conversation.id, true);
+    REQUIRE_NOTHROW(job.work(repos)); // A replay is an upsert, never a new arrival.
+    REQUIRE(repos.conversations.find(conversation.id)->hidden);
+    auto outbound = make_message("out", TextPayload{"local"});
+    auto outbound_job = aki::persistence::make_message_upsert_job(outbound, conversation.id);
+    REQUIRE_NOTHROW(outbound_job.work(repos));
+    REQUIRE(repos.conversations.find(conversation.id)->hidden);
+    repos.conversations.set_hidden(conversation.id, false);
+    repos.conversations.set_pinned(conversation.id, true);
+    REQUIRE(repos.conversations.load_all()[0].pinned);
 }

@@ -337,3 +337,18 @@ TEST_CASE("Invalid migration lists are rejected at construction",
     REQUIRE_THROWS_AS(
         make({MigrationStep{1, "no-sql", ""}}), std::invalid_argument);
 }
+
+TEST_CASE("Moving into a live statement releases its previous prepared handle",
+          "[unit][persistence][database]") {
+    auto db = aki::persistence::Database::open(":memory:");
+    {
+        auto destination = db.prepare("SELECT 1;");
+        auto source = db.prepare("SELECT 2;");
+        destination = std::move(source);
+        REQUIRE_FALSE(static_cast<bool>(source));
+        REQUIRE(destination.step());
+        REQUIRE(destination.column_int64(0) == 2);
+    }
+    // A leaked first handle makes close fail with SQLITE_BUSY (ASAN also checks allocations).
+    REQUIRE_NOTHROW(db.close());
+}

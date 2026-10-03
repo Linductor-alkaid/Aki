@@ -56,6 +56,10 @@ struct DeviceView {
             && fingerprint_available
             && connection_path != aki::device::ConnectionPath::Unknown;
     }
+    [[nodiscard]] bool can_send_basic() const noexcept {
+        return connection_path != aki::device::ConnectionPath::Unknown;
+    }
+
     [[nodiscard]] bool can_connect() const noexcept {
         return fingerprint_available
             && presence == aki::device::PresenceState::Online
@@ -128,6 +132,8 @@ struct ConversationView {
     aki::device::DeviceId remote_device;
     aki::conversation::ConversationState state = aki::conversation::ConversationState::Active;
     LastMessageSummary last_message;
+    bool pinned = false;
+    std::size_t last_activity_order = 0;
 };
 
 [[nodiscard]] std::vector<ConversationView> derive_conversation_views(

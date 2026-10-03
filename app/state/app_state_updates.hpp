@@ -40,6 +40,16 @@ struct UpsertConversation {
     aki::conversation::Conversation conversation;
 };
 
+struct SetConversationPinned {
+    aki::conversation::ConversationId conversation;
+    bool pinned = false;
+};
+
+struct SetConversationHidden {
+    aki::conversation::ConversationId conversation;
+    bool hidden = false;
+};
+
 struct UpsertMessage {
     aki::conversation::Message message;
     // 会话归属（DEC-009 ②，M3-05 落地）：MESSAGE 行 FK 的权威来源；owner
@@ -97,19 +107,11 @@ struct CompleteTransfer {
 struct SetLocalTransferArtifact { LocalTransferArtifact file; };
 struct SetLocalTransferArtifactFailure { aki::transfer::TransferId transfer; std::string error; };
 
-using AppStateUpdate = std::variant<UpsertDevice,
-    SetDeviceName,
-    SetDeviceRemark,
-    SetDeviceInboundTrust,
-    UpsertConversation,
-    UpsertMessage,
-    UpsertTransfer,
-    UpdateTransferProgress,
-    SetDeviceConnectionPath,
-    SetPairingFailure,
-    SetPresence,
-    SetDeliveryState,
-    CompleteTransfer,
-    SetLocalTransferArtifact, SetLocalTransferArtifactFailure>;
+using AppStateUpdate =
+    std::variant<UpsertDevice, SetDeviceName, SetDeviceRemark, SetDeviceInboundTrust,
+                 UpsertConversation, SetConversationPinned, SetConversationHidden, UpsertMessage,
+                 UpsertTransfer, UpdateTransferProgress, SetDeviceConnectionPath, SetPairingFailure,
+                 SetPresence, SetDeliveryState, CompleteTransfer, SetLocalTransferArtifact,
+                 SetLocalTransferArtifactFailure>;
 
 }  // namespace aki::app

@@ -89,6 +89,13 @@ UiActions make_ui_actions(aki::app::DeviceManager& devices,
             return conversations.ensure_conversation(
                 std::move(local), std::move(remote));
         };
+    actions.set_conversation_pinned = [&conversations](aki::conversation::ConversationId id,
+                                                       bool pinned) {
+        return conversations.set_pinned(std::move(id), pinned);
+    };
+    actions.hide_conversation = [&conversations](aki::conversation::ConversationId id) {
+        return conversations.hide(std::move(id));
+    };
     return actions;
 }
 

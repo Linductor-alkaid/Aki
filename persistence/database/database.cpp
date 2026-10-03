@@ -40,7 +40,16 @@ Statement::Statement(std::unique_ptr<Impl> impl) noexcept
     : impl_(std::move(impl)) {}
 
 Statement::Statement(Statement&&) noexcept = default;
-Statement& Statement::operator=(Statement&&) noexcept = default;
+Statement& Statement::operator=(Statement&& other) noexcept {
+    if (this != &other) {
+        // Replacing a live pimpl must finalize its statement just like destruction.
+        if (impl_ != nullptr && impl_->stmt != nullptr) {
+            sqlite3_finalize(impl_->stmt);
+        }
+        impl_ = std::move(other.impl_);
+    }
+    return *this;
+}
 
 Statement::~Statement() {
     if (impl_ != nullptr && impl_->stmt != nullptr) {
