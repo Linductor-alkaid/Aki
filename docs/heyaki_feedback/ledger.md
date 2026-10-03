@@ -193,7 +193,7 @@ paused=1 / linked=0，是上游明确保留的“拒绝后后续 push 破坏会�
 
 ## HEY-20261002-002：取消文件同步关闭会话后访问已释放状态
 
-- 状态 Reported：[Heyaki #16](https://github.com/Linductor-alkaid/heyaki/issues/16)。
+- 状态 Resolved：[Heyaki #16](https://github.com/Linductor-alkaid/heyaki/issues/16)。
   关联 M5-42 的 CI 门禁及 M5-34/40 的文件取消；负责人 Linductor/Heyaki 上游。
 - 版本 516815cbfb76f93f60acd4b58e5b6a7976e4417f，Aki head
   c3eab1a41299c1bd46f10c254a01a7af0d789d3a；CI run 36979577214。
@@ -216,7 +216,7 @@ paused=1 / linked=0，是上游明确保留的“拒绝后后续 push 破坏会�
   审查 receiver cancel/相邻 abort 路径。终态、book/磁盘清理幂等，结果明确。
 - 验收：注入 send_abort 同步失败→teardown 的确定性回归，再跑取消先于
   deadline、迟到/重复取消、严格策略拒绝、重连/关闭的 Debug/ASAN/TSAN。
-  Aki 不修改 pinned 源码、不压制报告或删测试；PR #68 的合并/新包交付
+  2026-10-02 原始处置：Aki 不修改 pinned 源码、不压制报告或删测试；PR #68 的合并/新包交付
   暂缓。上游 master 当前仅新增 Executor pin 升级，未修改此 FileService
   路径。待上游修复后独立接入、重跑完整七项 CI 与双端验收。
 
@@ -226,3 +226,12 @@ Heyaki #17 已合入 7e9758a 并关闭 #16，上游十二项 CI 全绿。Aki 按
 独立升级 Heyaki，并经用户明确授权同步其 Executor pin 至 e236273。
 原 ASAN/TSAN UAF 证据保留；Aki 侧真实取消回环和最新 head CI 尚待完成，
 完成后再将反馈状态改为 Resolved。#15 / HEY-20261002-001 继续独立跟踪。
+
+2026-10-03 依赖接入闭环：精确 Aki head
+6eaf5ea0bce71c739e9e15389f95d1304c5d7600 的 [CI run 37124555173](https://github.com/Linductor-alkaid/Aki/actions/runs/37124555173)
+七项 completed/success（Linux Debug/ASAN/UBSAN/TSAN、Windows Debug、
+Ubuntu 20.04 deb、Windows setup）。[PR #69](https://github.com/Linductor-alkaid/Aki/pull/69)
+Squash 合入 84b8c3cd2b259cb5f474b18516c93e84675afecd；远程/本地依赖分支
+已删除，主目录 master 已 fast-forward 同步且干净。M5-43 Completed，
+HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保留。
+该结论只关闭取消重入修复的依赖接入，不关闭 M5-34/41/42 的桌面双端验收。

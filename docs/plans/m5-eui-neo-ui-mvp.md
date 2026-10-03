@@ -16,10 +16,10 @@
 
 ## M5-43：Heyaki 文件取消重入修复与 Executor 同步升级
 
-> 状态：In Progress；日期：2026-10-03；负责人：Linductor。
+> 状态：Completed；日期：2026-10-03；负责人：Linductor。
 > 依据：DEC-003、DEC-006、EXEC-01/04；HEY-20261002-002。
 
-- [ ] `M5-43` 独立依赖 PR 将 Heyaki 从 516815c 固定至官方修复
+- [x] `M5-43` 独立依赖 PR 将 Heyaki 从 516815c 固定至官方修复
   7e9758a370d047db1e511b50627c7f3b3edc78e2；按 2026-10-03 用户明确授权，
   同步 Executor 74a9419→e2362736c697cb215e914b3f1cdfeedb0c1544d6，保持
   Aki lock、Heyaki lock、实际 checkout 三方一致。保留文件取消的真实回环，
@@ -66,6 +66,16 @@ Linductor/Heyaki 上游；补跑条件为第三方正式对齐修复被独立消
 日志位于本机 /tmp/aki-m5-43-*（临时保留至本轮结束，非持久附件）；准确
 命令、计数和限制在此留档。文档链接 191 项无断链，git diff --check 通过。
 最新 Aki head 七项 CI 尚待验证，M5-43 维持 In Progress。
+
+
+2026-10-03 依赖接入闭环：精确 Aki head
+6eaf5ea0bce71c739e9e15389f95d1304c5d7600 的 [CI run 37124555173](https://github.com/Linductor-alkaid/Aki/actions/runs/37124555173)
+七项 completed/success（Linux Debug/ASAN/UBSAN/TSAN、Windows Debug、
+Ubuntu 20.04 deb、Windows setup）。[PR #69](https://github.com/Linductor-alkaid/Aki/pull/69)
+Squash 合入 84b8c3cd2b259cb5f474b18516c93e84675afecd；远程/本地依赖分支
+已删除，主目录 master 已 fast-forward 同步且干净。M5-43 Completed，
+HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保留。
+该结论只关闭取消重入修复的依赖接入，不关闭 M5-34/41/42 的桌面双端验收。
 
 ## M5-33~M5-35：Heyaki v1.1.1 接入
 
@@ -201,6 +211,22 @@ M5-42 CI 阻塞（2026-10-02）：源代码 head c3eab1a / run 36979577214
 修改 third_party、不重跑掩盖内存错误。PR #68 保留待修复，未合并/交付
 新安装包。负责人 Linductor/Heyaki 上游；上游固定修复后独立接入，补
 完整七项 CI 与安装版验收，M5-42 继续 In Progress。
+
+
+2026-10-03 M5-42 恢复接续：已同步 master 84b8c3c 的 M5-43 修复，
+仅反馈台账的原始记录/新增跟进发生合并冲突，保留两者，无产品代码冲突。
+HEY-20261002-002 的依赖阻塞已解除；原失败记录不删除。
+本批源码复核：CM→owner typed 更新和 DB 事务一致，连接 upsert 保留偏好；
+全新端点匹配收件才显示隐藏行，排序按接受顺序，日期按本地日历。界面操作
+消费 ZCode metrics/语义色，长时间文字 wrap/maxWidth 和高度缓存键已覆盖。
+未发现本批新增阻塞问题；未执行原生截图/键盘焦点/深浅色/窄栏视觉验收，
+不以源码复核替代运行结果。负责人 Linductor/操作者，新 CI 包安装后补跑；
+双端新收件恢复另需 Windows/LAN 在线，M5-42 继续 In Progress。
+
+本阶段组合回归的验收证据入口为
+[PR #68 checks](https://github.com/Linductor-alkaid/Aki/pull/68/checks) 和 PR 的
+实际测试记录，合入前必须核实其最新 head 七项 completed/success，
+不复用升级前的 CI 36981562692。旧本地结果保持原日期，本轮不冒充重跑。
 
 ## M5-41：免信任首次建链与双向信任实时校准
 
