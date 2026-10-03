@@ -219,3 +219,12 @@ build；最终二进制单份 sqlite3 符号与有效版本（dumpbin/nm）；bo
   wire 契约与收发状态联动——本记录映射 4/冻结常量的 M4-03 扩展权威）
 - [M3：Heyaki 真实接入与文本消息](../plans/m3-heyaki-integration.md)（`M3-01`~`M3-09`）、
   [M4：图片消息与文件传输](../plans/m4-image-file-transfer.md)（`M4-03`）
+
+## 2026-10-03：M5-43 同步依赖升级
+
+用户明确授权将 Executor 74a94198 升级为 e2362736c697cb215e914b3f1cdfeedb0c1544d6，
+以消费 Heyaki 文件取消重入修复 7e9758a370d047db1e511b50627c7f3b3edc78e2。
+当前锁定以 third_party/dependencies.lock.json 为准；原基线保留历史。
+单图只编译一份 Executor、唯一外部 owner 与 borrowed Runtime 契约不变。
+版本差异与实际门禁见 [M5-43](../plans/m5-eui-neo-ui-mvp.md) 和
+[升级审计](../supply-chain/heyaki-file-cancel-reentry.md)。
