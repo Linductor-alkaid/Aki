@@ -19,7 +19,7 @@ add_subdirectory(third_party/sqlite)
 # M3-01（heyaki）目标级接入（DEC-006 构建接入条款）：单一构建图
 # add_subdirectory(third_party/heyaki)，只消费 heyaki::client（heyaki::services
 # 为空伞 target，不链）。executor target 由 heyaki 的 third_party/executor 提供
-# （双侧同 pin 74a94198，构建图内只编译一份 executor）——Aki 移除自己的
+# （双侧同 pin e2362736，构建图内只编译一份 executor）——Aki 移除自己的
 # executor add_subdirectory（DEC-003 executor 接入条款按 DEC-006 修订），
 # SYSTEM include 与告警豁免设置转移到下方 heyaki 提供的 executor target。
 # 构建开关冻结（DEC-006）：HEYAKI_BUILD_APPS=OFF、HEYAKI_AUTO_INSTALL=OFF；

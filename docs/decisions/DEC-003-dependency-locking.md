@@ -78,3 +78,12 @@ M5-40 将 Heyaki 固定至官方已合入提交 516815cbfb76f93f60acd4b58e5b6a79
 （v1.1.1 后两个提交，未发布新 tag）。来源、差异、未通过的上游 CI、已知
 后续限制与本地/CI 回归见 [升级审计](../supply-chain/heyaki-file-offer-deadline.md)。
 仅适配新增公开参数，不改上游，遵循现有独立依赖 MR。
+
+## 2026-10-03：M5-43 同步依赖升级
+
+用户明确授权将 Executor 74a94198 升级为 e2362736c697cb215e914b3f1cdfeedb0c1544d6，
+以消费 Heyaki 文件取消重入修复 7e9758a370d047db1e511b50627c7f3b3edc78e2。
+当前锁定以 third_party/dependencies.lock.json 为准；原基线保留历史。
+单图只编译一份 Executor、唯一外部 owner 与 borrowed Runtime 契约不变。
+版本差异与实际门禁见 [M5-43](../plans/m5-eui-neo-ui-mvp.md) 和
+[升级审计](../supply-chain/heyaki-file-cancel-reentry.md)。

@@ -12,7 +12,60 @@
 > 真实 Adapter、NodeSession、发现/消息/图片/传输/presence/重连管道与恢复
 > 语义均已就绪
 > 建议发布点：v0.5.0（MVP）
-> 更新日期：2026-10-02（Heyaki 文件协商终态修复接入）
+> 更新日期：2026-10-03（M5-43 文件取消重入修复接入）
+
+## M5-43：Heyaki 文件取消重入修复与 Executor 同步升级
+
+> 状态：In Progress；日期：2026-10-03；负责人：Linductor。
+> 依据：DEC-003、DEC-006、EXEC-01/04；HEY-20261002-002。
+
+- [ ] `M5-43` 独立依赖 PR 将 Heyaki 从 516815c 固定至官方修复
+  7e9758a370d047db1e511b50627c7f3b3edc78e2；按 2026-10-03 用户明确授权，
+  同步 Executor 74a9419→e2362736c697cb215e914b3f1cdfeedb0c1544d6，保持
+  Aki lock、Heyaki lock、实际 checkout 三方一致。保留文件取消的真实回环，
+  验证一次终态、重复取消拒绝、零 grant、无落盘及 Node/Executor 关闭；
+  Debug 全量、ASAN/UBSAN 回归及最新 head 七项 CI 全绿后合并。
+  两端安装版验收仍归 M5-34/41/42；#15 的拒绝后续推送问题不在本项关闭。
+
+2026-10-03 准入：Heyaki #17 已合入并关闭 #16，上游 run 37024892121
+十二项成功。修复覆盖 sender/receiver 可重入发送边界和 Node service 保活；
+公开头文件、wire、许可证集合无变更。Executor 包含任务图调度、生命周期、
+通信、timer 与构建修复，采用现有公开 API，不修改 upstream 源码；能力反馈
+台账无未关闭条目。Aki 精确版本回归尚待执行，不以上游 CI 替代。
+
+
+2026-10-03 本地验证（Ubuntu 24.04 / x86_64 / GCC 13.3 / CMake 3.28.3）：
+`bash third_party/heyaki/scripts/fetch_third_party.sh --all` 及 `--check --all`
+通过。Debug 首轮因本机缺 xkbcommon/xkbcommon.h 构建失败；沿既有本机
+限制，三档分别执行 `cmake --preset <debug|asan|ubsan> -DGLFW_BUILD_WAYLAND=OFF`
+和 `cmake --build --preset <preset> -j 4`，全目标含 aki GUI 均构建通过。
+CI 不关闭 Wayland、不改变项目预设。
+
+`ctest --preset debug --output-on-failure --timeout 180`：45/45 返回成功
+（192.16s）；五个旧网络用例有显式 skip，不能算作其链路已验收。
+真实 basic communication 回环无 skip，250 assertions / 6 cases（47.51s）。
+ASAN/UBSAN 分别执行：
+
+```bash
+ctest --preset <preset> -R 'test_basic_communication_loopback|test_app_state$|test_app_managers$|test_reconnect_loop$|test_database_worker$|test_host_runtime$|test_peer_sessions_pipeline$' --output-on-failure --timeout 180
+```
+
+均 7/7 返回成功（64.99s / 76.50s）。
+两档 basic 回环均 250 assertions / 6 cases（51.38s / 61.26s），ASAN 无内存报告。
+
+UBSAN 仍打印 M3-07 已登记的 libdatachannel/usrsctp 非对齐访问，
+sctptransport.cpp:732-735 的 byte buffer 不满足 sctp_reset_streams 的 4 字节
+对齐；同一第三方 pin 未变。以 `UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+build/ubsan/tests/test_basic_communication_loopback 'Cancelling an unanswered offer*'`
+复核，exit 1 于该第三方对齐错误，尚未执行全部取消断言。保留默认 recover
+与严格运行两份证据，不新增抑制、不宣称 UBSAN 零诊断或该缺陷已修复。
+此限制沿 [M3-07 既有登记](../plans/m3-heyaki-integration.md) 跟踪，负责人
+Linductor/Heyaki 上游；补跑条件为第三方正式对齐修复被独立消费后重跑严格 UBSAN。
+与 Heyaki #16 的 sender/service UAF 分开；取消修复的 ASAN 验证已通过。
+
+日志位于本机 /tmp/aki-m5-43-*（临时保留至本轮结束，非持久附件）；准确
+命令、计数和限制在此留档。文档链接 191 项无断链，git diff --check 通过。
+最新 Aki head 七项 CI 尚待验证，M5-43 维持 In Progress。
 
 ## M5-33~M5-35：Heyaki v1.1.1 接入
 
@@ -1447,9 +1500,7 @@ verifier 校验并签发 grant；`handle_pairing_request` 响应侧即升级会�
     SPI/第 12 sink 方法、§8.3 路由表、§9.1 消费面、§10.1 comm 映射）、
     [aki_ui_design](../design/aki_ui_design.md) §3（指纹=DeviceId 规范串、
     弹窗无口令框）、[DEC-006](../decisions/DEC-006-heyaki-api-contract.md)
-    映射 3（展示形式增补）、[DEC-015](../decisions/DEC-015-per-device-
-    connection-path.md)、[DEC-016](../decisions/DEC-016-pairing-password-
-    verifier.md)（均新建 Accepted）、总计划（当前状态条目 + 决策表）。
+    映射 3（展示形式增补）、[DEC-015](../decisions/DEC-015-per-device-connection-path.md)、[DEC-016](../decisions/DEC-016-pairing-password-verifier.md)（均新建 Accepted）、总计划（当前状态条目 + 决策表）。
 
 - 2026-09-27（`M5-05` 完成；Windows 11 工作站（桌面会话）/ MSVC 2022
   BuildTools 14.44.35207 / CMake 4.1.0；负责人：Linductor）：

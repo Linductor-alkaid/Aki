@@ -1083,7 +1083,7 @@ UI 很容易形成难以控制的跨线程状态修改。
 
 ### 10.1 executor::comm 语义映射
 
-Application State 的跨上下文交付落在 pinned executor（v0.5.0-7 @ `74a9419`）的
+Application State 的跨上下文交付落在 pinned executor（v0.5.2-20 @ `e236273`，M5-43 同步升级）的
 `executor::comm` 组件上（总计划 `EXEC-03`）。按交付语义选型，不自建队列，也不以
 “共享可变状态 + mutex + 条件变量”替代：
 

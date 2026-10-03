@@ -219,3 +219,10 @@ paused=1 / linked=0，是上游明确保留的“拒绝后后续 push 破坏会�
   Aki 不修改 pinned 源码、不压制报告或删测试；PR #68 的合并/新包交付
   暂缓。上游 master 当前仅新增 Executor pin 升级，未修改此 FileService
   路径。待上游修复后独立接入、重跑完整七项 CI 与双端验收。
+
+## 2026-10-03：HEY-20261002-002 修复接入开始
+
+Heyaki #17 已合入 7e9758a 并关闭 #16，上游十二项 CI 全绿。Aki 按 M5-43
+独立升级 Heyaki，并经用户明确授权同步其 Executor pin 至 e236273。
+原 ASAN/TSAN UAF 证据保留；Aki 侧真实取消回环和最新 head CI 尚待完成，
+完成后再将反馈状态改为 Resolved。#15 / HEY-20261002-001 继续独立跟踪。
