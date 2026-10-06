@@ -8,6 +8,14 @@
 
 ## 当前状态
 
+- 2026-10-06：M7 启动（In Progress）：基于 Heyaki relay 控制面的跨网段设备
+  通信（SCOPE-02 Relay 来源 / SCOPE-10 Relay 路径）。决策
+  [DEC-028](../decisions/DEC-028-relay-cross-subnet.md) 冻结（automatic 模式、
+  设置页 enrollment 重启生效、合并目录单一发现管道、ICE/TURN 一期静态凭据）；
+  上游缺口 HEY-20261006-001 登记（Node 运行期不可更新 relay enrollment）。
+  接续 M3 验证记录③的 Relay 发现分期项。详见
+  [M7 里程碑文档](m7-relay-cross-subnet.md)。
+
 - 2026-10-03：M5-43 Completed：Heyaki #17 的取消重入修复 7e9758a 与
   用户明确授权的 Executor e236273 同步升级，经 PR #69 / run 37124555173
   七项 CI 全绿，Squash 合入 84b8c3c。原 UAF 证据保留、反馈已关闭。
@@ -747,6 +755,7 @@
 | M4 | 图片消息与文件传输 | In Progress | M3 | v0.4.0 | [m4-image-file-transfer.md](m4-image-file-transfer.md) |
 | M5 | EUI-NEO UI 与 MVP 验收 | In Progress | M2、M3、M4、DEC-005 | v0.5.0（MVP） | [m5-eui-neo-ui-mvp.md](m5-eui-neo-ui-mvp.md) |
 | M6 | CI 打包与分发基线 | In Progress | M0、M5-02、DEC-017 | 无（工程基础设施） | [m6-ci-packaging.md](m6-ci-packaging.md) |
+| M7 | 中继跨网段通信 | In Progress | M3、M5、DEC-028 | v0.7.0 | [m7-relay-cross-subnet.md](m7-relay-cross-subnet.md) |
 
 依赖说明：M1 先以契约与假实现交付可运行的领域骨架（先契约后实现、先假实现后真实依赖）；
 M3 引入真实 Heyaki；M5 整合 UI 并按设计第 15 节逐项验收 MVP。每个里程碑必须产生可独立

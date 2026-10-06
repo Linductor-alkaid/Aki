@@ -335,6 +335,31 @@ void app::compose(eui::Ui& ui, const eui::Screen& screen) {
             ui_actions()->set_device_name = [&host](std::string name) {
                 return host.set_device_name(std::move(name));
             };
+            // M7/DEC-028：relay 注册/移除与 TURN 配置出站面绑定（同
+            // set_language 先例——组合根直绑 HostRuntime，页面不持有宿主）。
+            ui_actions()->enroll_relay = [&host](std::string url,
+                std::string tenant, std::string token, std::string ca,
+                std::string& error) {
+                return host.enroll_relay(std::move(url), std::move(tenant),
+                    std::move(token), std::move(ca), error);
+            };
+            ui_actions()->remove_relay = [&host](std::string& error) {
+                return host.remove_relay(error);
+            };
+            ui_actions()->set_turn_server = [&host](std::string turn_host,
+                unsigned port, std::string username, std::string credential,
+                std::string& error) {
+                return host.set_turn_server(std::move(turn_host), port,
+                    std::move(username), std::move(credential), error);
+            };
+            // TURN 高级区预填（装配期解析的首条 turn_udp 配置；凭据不回填
+            // ——保存时须重新输入）。端口留空时占位提示缺省 3478。
+            const auto turn_prefill = host.turn_server();
+            model.settings_turn_host_draft = turn_prefill.host;
+            model.settings_turn_port_draft = turn_prefill.port == 0
+                ? std::string{}
+                : std::to_string(turn_prefill.port);
+            model.settings_turn_username_draft = turn_prefill.username;
             if (model.language_selection_pending || assembly.identity_created) {
                 (void)host.set_language(model.language
                     == aki::ui::Language::Chinese ? "zh-CN" : "en");

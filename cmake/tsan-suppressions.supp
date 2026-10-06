@@ -8,6 +8,17 @@
 #
 # usrsctp（third_party/heyaki/third_party/libdatachannel/deps/usrsctp）：
 # 上游 C 代码非 TSAN-clean。首报 sctp_output.c:7581 sctp_toss_old_cookies
-# （test_message_loopback 双节点 DTLS/SCTP 会话建立路径）。
+#（test_message_loopback 双节点 DTLS/SCTP 会话建立路径）。
 race:sctp_
 race:usrsctp_
+
+# heyaki PairingService 审计计数器（HEY-20261006-003，PR #70 CI run
+# 37504293005 tsan job 112408875988 实测）：stats_ 计数器非原子——主线程
+# rotate_password → PairingService::audit 写（pairing_service.cpp:80）与
+# Node 内部 schedule_expiry 定时器 strand 的 metrics_strand 读竞争
+#（node.cpp:2307）。诊断计数器语义（丢失个别计数无害）；Aki 侧调用契约
+# 无违约（写路径为 Node 公开方法同步调用，读路径为 heyaki 内部定时器，
+# 不在 NodeSession「调用方串行化」契约面内）。上游修复（计数器原子化或
+# audit 入 strand）后移除本条。
+race:heyaki::PairingService::audit
+race:heyaki::Node::Impl::metrics_strand

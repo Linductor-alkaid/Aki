@@ -54,6 +54,10 @@ struct HostAssemblyReport {
     // peer_sessions 观察管道随装配启动（M5-11：主动/被动配对、presence、
     // 路径与断线重连的事件源；false = executor 拒绝，装配失败可见）。
     bool peer_observation_started = false;
+    // M7/DEC-028：ICE 配置装配期解析证据（缺失文件 = 0/0 合法；非法行
+    // 跳过计数可观测，不阻断装配）。
+    std::uint64_t ice_invalid_lines = 0;
+    std::size_t ice_servers_configured = 0;
 };
 
 // 启动恢复播种策略（M5-11，§8.1/§11.1；组合根公开面供单测）：恢复行中
@@ -129,6 +133,26 @@ public:
     // 经状态 owner 字段级更新（公钥绑定校验 + DB display_name 列）并热更新
     // 局域网名称广播；广播不可用时改名仍然生效（DEC-020 尽力而为元数据）。
     [[nodiscard]] bool set_device_name(std::string name);
+
+    // ---- M7/DEC-028：relay 注册与 TURN 配置（主线程调用，沿
+    // set_language/set_device_name 先例）。静态校验失败同步 false 且
+    // error 可展示；enroll_relay 的网络结果异步经 RelayStatus 状态可见
+    //（SetRelayStatus），注册/移除/TURN 变更均重启后生效（上游 Node
+    // 构造期一次性读取配置，HEY-20261006-001，设置页如实披露）。----
+    [[nodiscard]] bool enroll_relay(std::string relay_url,
+        std::string tenant, std::string bootstrap_token,
+        std::string ca_file, std::string& error);
+    [[nodiscard]] bool remove_relay(std::string& error);
+    [[nodiscard]] bool set_turn_server(std::string host, unsigned port,
+        std::string username, std::string credential, std::string& error);
+    // TURN 服务器预填视图（装配期解析的首条 turn_udp 配置；凭据不回填
+    // ——保存时须重新输入）。
+    struct TurnServerView {
+        std::string host;
+        unsigned port = 0;
+        std::string username;
+    };
+    [[nodiscard]] TurnServerView turn_server() const noexcept;
 
     [[nodiscard]] bool assembled() const noexcept;
     [[nodiscard]] bool assembly_failed() const noexcept;

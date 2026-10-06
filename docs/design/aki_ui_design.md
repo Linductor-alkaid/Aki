@@ -179,6 +179,7 @@ Transfers / Settings。组件选型（`RISK-2026-002` 的盘点基线，M5 用 p
 | 输入区 | `input` + `button` | 主输入壳可用批准的 `rounded-2xl` 例外 |
 | 弹窗 / 右键菜单 / Toast | `dialog` / `contextmenu` / `toast` | 弹窗 `2xl`、菜单壳 `lg`、菜单项 `md`、Toast `2xl`+`shadow-lg` |
 | 设置页 | `segmented` / `switch` / `dropdown` | 主题三选（跟随系统/浅/深），中文/英文切换 |
+| 设置页中继/TURN 区（M7） | `input` × N + `secureInput`（令牌/凭据）+ `button` | URL/CA 路径/状态行 mono（技术内容）；状态行只读派生自快照，compose 无 IO；错误用 `destructive` |
 
 设备页左栏列出对端名称（有备注时优先显示本机备注），右栏只显示选中设备
 的身份、连接和信任详情及备注编辑。会话列表的名称与时间、聊天头部名称与
@@ -330,3 +331,18 @@ Transfers / Settings。组件选型（`RISK-2026-002` 的盘点基线，M5 用 p
 与送达图标分开。发送按钮在无连接路径时禁用，Enter 明确反馈断开；
 可以保留草稿。全部字号/间距/圆角/颜色沿令牌。
 日期与中英文规则以 DEC-027 为准，重绘时按本地时区计算。
+
+## 2026-10-06：中继服务器与 TURN 高级设置（M7，DEC-028）
+
+Settings 页新增两个区块，随滚动视口纵向排布，全部字号/间距/圆角/颜色沿
+令牌。中继区块：标题 + 快照只读状态行（mono；未注册 / 已连接:url /
+已注册待重启）+ 可选 `destructive` 错误行；未注册时展示注册向导（地址
+input、租户 input、准入令牌 secureInput、注册 primary 按钮、CA 证书路径
+input 与用途说明），已注册时展示移除按钮与重启生效说明。注册/移除经
+UiActions 出站面（组合根绑 HostRuntime），静态校验失败在
+last_action_feedback 可见；注册网络结果异步经 RelayStatus 状态行呈现，
+token/凭据为会话内秘密，提交后即 clear_secret 擦除草稿。TURN 高级区块：
+主机/端口/用户名 input + 凭据 secureInput + 保存按钮；凭据不回填（保存时
+须重新输入），端口校验 1-65535。两区块变更均重启生效（HEY-20261006-001），
+文案如实披露。Devices/会话路径徽标沿用既有 ConnectionPath 标签，Relay
+路径无需新增资产。

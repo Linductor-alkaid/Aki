@@ -706,6 +706,17 @@ private:
         return from == to || aki::device::can_transition(from, to);
     }
 
+    // relay 控制面状态（M7，DEC-028 决策 8）：整体替换、同值幂等 no-op——
+    // 配置状态非信任域，无状态机校验（写入点自带节流：仅变化时提交）。
+    bool apply_impl(const SetRelayStatus& update) {
+        if (current_.relay.has_value() && *current_.relay == update.status) {
+            return true;
+        }
+        current_.relay = update.status;
+        snapshot_dirty_ = true;
+        return true;
+    }
+
     template <typename State>
     static bool state_machine_allows(State from, State to) {
         return from == to || can_transition(from, to);

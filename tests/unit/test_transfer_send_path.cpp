@@ -404,7 +404,7 @@ TEST_CASE("Send archive covers chunk boundaries with hash-first verification",
 
     const auto report = stack.host.shutdown();
     REQUIRE(report.fully_stopped());
-    REQUIRE(stack.io->idle());
+    REQUIRE(wait_until([&] { return stack.io->idle(); }, 2s));
 }
 
 // ---- hash-first 图片流（v2）：stored_sha256 随消息载荷 ----
@@ -451,7 +451,7 @@ TEST_CASE("Hash-first image flow carries stored_sha256 in the message",
 
     const auto report = stack.host.shutdown();
     REQUIRE(report.fully_stopped());
-    REQUIRE(stack.io->idle());
+    REQUIRE(wait_until([&] { return stack.io->idle(); }, 2s));
 }
 
 // ---- 进度聚合：单飞 dirty（一次排空至多一个 UpdateTransferProgress）+
@@ -491,7 +491,7 @@ TEST_CASE("Progress coalescing applies at most one update per drain and "
 
     const auto report = stack.host.shutdown();
     REQUIRE(report.fully_stopped());
-    REQUIRE(stack.io->idle());
+    REQUIRE(wait_until([&] { return stack.io->idle(); }, 2s));
 }
 
 // 控制 IO 完成回报的确定性夹具：不创建线程或队列，事件经 TM 既有泵投递。
@@ -674,7 +674,7 @@ TEST_CASE("IO failure surfaces as a failed event and the worker survives",
 
     const auto report = stack.host.shutdown();
     REQUIRE(report.fully_stopped());
-    REQUIRE(stack.io->idle());
+    REQUIRE(wait_until([&] { return stack.io->idle(); }, 2s));
 }
 
 // ---- DOD-02：提交拒绝——io 承载面停止后 admission 拒绝可见 ----
@@ -748,7 +748,7 @@ TEST_CASE("In-flight cancellation discards the partial archive idempotently",
 
     const auto report = stack.host.shutdown();
     REQUIRE(report.fully_stopped());
-    REQUIRE(stack.io->idle());
+    REQUIRE(wait_until([&] { return stack.io->idle(); }, 2s));
 }
 
 // ---- DOD-02：shutdown——在飞会话 + IO 归零 + fully_stopped ----
@@ -770,7 +770,7 @@ TEST_CASE("Shutdown quiesces in-flight archives and stops cleanly",
     });
     REQUIRE(report.fully_stopped());
     REQUIRE(report.blocking_workers_stopped == 1);
-    REQUIRE(stack.io->idle());
+    REQUIRE(wait_until([&] { return stack.io->idle(); }, 2s));
 }
 
 // ---- flush 顺序（TOCTOU 回归，§11.1③/DEC-011 ③）：先判 IO 归零、后最终

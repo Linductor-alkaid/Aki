@@ -1,7 +1,7 @@
 # Heyaki 能力反馈台账
 
 > 状态：Active
-> 更新日期：2026-10-02
+> 更新日期：2026-10-06
 
 ## HEY-20260929-001：受限会话由接收方直接批准
 
@@ -235,3 +235,79 @@ Squash 合入 84b8c3cd2b259cb5f474b18516c93e84675afecd；远程/本地依赖分�
 已删除，主目录 master 已 fast-forward 同步且干净。M5-43 Completed，
 HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保留。
 该结论只关闭取消重入修复的依赖接入，不关闭 M5-34/41/42 的桌面双端验收。
+
+## HEY-20261006-001：Node 运行期不可启用或更新 relay enrollment
+
+- **状态**：已核对 pinned API 与实现，未修改依赖；关联
+  [DEC-028](../decisions/DEC-028-relay-cross-subnet.md) 决策 3。
+- **可复现证据**：relay enrollment 只在 `Node::create` 的
+  `initialize_relay()`（`third_party/heyaki/src/client/node.cpp:1011/1102`）
+  读取 profile 首条 `auto_connect && !revoked` 记录；`include/heyaki/node.hpp`
+  公开面无运行期启用、停用或重载 relay 配置的方法（`RelayNodeConfig` 仅经
+  `NodeConfig::relay_override` 构造期传入）。`put_relay_enrollment` /
+  `mark_relay_revoked` 写入后，已运行的 Node 不感知。
+- **影响**：Aki 设置页完成 enrollment 或移除后，正在运行的进程无法连接或
+  断开 relay，必须重启应用生效（DEC-028 v1 限制）。运行期重建 NodeSession
+  需同步重建 adapter、双观察管道、LanNameBeacon、ReconnectCoordinator 钩子
+  与对账 sweep（均持有裸指针），等价二次装配，Aki 侧不可接受。
+- **期望语义**：公开有界的运行期 relay 配置更新入口（如
+  `update_relay_config(optional<RelayNodeConfig>)`），内部按关闭序重建 relay
+  客户端并保持既有会话/目录语义；或暴露受控的 Node 热重启边界。
+- **最小能力建议**：允许在 enrollment 记录变化后触发 relay 控制面重连，
+  结果与失败（token 拒绝、网络不可达、pin 不匹配）经既有
+  `RelayNodeSnapshot.last_error` 可观测。
+- **Aki 侧处理**：v1 按重启生效实现并如实披露；上游提供该能力后评估热
+  生效接入与双端验证。
+- **负责人及补跑条件**：Linductor；上游提供并固定公开 API 后，在
+  HostRuntime 接入运行期切换并补注册/移除/失败/恢复测试。
+
+## HEY-20261006-002：relay enrollment WSS 客户端无法借用宿主 executor
+
+- **状态**：已核对 pinned 实现并登记（M7 端到端验证发现，Independent
+  验证报告 2026-10-06）；未修改依赖。
+- **可复现证据**：`RelayEnrollmentWssTransportConfig`
+  （`include/heyaki/relay_enrollment_client.hpp:34-43`）无 Runtime/executor
+  注入字段；`make_relay_enrollment_wss_exchange` 经 `RelayWssClient::create`
+  （`src/client/relay_enrollment_client.cpp:88`）内部
+  `Runtime::create_owned` 自建 executor（与 `Node` 侧可借用
+  `Runtime::create_borrowed` 形成对照）。Aki 侧
+  `aki::heyaki::enroll_relay_profile` 因此在进程内运行第二 executor 实例
+  约 ≤12s（transport 超时上界）。
+- **影响**：违反 Aki EXEC-01「进程内 executor owner 唯一」的严格执行面；
+  交换线程不在宿主 Executor 的监控/关闭视图内，宿主 shutdown 无法取消
+  在途 enrollment 交换（只能等待其超时自然结束）。
+- **期望语义**：enrollment transport 接受借用 Runtime 注入（与
+  `NodeConfig.runtime` 同款非拥有指针），使交换运行在宿主 executor 上并
+  进入其生命周期视图。
+- **Aki 侧缓解（当前已实施）**：交换包在宿主 executor 的 `submit_auto`
+  一次性任务内（结果/异常经 future 与 SetRelayStatus 可见）；HostRuntime
+  关闭序有界等待该 future（≤12s 自然上界）。风险面收敛为「短暂脱离监控
+  视图的第三方 worker」，不静默、不阻塞关闭。
+- **负责人及补跑条件**：Linductor；上游提供借用注入后，将
+  `relay_enrollment.hpp` 切换为借用形式并补关闭竞争测试（enroll 在途时
+  shutdown）。
+
+## HEY-20261006-003：PairingService 审计计数器跨线程无同步
+
+- **状态**：已抑制收口（tsan-suppressions.supp，沿 M3-06 usrsctp 先例）；
+  未修改依赖；待上游修复后移除抑制并复跑 tsan。
+- **可复现证据**：[PR #70](https://github.com/Linductor-alkaid/Aki/pull/70)
+  CI run 37504293005 tsan job 112408875988，test_host_runtime（184 断言
+  全过）后 TSAN 报 1 处 data race：主线程
+  `HostRuntime::set_local_pairing_password → Node::rotate_authorization_password
+  → PairingService::rotate_password → PairingService::audit`
+  （pairing_service.cpp:80 `++stats_.password_rotated`，8 字节写）与
+  heyaki 内部 `schedule_expiry` 定时器 strand 的
+  `Node::Impl::prune_peer_services → metrics_strand`（读）竞争。
+- **根因**：`PairingService::stats_` 为普通计数器结构（非原子、非 strand
+  串行）：公开方法同步路径写、内部定时器经 metrics 快照路径读，两个上下
+  文无公共互斥。Aki 侧无契约违约——读路径是 heyaki 内部定时器，不在
+  NodeSession「调用方串行化」面内。
+- **影响**：诊断计数可能丢失个别增量（对 pairing 结果/授权无影响）；
+  TSAN 门禁不可绿。
+- **期望最小修复**：stats_ 计数器原子化（std::atomic）或 audit 调用
+  一律经 pairing strand 派发；metrics 读侧同步取快照。
+- **Aki 侧处理**：抑制表条目 `race:heyaki::PairingService::audit` /
+  `race:heyaki::Node::Impl::metrics_strand`；修复后移除并复跑全量 tsan。
+- **负责人及补跑条件**：Linductor；上游修复合入并升级 pin 后移除抑制、
+  复跑 tsan 七项门禁。

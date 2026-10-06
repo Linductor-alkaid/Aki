@@ -45,6 +45,7 @@
 #include <memory>
 #include <stdexcept>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -161,6 +162,99 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     // ---- M5-11：peer_sessions 观察管道随装配启动（事件源常驻证据面）----
     REQUIRE(assembly.peer_observation_started);
     REQUIRE(host.peer_observation_running());
+
+    // ---- M7/DEC-028：relay/TURN 配置面（本数据根无 ice 文件 → 0/0 装配
+    //      证据；设置面静态拒绝路径；set_turn_server 异步落盘。预写 ice
+    //      文件的装配 1/1 证据在 test_host_relay_config 独立二进制——
+    //      HostRuntime 为进程级单例，一次装配↔关闭周期）----
+    REQUIRE(assembly.ice_servers_configured == 0);
+    REQUIRE(assembly.ice_invalid_lines == 0);
+    {
+        // 装配首推 SetRelayStatus：无 enrollment 记录 → enrolled=false 基线
+        //（首推经 owner drain 落快照——quiesce = 组合根既有的首帧推进路径）。
+        host.quiesce();
+        aki::app::AppState relay_snapshot;
+        REQUIRE(host.load_state_snapshot(relay_snapshot));
+        REQUIRE(relay_snapshot.relay.has_value());
+        REQUIRE_FALSE(relay_snapshot.relay->enrolled);
+        REQUIRE(relay_snapshot.relay->last_error.empty());
+    }
+    {
+        // remove_relay：无 enrollment → false 且 error 可展示。
+        std::string relay_error;
+        REQUIRE_FALSE(host.remove_relay(relay_error));
+        REQUIRE_FALSE(relay_error.empty());
+        // enroll_relay 静态校验失败：同步 false 且 error 可展示（非 wss、空
+        // tenant、空 token、ca 文件缺失四分支）。
+        relay_error.clear();
+        REQUIRE_FALSE(host.enroll_relay(
+            "http://relay.example.com", "aki", "token", "", relay_error));
+        REQUIRE_FALSE(relay_error.empty());
+        relay_error.clear();
+        REQUIRE_FALSE(host.enroll_relay(
+            "wss://relay.example.com", "", "token", "", relay_error));
+        REQUIRE_FALSE(relay_error.empty());
+        relay_error.clear();
+        REQUIRE_FALSE(host.enroll_relay(
+            "wss://relay.example.com", "aki", "", "", relay_error));
+        REQUIRE_FALSE(relay_error.empty());
+        relay_error.clear();
+        REQUIRE_FALSE(host.enroll_relay(
+            "wss://relay.example.com", "aki", "token",
+            "/nonexistent-ca.pem", relay_error));
+        REQUIRE_FALSE(relay_error.empty());
+    }
+    {
+        // set_turn_server 静态拒绝：端口 0 / 70000、空 host、空 username；
+        // 拒绝路径零扰动——文件不落盘。
+        std::string turn_error;
+        REQUIRE_FALSE(host.set_turn_server(
+            "turn.example.com", 0, "aki-user", "aki-cred", turn_error));
+        REQUIRE_FALSE(turn_error.empty());
+        turn_error.clear();
+        REQUIRE_FALSE(host.set_turn_server(
+            "turn.example.com", 70000, "aki-user", "aki-cred", turn_error));
+        REQUIRE_FALSE(turn_error.empty());
+        turn_error.clear();
+        REQUIRE_FALSE(host.set_turn_server(
+            "", 3478, "aki-user", "aki-cred", turn_error));
+        REQUIRE_FALSE(turn_error.empty());
+        turn_error.clear();
+        REQUIRE_FALSE(host.set_turn_server(
+            "turn.example.com", 3478, "", "aki-cred", turn_error));
+        REQUIRE_FALSE(turn_error.empty());
+        REQUIRE_FALSE(
+            std::filesystem::exists(data_root / "ice-servers.txt"));
+
+        // 合法参数：true 返回；异步整文件覆写（有界轮询等写完成）。
+        turn_error.clear();
+        REQUIRE(host.set_turn_server(
+            "turn.example.com", 3478, "aki-user", "aki-cred", turn_error));
+        REQUIRE(turn_error.empty());
+        std::string written;
+        REQUIRE(wait_until([&] {
+            std::error_code ec;
+            if (!std::filesystem::is_regular_file(
+                    data_root / "ice-servers.txt", ec)) {
+                return false;
+            }
+            std::ifstream file(data_root / "ice-servers.txt",
+                std::ios::binary);
+            std::ostringstream buffer;
+            buffer << file.rdbuf();
+            written = buffer.str();
+            return written
+                == "turn_udp turn.example.com 3478 aki-user aki-cred\n";
+        }, 5s));
+        REQUIRE(written == "turn_udp turn.example.com 3478 aki-user aki-cred\n");
+
+        // turn_server() 预填视图取装配期解析（本数据根装配时无 ice 文件）：
+        // 重启生效语义——运行期覆写不热更预填。
+        const auto turn_view = host.turn_server();
+        REQUIRE(turn_view.host.empty());
+        REQUIRE(turn_view.port == 0);
+        REQUIRE(turn_view.username.empty());
+    }
 
     // ---- ① 正常完成：宿主 executor 直接任务 ----
     auto answer = host.executor().submit_auto([] { return 42; });

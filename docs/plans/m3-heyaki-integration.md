@@ -1142,7 +1142,10 @@ Conversation 并收发文本消息（含送达回报），消息历史实时持�
   - ③ 发现来源分期（§8.1/里程碑范围条款预置项）：Relay/邀请链接/手动输入
     来源未在 M3 实施；接入时经同一 on_device_discovered 入口以对应
     DiscoveryMethod 合成（触发语义沿 §8.1 M3-02 固化语义），范围与补做
-    条件已在本里程碑范围条款与验证记录登记。
+    条件已在本里程碑范围条款与验证记录登记。2026-10-06：Relay 部分由
+    [M7](m7-relay-cross-subnet.md) /
+    [DEC-028](../decisions/DEC-028-relay-cross-subnet.md) 接续实施；邀请链接
+    与手动输入继续分期。
   - ④ M5 补做条件归档：占位口令 verifier + secret backend
     prefer_os_backend=false（本机确定性配置；真实口令流程/OS 钥匙串随 M5
     设置面）；DeviceIdentity display_name/device_class/os_name/capabilities
