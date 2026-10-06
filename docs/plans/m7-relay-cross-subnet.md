@@ -190,6 +190,12 @@ SCOPE-02 的 Relay 来源与 SCOPE-10 的 Relay 路径展示。
   契约违约）。按 M3-06 usrsctp 先例抑制收口（cmake/tsan-suppressions.
   supp），上游修复后移除复跑。其余六项（debug/asan/ubsan/MSVC/双包）
   首轮即 SUCCESS。
+- **CI tsan 二轮既有测试抖动（run 37507960431，与 M7 改动无关）**：
+  test_transfer_send_path「IO failure surfaces…」用例
+  `REQUIRE(stack.io->idle())` 失败——宿主 shutdown 返回与 IO worker
+  末次排空间的固有竞态窗口（同文件相邻用例本就用有界等待形式）。
+  修复：该文件全部 6 处裸 idle 断言统一改 `wait_until(...idle..., 2s)`
+  （CI 实测证据 + 本地 debug 279/279 复验）。
 - 未验证（环境限制，如实降级）：真实跨网段双端（外部 relay + coturn、
   两网段真机）——补跑条件：自建 relay（上游 quickstart）+ 双网段真机
   + TURN 3478/49160-49200 放行；负责人 Linductor。对应 M7 退出-3 的
