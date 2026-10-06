@@ -112,6 +112,17 @@ struct DiscoveredDevice {
 };
 ```
 
+Relay 来源自 M7 接入（[DEC-028](../decisions/DEC-028-relay-cross-subnet.md)）：
+设备经设置页完成 relay enrollment（bootstrap token 准入，持久化于 Heyaki
+profile）后，Heyaki Node 自动登录 relay 并把同租户在线端点合入与 LAN 同一
+的端点目录；Aki 发现观察管道对合并目录 diff，relay 条目以
+`DiscoveryMethod::Relay`、endpoint 前缀 `relay:` 合成，公钥取条目
+`identity_public_key`（与 LAN 同源同验证）。relay 是控制面（准入/目录/信令
+转发），消息与文件数据面仍走 P2P DataChannel，直连失败经 ICE/TURN 兜底
+（跨网段部署需 coturn，设置页高级区配置静态凭据，一期决策同 DEC-028）。
+enrollment 变更重启生效（上游 Node 构造期一次性读取，反馈台账
+HEY-20261006-001）。
+
 新发现的设备默认处于未信任状态。客户端显示设备名称、类型、Device
 ID、公钥指纹和发现来源。设备名在发现阶段经 Aki 的签名局域网名称报文
 补充（[DEC-020](../decisions/DEC-020-signed-lan-device-name.md)）；签名公钥
@@ -590,7 +601,9 @@ executor 类型（`RULE-10`）；heyaki 层仅依赖第 3~7 节领域类型，�
 出站（应用 → Adapter），`bool` 返回值为有界 admission 结果，拒绝必须可见：
 
 - `start_discovery(DiscoveryMethod)` / `stop_discovery()`：设备发现启停（第 4 节）；
-  扫描型来源（LAN 发现 / Relay）启动扫描，记录型来源的接入在 M3 细化。
+  扫描型来源（LAN 发现 / Relay）启动同一发现观察管道——两者观察的是 Heyaki
+  合并端点目录（LAN + relay 条目），diff 语义一致（M7/DEC-028）；其余来源
+  （KnownDevice / InviteLink / Manual）仍拒绝并继续分期。
 - `send_text_message(receiver, MessageId, text)`：文本消息发送（第 6 节）；
   `MessageId` 由应用生成并保持稳定（`RULE-08`）。
 - `send_image_message(receiver, MessageId, FileMetadata, TransferId)`：图片
