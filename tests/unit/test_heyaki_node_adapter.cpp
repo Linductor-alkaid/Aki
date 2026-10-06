@@ -245,14 +245,22 @@ TEST_CASE("HeyakiNodeAdapter outbound SPI validates and reports honestly",
         DeviceId{"hy1_00000000000000000000000000000000000000000000000000000000000000"},
         MessageId{"m-1"}, "hello"));
 
-    // 发现来源校验：M3 仅 LanDiscovery 扫描型。
+    // 发现来源校验：分期拒绝面（KnownDevice/InviteLink/Manual 仍 false）。
     REQUIRE_FALSE(adapter.start_discovery(DiscoveryMethod::Manual));
     REQUIRE_FALSE(adapter.start_discovery(DiscoveryMethod::KnownDevice));
+    REQUIRE_FALSE(adapter.start_discovery(DiscoveryMethod::InviteLink));
 
     // LAN 发现启停回转（观察管道启停；接口缺失环境 start 不予断言——补跑
     // 条件沿 M3-04 登记）。
     if (domain.session->has_lan_interfaces()) {
         REQUIRE(adapter.start_discovery(DiscoveryMethod::LanDiscovery));
+        REQUIRE(adapter.discovery_running());
+        adapter.stop_discovery();
+        REQUIRE_FALSE(adapter.discovery_running());
+
+        // M7/DEC-028 决策 5：Relay 与 LanDiscovery 是同一合并目录的观察
+        // 来源标记——真实 adapter 接受 Relay 并启动同一观察管道。
+        REQUIRE(adapter.start_discovery(DiscoveryMethod::Relay));
         REQUIRE(adapter.discovery_running());
         adapter.stop_discovery();
         REQUIRE_FALSE(adapter.discovery_running());

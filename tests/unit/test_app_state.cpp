@@ -1019,3 +1019,69 @@ TEST_CASE("Local chat preferences survive connection updates and reveal atomical
     REQUIRE_FALSE(restored.value.conversations.conversations[0].hidden);
     REQUIRE(restored.value.messages.messages.size() == 1);
 }
+
+// M7（DEC-028 决策 8）：relay 控制面状态整体替换——首次提交后快照可见、
+// 同值幂等（apply 吸收但不置脏，即不触发快照发布）、不同值整体替换；
+// 初始无注册时快照 relay 保持 nullopt。
+TEST_CASE("SetRelayStatus replaces wholesale, is idempotent and starts unset",
+    "[unit][app_state][m7_relay]") {
+    using aki::app::RelayStatus;
+    using aki::app::SetRelayStatus;
+    AppStateOwner owner;
+
+    // 初始：未注册 = 缺省展示（nullopt）。
+    owner.drain();
+    executor::comm::Snapshot<AppState> snapshot;
+    REQUIRE(owner.try_load_snapshot(snapshot));
+    REQUIRE_FALSE(snapshot.value.relay.has_value());
+
+    // 首次提交：快照 relay 可见且字段逐项一致。
+    RelayStatus status;
+    status.enrolled = true;
+    status.relay_url = "wss://relay.example.com";
+    status.tenant = "aki";
+    status.connection_state = 2;
+    status.connection_state_name = "ready";
+    status.last_error.clear();
+    REQUIRE(owner.submit_update(SetRelayStatus{status}));
+    owner.drain();
+    REQUIRE(owner.try_load_snapshot(snapshot));
+    REQUIRE(snapshot.value.relay.has_value());
+    REQUIRE(*snapshot.value.relay == status);
+    REQUIRE(snapshot.value.relay->enrolled);
+    REQUIRE(snapshot.value.relay->relay_url == "wss://relay.example.com");
+    REQUIRE(snapshot.value.relay->tenant == "aki");
+    REQUIRE(snapshot.value.relay->connection_state == 2);
+    REQUIRE(snapshot.value.relay->connection_state_name == "ready");
+    REQUIRE(snapshot.value.relay->last_error.empty());
+
+    // 同值重复提交：幂等 no-op——updates_applied 吸收、不发布新快照。
+    const auto applied_before = owner.stats().updates_applied;
+    const auto published_before = owner.stats().snapshots_published;
+    REQUIRE(owner.submit_update(SetRelayStatus{status}));
+    owner.drain();
+    REQUIRE(owner.stats().updates_applied == applied_before + 1);
+    REQUIRE(owner.stats().snapshots_published == published_before);
+    REQUIRE(owner.try_load_snapshot(snapshot));
+    REQUIRE(*snapshot.value.relay == status);
+
+    // 不同值：整体替换（含 enrolled=true → false + last_error 回填）。
+    RelayStatus failed = status;
+    failed.enrolled = false;
+    failed.connection_state = 4;
+    failed.connection_state_name = "failed";
+    failed.last_error = "bootstrap token rejected";
+    REQUIRE(owner.submit_update(SetRelayStatus{failed}));
+    owner.drain();
+    REQUIRE(owner.try_load_snapshot(snapshot));
+    REQUIRE(*snapshot.value.relay == failed);
+    REQUIRE_FALSE(snapshot.value.relay->enrolled);
+    REQUIRE(snapshot.value.relay->last_error == "bootstrap token rejected");
+
+    // 与其他 Store 更新同批次互不干扰：设备行更新不触碰 relay 字段。
+    REQUIRE(owner.submit_update(UpsertDevice{make_device("relay-local")}));
+    owner.drain();
+    REQUIRE(owner.try_load_snapshot(snapshot));
+    REQUIRE(snapshot.value.devices.devices.size() == 1);
+    REQUIRE(*snapshot.value.relay == failed);
+}

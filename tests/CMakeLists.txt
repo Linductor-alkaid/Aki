@@ -532,6 +532,63 @@ aki_deploy_openssl_dlls(test_host_runtime)
 add_test(NAME test_host_runtime COMMAND test_host_runtime)
 set_tests_properties(test_host_runtime PROPERTIES LABELS "unit")
 
+# M7（DEC-028）：relay 集成纯函数面测试（网络无关：diff_lan_discovery 的
+# relay 来源映射、validate_relay_enroll_request、ICE 配置解析/序列化/校验、
+# enroll/revoke 的 profile 面——异步失败路径仅打 127.0.0.1 不可达端口）。
+# 链接形态沿 test_peer_sessions_pipeline（aki_app 传播 executor；heyaki
+# 符号经 heyaki::client）。
+add_executable(test_relay_integration unit/test_relay_integration.cpp)
+target_compile_features(test_relay_integration PRIVATE cxx_std_20)
+aki_apply_warnings(test_relay_integration PRIVATE)
+target_link_libraries(test_relay_integration PRIVATE
+    Catch2::Catch2WithMain
+    aki_app
+    aki_heyaki
+    heyaki::client)
+aki_deploy_openssl_dlls(test_relay_integration)
+add_test(NAME test_relay_integration COMMAND test_relay_integration)
+set_tests_properties(test_relay_integration PROPERTIES LABELS "unit")
+
+# M7（DEC-028）：HostRuntime relay/TURN 配置装配面测试。独立二进制——
+# HostRuntime 为进程级单例（一次装配↔关闭周期），本二进制用预写
+# ice-servers.txt 的数据根装配，覆盖装配报告 1/1、turn_server() 预填视图、
+# enroll_relay 异步失败路径与 set_turn_server 覆写；main 模式同
+# test_host_runtime（进程唯一 Executor owner 是 HostRuntime 单例）。
+add_executable(test_host_relay_config unit/test_host_relay_config.cpp)
+target_compile_features(test_host_relay_config PRIVATE cxx_std_20)
+aki_apply_warnings(test_host_relay_config PRIVATE)
+target_link_libraries(test_host_relay_config PRIVATE
+    Catch2::Catch2
+    aki_host)
+aki_deploy_openssl_dlls(test_host_relay_config)
+add_test(NAME test_host_relay_config COMMAND test_host_relay_config)
+set_tests_properties(test_host_relay_config PROPERTIES LABELS "unit")
+
+# M7（DEC-028 决策 10）：relay 进程内端到端回环——真实 RelayServer（自签
+# 证书 + bootstrap token 种入）+ aki 包装面 enrollment + NodeSession 自动
+# 登录/发现/connect_peer 配对/aki.text 往返 + 借用 Runtime 关闭序。仅测试
+# 目标链接 heyaki::relay（src/relay 内部头，PUBLIC 链 heyaki::client）；证书
+# 生成直用 OpenSSL 头（heyaki_relay PRIVATE 链 OpenSSL 不传播 include，本处
+# 显式 find_package）。单用例二进制（[skip] 受控退出纪律沿回环先例）。
+find_package(OpenSSL 3.0 REQUIRED COMPONENTS SSL Crypto)
+add_executable(test_relay_e2e_loopback
+    integration/test_relay_e2e_loopback.cpp)
+target_compile_features(test_relay_e2e_loopback PRIVATE cxx_std_20)
+aki_apply_warnings(test_relay_e2e_loopback PRIVATE)
+target_link_libraries(test_relay_e2e_loopback PRIVATE
+    Catch2::Catch2WithMain
+    aki_app
+    aki_heyaki
+    heyaki::client
+    heyaki::relay
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+aki_deploy_openssl_dlls(test_relay_e2e_loopback)
+add_test(NAME test_relay_e2e_loopback COMMAND test_relay_e2e_loopback)
+set_tests_properties(test_relay_e2e_loopback PROPERTIES
+    LABELS "integration"
+    TIMEOUT 300)
+
 # M5-02：主题档位覆写回归对照（aki_ui_design §2.1/§2.2/§2.3 独立抄录期望值
 # vs ui/theme/aki_theme_values.hpp 数值权威表；不链 eui——上游默认档对拍由
 # GUI 宿主 aki-run.log 归档承载）。
