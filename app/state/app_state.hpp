@@ -11,6 +11,8 @@
 #include "app/state/local_transfer_artifact.hpp"
 
 #include <cstddef>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace aki::app {
@@ -53,11 +55,29 @@ struct TransferStore {
     std::vector<LocalTransferArtifact> local_artifacts;
 };
 
+// Relay 控制面注册与连接态（M7，DEC-028 决策 8）：配置状态非信任域，不做
+// 状态机——SetRelayStatus 整体替换、幂等（同值 no-op 不发布）；易失不
+// 持久化（enrollment 权威记录在 heyaki profile，重启后由装配首推重建本
+// 字段）。connection_state 为上游 RelayNodeState 数值（语义名随行携带，
+// 解释收敛在 heyaki/session 层）。
+struct RelayStatus {
+    bool enrolled = false;   // 存在有效（未撤销）enrollment 记录
+    std::string relay_url;
+    std::string tenant;
+    int connection_state = 0;             // RelayNodeState 数值（0=disabled）
+    std::string connection_state_name;    // 语义名（disabled/ready/…）
+    std::string last_error;               // 最近一次注册/连接错误（可展示）
+
+    friend bool operator==(const RelayStatus&, const RelayStatus&) = default;
+};
+
 struct AppState {
     DeviceStore devices;
     ConversationStore conversations;
     MessageStore messages;
     TransferStore transfers;
+    // relay 状态（M7）：无注册时保持 nullopt（「未注册」即缺省展示）。
+    std::optional<RelayStatus> relay;
 };
 
 // Store 容量预算（RULE-09）：超限的更新被状态 owner 明确拒绝并可观测，

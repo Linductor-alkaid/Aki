@@ -107,11 +107,16 @@ struct CompleteTransfer {
 struct SetLocalTransferArtifact { LocalTransferArtifact file; };
 struct SetLocalTransferArtifactFailure { aki::transfer::TransferId transfer; std::string error; };
 
+// relay 控制面状态整体替换（M7，DEC-028 决策 8）：配置状态非信任域，无
+// 状态机校验——同值幂等 no-op；写入点为装配首推/enrollment 任务结果/
+// 对账 sweep 周期采样。
+struct SetRelayStatus { RelayStatus status; };
+
 using AppStateUpdate =
     std::variant<UpsertDevice, SetDeviceName, SetDeviceRemark, SetDeviceInboundTrust,
                  UpsertConversation, SetConversationPinned, SetConversationHidden, UpsertMessage,
                  UpsertTransfer, UpdateTransferProgress, SetDeviceConnectionPath, SetPairingFailure,
                  SetPresence, SetDeliveryState, CompleteTransfer, SetLocalTransferArtifact,
-                 SetLocalTransferArtifactFailure>;
+                 SetLocalTransferArtifactFailure, SetRelayStatus>;
 
 }  // namespace aki::app

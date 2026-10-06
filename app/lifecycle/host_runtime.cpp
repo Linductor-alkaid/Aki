@@ -9,6 +9,8 @@
 #include "heyaki/adapter/lan_name_beacon.hpp"
 #include "heyaki/adapter/local_identity.hpp"
 #include "heyaki/adapter/peer_sessions_pipeline.hpp"
+#include "heyaki/session/ice_config.hpp"
+#include "heyaki/session/relay_enrollment.hpp"
 #include "heyaki/session/runtime_node.hpp"
 #include "persistence/database/database_worker.hpp"
 #include "persistence/database/database_worker_adapter.hpp"
@@ -82,6 +84,59 @@ bool wait_until(const std::function<bool()>& predicate,
     }
     return true;
 }
+
+// ---- M7/DEC-028：relay 状态与 ICE 配置组合根辅助 ----
+
+// ICE 配置文件解析结果 → NodeSession Options 的 heyaki 形态（组合根内
+// 转换，heyaki 类型不越出接线层）。
+std::vector<::heyaki::NodeIceServer> to_heyaki_ice_servers(
+    const std::vector<aki::heyaki::IceServerConfig>& servers) {
+    std::vector<::heyaki::NodeIceServer> out;
+    out.reserve(servers.size());
+    for (const auto& server : servers) {
+        ::heyaki::NodeIceServer ice;
+        ice.kind = server.kind == "stun"
+            ? ::heyaki::NodeIceServerKind::stun
+            : ::heyaki::NodeIceServerKind::turn_udp;
+        ice.hostname = server.hostname;
+        ice.port = server.port;
+        ice.username = server.username;
+        ice.credential = server.credential;
+        out.push_back(std::move(ice));
+    }
+    return out;
+}
+
+// enrollment 记录 + relay 运行态投影 → AppState RelayStatus（M7/DEC-028
+// 决策 8）。注册事实取 profile 首条 auto_connect && !revoked 记录（上游
+// initialize_relay 同语义）；连接事实取 NodeSnapshot 投影（view.enabled
+// 时 URL/租户以运行态为准——即当前实际连接的 relay）。
+RelayStatus make_relay_status(
+    const std::vector<aki::heyaki::RelayEnrollmentView>& enrollments,
+    const aki::heyaki::RelayStatusView& view) {
+    RelayStatus status;
+    const aki::heyaki::RelayEnrollmentView* active = nullptr;
+    for (const auto& record : enrollments) {
+        if (record.auto_connect && !record.revoked) {
+            active = &record;
+            break;
+        }
+    }
+    status.enrolled = active != nullptr;
+    if (active != nullptr) {
+        status.relay_url = active->relay_url;
+        status.tenant = active->tenant;
+    }
+    status.connection_state = view.state;
+    status.connection_state_name = view.state_name;
+    if (view.enabled) {
+        status.relay_url = view.relay_url;
+        status.tenant = view.tenant;
+    }
+    status.last_error = view.last_error;
+    return status;
+}
+
 
 // 本地身份 → DeviceIdentity（DEC-006 映射 1；main.cpp 同款语义）。
 DeviceIdentity make_local_device_identity(const aki::heyaki::LocalIdentity& identity,
@@ -298,6 +353,12 @@ struct HostRuntime::Impl {
     std::unique_ptr<aki::heyaki::PeerSessionPipeline> peer_pipeline;
     std::unique_ptr<aki::heyaki::LanNameBeacon> name_beacon;
     std::future<void> language_write;
+    // M7/DEC-028：ICE 配置（装配期解析，运行期只读——变更经 set_turn_server
+    // 落盘并重启生效）与 relay 注册任务 future（在途互斥 + 关闭序消费）。
+    std::vector<aki::heyaki::IceServerConfig> ice_servers;
+    std::uint64_t ice_invalid_lines = 0;
+    std::future<void> ice_write;
+    std::future<void> relay_enroll_task;
     // 重连对账周期句柄（DEC-021）与启动信任校准任务 future（有界单次）。
     executor::TimerHandle reconnect_sweep;
     // Lifecycle barrier only: queued/running sweeps finish before Node shutdown.
@@ -451,15 +512,34 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
     }
     impl.assembly_report.receive_dir = impl.receive_dir;
 
+    // 3.45) ICE/TURN 配置（M7，DEC-028 决策 7）：数据根 ice-servers.txt
+    //      装配期解析（缺失 = 空配置合法；非法行跳过计数可观测）。
+    {
+        const auto ice_file = aki::heyaki::load_ice_servers_file(
+            (std::filesystem::path(run_root) / "ice-servers.txt")
+                .string());
+        impl.ice_servers = std::move(ice_file.servers);
+        impl.ice_invalid_lines = ice_file.invalid_lines;
+        impl.assembly_report.ice_invalid_lines = ice_file.invalid_lines;
+        impl.assembly_report.ice_servers_configured =
+            impl.ice_servers.size();
+    }
+
     // 3.5) Node/Runtime 装配（DEC-006 借用注入：borrowed Runtime + Node，
-    //      EXEC-02 启动段纪律——恢复完成后、事件源接通前）。
+    //      EXEC-02 启动段纪律——恢复完成后、事件源接通前）。连通模式
+    //      automatic（M7/DEC-028 决策 1：LAN 优先、relay 兜底——无有效
+    //      enrollment 时 relay 分支自然关闭）；ICE 服务器非空时注入
+    //      path_policy_override（validate 前置校验失败 = 装配失败可见）。
     impl.node_session.emplace(aki::heyaki::NodeSession::create(
         impl.executor_owner.executor(),
-        aki::heyaki::NodeSession::Options{.profile = &*impl.profile,
+        aki::heyaki::NodeSession::Options{
+            .profile = &*impl.profile,
+            .lan_override = aki::heyaki::production_lan_configuration(),
             .file_receive_roots = {::heyaki::FileRootConfig{
                 .name = receive_root_name,
                 .directory = impl.receive_dir}},
-            .basic_communication = true}));
+            .basic_communication = true,
+            .ice_servers = to_heyaki_ice_servers(impl.ice_servers)}));
     impl.assembly_report.lan_interfaces = impl.node_session->has_lan_interfaces();
 
     // 3) DatabaseWorkerControl——先于 AppStateOwner 构造（§8.3 七步序，
@@ -504,6 +584,14 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
     (void)impl.state_owner->submit_update(UpsertDevice{std::move(local_device)});
     for (auto& corrected : corrected_trust_rows)
         (void)impl.state_owner->submit_update(UpsertDevice{std::move(corrected)});
+
+    // relay 状态首推（M7/DEC-028 决策 8）：注册事实来自 profile enrollment
+    // 记录，连接事实来自 NodeSnapshot——启动即反映「已注册待重启/已连接/
+    // 未注册」基线；后续由 enrollment 任务结果与对账 sweep 增量推进。
+    (void)impl.state_owner->submit_update(SetRelayStatus{
+        make_relay_status(
+            aki::heyaki::relay_enrollment_views(*impl.profile),
+            impl.node_session->relay_status())});
 
     // 5) 真实 Adapter + 四 Manager（M3-08 组合；presence/path 观察关闭保
     //    确定性，发现观察管道由 start_discovery 启停）。
@@ -623,10 +711,11 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
                         reconnect_for_hooks](const DeviceId& peer) {
                         (void)router_for_hooks->on_device_disconnected(peer);
                         // SCOPE-11：断开后启动有界重连循环（恢复后原会话经
-                        // connect_lan 回到 authenticated）。
+                        // connect_peer 回到 authenticated——M7/DEC-028 决策 6：
+                        // automatic 自动选路，纯 relay 可见对端同样可恢复）。
                         ReconnectCoordinator::Attempt try_conn =
                             [node_for_reconnect, peer]() {
-                                return node_for_reconnect->connect_lan(peer);
+                                return node_for_reconnect->connect_peer(peer);
                             };
                         ReconnectCoordinator::RecoveryCheck is_auth =
                             [node_for_reconnect, peer]() {
@@ -734,13 +823,37 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
                         }
                         ReconnectCoordinator::PerPeerHooks hooks{
                             [node_for_sweep, id = device.id] {
-                                return node_for_sweep->connect_lan(id);
+                                return node_for_sweep->connect_peer(id);
                             },
                             [node_for_sweep, id = device.id] {
                                 return node_for_sweep->session_linked(
                                     id);
                             }};
                         (void)reconnect_for_sweep->start(device.id, hooks);
+                    }
+                    // relay 连接态周期采样（M7/DEC-028 决策 8）：仅连接
+                    // 字段随 NodeSnapshot 变化提交；注册事实与注册错误由
+                    // 装配首推/enrollment 任务写入，view.last_error 为空时
+                    // 保留快照既有值（注册失败详情不被空连接错误覆写）。
+                    if (snapshot.value.relay.has_value()) {
+                        const auto view = node_for_sweep->relay_status();
+                        auto status = *snapshot.value.relay;
+                        if (view.enabled) {
+                            status.relay_url = view.relay_url;
+                            status.tenant = view.tenant;
+                            status.connection_state = view.state;
+                            status.connection_state_name = view.state_name;
+                            if (!view.last_error.empty()) {
+                                status.last_error = view.last_error;
+                            }
+                        } else if (status.connection_state != 0) {
+                            status.connection_state = 0;
+                            status.connection_state_name = "disabled";
+                        }
+                        if (!(*snapshot.value.relay == status)) {
+                            (void)owner_for_sweep->submit_update(
+                                SetRelayStatus{std::move(status)});
+                        }
                     }
                 });
     }
@@ -815,11 +928,209 @@ bool HostRuntime::set_device_name(std::string name) {
     return true;
 }
 
-bool HostRuntime::assembled() const noexcept {
-    return impl_->assembled;
+bool HostRuntime::enroll_relay(std::string relay_url, std::string tenant,
+    std::string bootstrap_token, std::string ca_file, std::string& error) {
+    if (!impl_->assembled || impl_->shutdown_attempted || !impl_->profile
+        || !impl_->state_owner) {
+        error = "Host is not available";
+        std::fill(bootstrap_token.begin(), bootstrap_token.end(), '\0');
+        return false;
+    }
+    aki::heyaki::RelayEnrollRequest request;
+    request.relay_url = std::move(relay_url);
+    request.tenant = std::move(tenant);
+    request.bootstrap_token = std::move(bootstrap_token);
+    if (!ca_file.empty()) {
+        request.ca_file = std::filesystem::path{std::move(ca_file)};
+    }
+    const auto invalid = aki::heyaki::validate_relay_enroll_request(request);
+    if (invalid.has_value()) {
+        error = *invalid;
+        std::fill(request.bootstrap_token.begin(),
+            request.bootstrap_token.end(), '\0');
+        return false;
+    }
+    if (impl_->relay_enroll_task.valid()) {
+        if (impl_->relay_enroll_task.wait_for(0ms)
+            != std::future_status::ready) {
+            error = "relay enrollment already in progress";
+            std::fill(request.bootstrap_token.begin(),
+                request.bootstrap_token.end(), '\0');
+            return false;
+        }
+        try {
+            impl_->relay_enroll_task.get();
+        } catch (...) {
+            error = "previous relay enrollment task failed";
+            std::fill(request.bootstrap_token.begin(),
+                request.bootstrap_token.end(), '\0');
+            return false;
+        }
+    }
+    // 阻塞 WSS 交换放 executor 任务（M7/DEC-028 决策 2：一次性有界
+    // ~12s，不得在点击回调上下文执行）；结果经 SetRelayStatus 回传
+    //（owner 受理点唤醒主循环 drain，M5-05 起接线）。token 副本在任务
+    // 末尾擦除（凭据纪律，DEC-018 同款）。
+    auto* profile_for_task = &*impl_->profile;
+    auto* owner_for_task = &*impl_->state_owner;
+    const auto ca_for_task = request.ca_file;
+    impl_->relay_enroll_task = impl_->executor_owner.executor().submit_auto(
+        [profile_for_task, owner_for_task,
+            token = std::move(request.bootstrap_token),
+            url = std::move(request.relay_url),
+            tenant = std::move(request.tenant),
+            ca = ca_for_task]() mutable {
+            aki::heyaki::RelayEnrollRequest task_request;
+            task_request.relay_url = url;
+            task_request.tenant = tenant;
+            task_request.bootstrap_token = token;
+            task_request.ca_file = ca;
+            std::string task_error;
+            auto result = aki::heyaki::enroll_relay_profile(
+                *profile_for_task, task_request, task_error);
+            std::fill(token.begin(), token.end(), '\0');
+            RelayStatus status;
+            status.relay_url = url;
+            status.tenant = tenant;
+            status.connection_state_name = "disabled";
+            if (result.has_value()) {
+                // 注册成功：记录已持久化，重启后 Node 自动登录（决策 3）。
+                status.enrolled = true;
+            } else {
+                status.enrolled = false;
+                status.last_error = task_error;
+            }
+            (void)owner_for_task->submit_update(SetRelayStatus{status});
+        });
+    if (impl_->relay_enroll_task.wait_for(0ms)
+        == std::future_status::ready) {
+        try {
+            impl_->relay_enroll_task.get();
+        } catch (...) {
+            error = "relay enrollment task failed";
+            return false;
+        }
+    }
+    return true;
 }
 
-bool HostRuntime::assembly_failed() const noexcept {
+bool HostRuntime::remove_relay(std::string& error) {
+    if (!impl_->assembled || impl_->shutdown_attempted || !impl_->profile
+        || !impl_->state_owner) {
+        error = "Host is not available";
+        return false;
+    }
+    // 目标 = profile 首条有效记录（与 Node initialize_relay 使用同一记录）。
+    std::string target;
+    for (const auto& view :
+        aki::heyaki::relay_enrollment_views(*impl_->profile)) {
+        if (view.auto_connect && !view.revoked) {
+            target = view.relay_url;
+            break;
+        }
+    }
+    if (target.empty()) {
+        error = "no relay enrollment to remove";
+        return false;
+    }
+    if (!aki::heyaki::revoke_relay_enrollment(
+            *impl_->profile, target, error)) {
+        return false;
+    }
+    // 状态推进（同步——本地 profile 写，无网络面）：enrolled=false 保留
+    // URL/租户上下文；运行中连接至重启保持（决策 4，设置页披露）。
+    executor::comm::Snapshot<AppState> snapshot;
+    RelayStatus status;
+    if (impl_->state_owner->try_load_snapshot(snapshot)
+        && snapshot.value.relay.has_value()) {
+        status = *snapshot.value.relay;
+    }
+    status.enrolled = false;
+    status.last_error.clear();
+    (void)impl_->state_owner->submit_update(SetRelayStatus{status});
+    return true;
+}
+
+bool HostRuntime::set_turn_server(std::string host, unsigned port,
+    std::string username, std::string credential, std::string& error) {
+    if (!impl_->assembled || impl_->shutdown_attempted) {
+        error = "Host is not available";
+        return false;
+    }
+    aki::heyaki::IceServerConfig server;
+    server.kind = "turn_udp";
+    server.hostname = std::move(host);
+    if (port == 0 || port > 65535) {
+        error = "port must be 1-65535";
+        return false;
+    }
+    server.port = static_cast<std::uint16_t>(port);
+    server.username = std::move(username);
+    server.credential = std::move(credential);
+    const auto invalid = aki::heyaki::validate_ice_server(server);
+    if (invalid.has_value()) {
+        error = *invalid;
+        return false;
+    }
+    if (impl_->ice_write.valid()) {
+        if (impl_->ice_write.wait_for(0ms) != std::future_status::ready) {
+            error = "another TURN configuration write is in progress";
+            return false;
+        }
+        try {
+            impl_->ice_write.get();
+        } catch (...) {
+            error = "previous TURN configuration write failed";
+            return false;
+        }
+    }
+    // 整文件覆写（v1 单服务器形态，文件格式预留多行）；set_language 同款
+    // 异步写 + 在途互斥。运行中的 NodeSession 不感知——重启生效（决策 7）。
+    const std::string content =
+        aki::heyaki::serialize_ice_servers({std::move(server)});
+    const auto path =
+        (std::filesystem::path(impl_->data_root) / "ice-servers.txt")
+            .string();
+    impl_->ice_write = impl_->executor_owner.executor().submit_auto(
+        [path, content] {
+            std::ofstream file(path, std::ios::binary | std::ios::trunc);
+            if (!file) {
+                throw std::runtime_error("ice config open failed");
+            }
+            file << content;
+            file.close();
+            if (!file) {
+                throw std::runtime_error("ice config write failed");
+            }
+        });
+    if (impl_->ice_write.wait_for(0ms) == std::future_status::ready) {
+        try {
+            impl_->ice_write.get();
+        } catch (...) {
+            error = "ice config write failed";
+            return false;
+        }
+    }
+    return true;
+}
+
+HostRuntime::TurnServerView HostRuntime::turn_server() const noexcept {
+    TurnServerView view;
+    for (const auto& server : impl_->ice_servers) {
+        if (server.kind != "turn_udp") {
+            continue;
+        }
+        view.host = server.hostname;
+        view.port = server.port;
+        view.username = server.username;
+        break;
+    }
+    return view;
+}
+
+bool HostRuntime::assembled() const noexcept {
+    return impl_->assembled;
+}bool HostRuntime::assembly_failed() const noexcept {
     return impl_->assembly_failed;
 }
 
@@ -902,6 +1213,16 @@ const HostShutdownReport& HostRuntime::shutdown_with_report() {
     if (impl.trust_calibration.valid()) {
         try { impl.trust_calibration.get(); }
         catch (...) { }  // 校准失败不阻断关闭；行状态保持库中现值。
+    }
+    // M7：relay 注册任务有界等待（WSS transport 超时上界 ~12s，一次性
+    // 任务；结果若在关闭中落地由 owner 关闭态拒绝可见，不阻断关闭）。
+    if (impl.relay_enroll_task.valid()) {
+        try { impl.relay_enroll_task.get(); }
+        catch (...) { }
+    }
+    if (impl.ice_write.valid()) {
+        try { impl.ice_write.get(); }
+        catch (...) { }
     }
     report.attempted = true;
 
