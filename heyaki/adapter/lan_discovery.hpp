@@ -57,11 +57,14 @@ struct LanDiscoveryState {
 };
 
 // 纯函数 diff（peer_sessions_pipeline::diff_peer_sessions 同型）：entries =
-// 本轮目录条目。trusted 条目跳过（已知设备不重放 discovered，§8.1；其
-// presence 由 peer_sessions 会话事件承载）——若其 id 在上一轮 live 集中
-// （配对完成瞬间由未信任毕业为信任），仅从 live 集移除、**不**合成
-// went_offline（信任转移不是离线，M5-11 修订）；无 32 字节身份公钥的条目
-// 视为非 Aki 广播（指纹面缺失，不可确认）跳过。返回本轮事件并把 seen/live
+// 本轮目录条目（LAN/relay 合并目录，M7/DEC-028 决策 5——relay 条目与 LAN
+// 条目同一 diff 语义，不建第二条管道）。trusted 条目跳过（已知设备不重放
+// discovered，§8.1；其 presence 由 peer_sessions 会话事件承载）——若其 id
+// 在上一轮 live 集中（配对完成瞬间由未信任毕业为信任），仅从 live 集移除、
+// **不**合成 went_offline（信任转移不是离线，M5-11 修订）；无 32 字节身份
+// 公钥的条目视为非 Aki 广播（指纹面缺失，不可确认）跳过。来源映射：LAN
+// 可见（含 LAN+relay 双可见——LAN 直连语义优先）→ LanDiscovery/`lan:`
+// 前缀；仅 relay 可见 → Relay/`relay:` 前缀。返回本轮事件并把 seen/live
 // 推进到本 tick 之后的取值。
 [[nodiscard]] inline LanDiscoveryTick diff_lan_discovery(
     const std::vector<EndpointView>& entries, LanDiscoveryState& state) {
@@ -85,15 +88,22 @@ struct LanDiscoveryState {
         device.identity.id = entry.device_id;
         device.identity.public_key = entry.public_key;
         device.identity.trust_state = aki::device::TrustState::Unknown;
-        // 目录条目 = 对端正在广播（LanPresence 签名验证 + 租约内）——
-        // 即「正在运行 Aki」的存活证明（§8.1 触发语义，M5-11 修订）。
+        // 目录条目 = 对端正在广播（LAN 签名验证/relay 记录签名验证 + 租约
+        // 内）——即「正在运行 Aki」的存活证明（§8.1 触发语义，M5-11 修订；
+        // relay 条目同语义——Ed25519 记录签名 + device_id 推导一致，M7）。
         device.identity.presence = aki::device::PresenceState::Online;
         // display_name/class/os/capabilities 占位（DEC-006 缺口：
-        // LanPresence 不携带元数据）。
+        // LanPresence 不携带元数据；relay 记录同缺口——名称经配对信任后
+        // 持久化，或对端同 LAN 时经 DEC-020 广播补充）。
         device.identity.display_name =
             entry.device_id.value.substr(0, 16);
-        device.method = aki::device::DiscoveryMethod::LanDiscovery;
-        device.endpoint.description = "lan:" + entry.endpoint_id;
+        if (entry.lan_visible || !entry.relay_visible) {
+            device.method = aki::device::DiscoveryMethod::LanDiscovery;
+            device.endpoint.description = "lan:" + entry.endpoint_id;
+        } else {
+            device.method = aki::device::DiscoveryMethod::Relay;
+            device.endpoint.description = "relay:" + entry.endpoint_id;
+        }
         tick.discovered.push_back(std::move(device));
     }
     for (const auto& id : state.live) {

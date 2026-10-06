@@ -42,6 +42,7 @@
 #include <memory>
 #include <optional>
 #include <random>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -65,12 +66,28 @@ namespace aki::heyaki {
     return configuration;
 }
 
-// 端点目录条目（aki/std 公开面；LAN 来源）。
+// 生产连通配置（M7，DEC-028 决策 1）：automatic——LAN 信令优先、不可达时
+// relay 兜底（relay 分支仅在 profile 存在有效 enrollment 时激活，无记录时
+// 与 lan_only 的可见行为一致）。公告/租约节奏取 heyaki 缺省（5s 公告/15s
+// 租约），不沿用 fast 配置的 100ms 测试节奏。
+[[nodiscard]] inline ::heyaki::LanConfiguration
+production_lan_configuration() {
+    ::heyaki::LanConfiguration configuration;
+    configuration.connectivity_mode =
+        ::heyaki::ConnectivityMode::automatic;
+    return configuration;
+}
+
+// 端点目录条目（aki/std 公开面；LAN 与 relay 合并目录来源标记——同一
+// device 可两者同时在目录，public_key 优先取 LAN 条目、缺失时回落 relay
+// 条目（同源 identity_public_key，M7/DEC-028 决策 5）。
 struct EndpointView {
     aki::device::DeviceId device_id;
     aki::device::PublicKey public_key;  // identity_public_key（指纹数据）
     std::string endpoint_id;
     bool trusted = false;
+    bool lan_visible = false;    // LAN 公告条目存在
+    bool relay_visible = false;  // relay 目录条目存在
 };
 
 // 关闭证据（DEC-006 借用模式断言：executor_shutdown_performed == false）。
@@ -79,6 +96,20 @@ struct NodeSessionShutdownReport {
     bool runtime_stopped = false;
     bool runtime_executor_shutdown_performed = false;
     bool runtime_drain_timed_out = false;
+};
+
+// relay 控制面运行态（M7，DEC-028 决策 8；aki/std 公开面——数值与语义名
+// 均来自上游 RelayNodeState，语义解释收敛在本层）。state 语义：
+// disabled=未启用（无有效 enrollment）/ starting=连接中 / ready=登录且
+// 租约有效 / degraded=missed_heartbeat_limit 内重连退避 / failed=不可用
+//（last_error 非空）/ stopped=已关闭。
+struct RelayStatusView {
+    bool enabled = false;
+    int state = 0;           // RelayNodeState 数值
+    std::string state_name;  // relay_node_state_name 语义名（诊断展示）
+    std::string relay_url;
+    std::string tenant;
+    std::string last_error;  // 空 = 无错误
 };
 
 // 借用型 Node/Runtime 会话：构造即创建（失败抛 std::runtime_error，含
@@ -102,6 +133,11 @@ public:
         std::chrono::milliseconds pairing_deadline{0};
         // HEY-20261001-001: 0 retains the upstream bounded 30s offer window.
         std::chrono::milliseconds file_offer_timeout{0};
+        // ICE/TURN 服务器（M7，DEC-028 决策 7）：非空时组装
+        // path_policy_override（default_peer_path_policy(当前 mode) +
+        // ice_servers，validate_peer_path_policy 前置校验失败即装配失败
+        // 可见）；空 = 沿用上游按 mode 的缺省策略。
+        std::vector<::heyaki::NodeIceServer> ice_servers = {};
     };
 
     // 前置：executor 已 Running（ExecutorOwner.initialize() 之后）。
@@ -131,6 +167,32 @@ public:
         auto runtime = std::make_unique<hh::Runtime>(
             std::move(*runtime_result.value_if()));
 
+        // ICE 服务器注入（M7，DEC-028 决策 7）：非空时以当前连通模式的
+        // 缺省策略为基线填入 ice_servers；validate 失败（如 lan_only 下配
+        // ICE、TURN/TLS 无后端）以异常拒绝装配——失败可见不静默（RULE-09）。
+        std::optional<::heyaki::PeerPathPolicy> path_policy{};
+        if (!options.ice_servers.empty()) {
+            const auto mode = options.lan_override.connectivity_mode;
+            auto base = ::heyaki::default_peer_path_policy(mode);
+            if (!base) {
+                const auto* error = base.error_if();
+                throw std::runtime_error(
+                    std::string("node session: default path policy failed: ")
+                    + std::string(hh::error_code_name(error->code())));
+            }
+            base.value_if()->ice_servers = options.ice_servers;
+            auto valid = ::heyaki::validate_peer_path_policy(
+                *base.value_if(), mode);
+            if (!valid) {
+                const auto* error = valid.error_if();
+                throw std::runtime_error(
+                    std::string("node session: ice servers rejected: ")
+                    + std::string(hh::error_code_name(error->code())) + ": "
+                    + std::string(error->safe_detail()));
+            }
+            path_policy = std::move(*base.value_if());
+        }
+
         hh::NodeConfig config{.profile = &options.profile->store(),
             .runtime = runtime.get(),
             .application_id = options.application_id,
@@ -139,7 +201,7 @@ public:
             .signaling_validator = {},
             .signaling_handler = {},
             .relay_override = std::nullopt,
-            .path_policy_override = std::nullopt,
+            .path_policy_override = std::move(path_policy),
             .pairing_failure_threshold = 0U,
             .pairing_backoff_base = std::chrono::milliseconds{0},
             .pairing_backoff_max = std::chrono::milliseconds{0},
@@ -202,7 +264,25 @@ public:
         return !node_.snapshot().interfaces.empty();
     }
 
-    // 端点目录条目（含 trusted 标记与 identity_public_key 指纹）。
+    // relay 控制面运行态快照（NodeSnapshot.relay 的 aki 公开面投影）。
+    [[nodiscard]] RelayStatusView relay_status() const {
+        const auto snapshot = node_.snapshot();
+        RelayStatusView view;
+        view.enabled = snapshot.relay.enabled;
+        view.state = static_cast<int>(snapshot.relay.state);
+        view.state_name = std::string(
+            ::heyaki::relay_node_state_name(snapshot.relay.state));
+        view.relay_url = snapshot.relay.relay_url;
+        view.tenant = snapshot.relay.tenant;
+        if (snapshot.relay.last_error.has_value()) {
+            view.last_error = snapshot.relay.last_error->safe_detail();
+        }
+        return view;
+    }
+
+    // 端点目录条目（含 trusted 标记与 identity_public_key 指纹；LAN/relay
+    // 合并目录——public_key 优先 LAN 条目，纯 relay 条目回落
+    // relay->identity_public_key，M7/DEC-028 决策 5）。
     [[nodiscard]] std::vector<EndpointView> endpoints() const {
         std::vector<EndpointView> out;
         for (const auto& entry : node_.endpoints()) {
@@ -211,11 +291,17 @@ public:
                 aki::device::DeviceId{::heyaki::to_string(entry.key.device_id)};
             view.endpoint_id = ::heyaki::to_string(entry.key.endpoint_id);
             view.trusted = entry.trusted;
+            view.lan_visible = entry.lan.has_value();
+            view.relay_visible = entry.relay.has_value();
+            std::span<const std::byte> identity_key{};
             if (entry.lan.has_value()) {
-                for (const std::byte byte : entry.lan->identity_public_key) {
-                    view.public_key.bytes.push_back(
-                        std::to_integer<std::uint8_t>(byte));
-                }
+                identity_key = entry.lan->identity_public_key;
+            } else if (entry.relay.has_value()) {
+                identity_key = entry.relay->identity_public_key;
+            }
+            for (const std::byte byte : identity_key) {
+                view.public_key.bytes.push_back(
+                    std::to_integer<std::uint8_t>(byte));
             }
             out.push_back(std::move(view));
         }
@@ -358,6 +444,19 @@ public:
             return false;
         }
         auto connected = node_.connect_lan(*key);
+        return connected.has_value();
+    }
+
+    // 通用建链（M7，DEC-028 决策 6）：Node::connect 按 ConnectivityMode
+    // 自动选路（automatic：LAN 优先、目录无 LAN 条目时 relay 信令兜底）。
+    // 纯 relay 可见对端的唯一发起路径；配对前置语义与 connect_lan 相同
+    //（未信任对端进入 pairing_restricted）。
+    [[nodiscard]] bool connect_peer(const aki::device::DeviceId& peer) {
+        auto key = endpoint_key_of(peer);
+        if (!key.has_value()) {
+            return false;
+        }
+        auto connected = node_.connect(*key);
         return connected.has_value();
     }
 

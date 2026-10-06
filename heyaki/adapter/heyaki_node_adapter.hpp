@@ -283,8 +283,12 @@ public:
 
     [[nodiscard]] bool start_discovery(
         aki::device::DiscoveryMethod method) override {
-        if (method != aki::device::DiscoveryMethod::LanDiscovery) {
-            return false;  // M3 仅 LAN 扫描型来源（记录型来源分期，§8.1）
+        // M7/DEC-028 决策 5：LanDiscovery 与 Relay 是同一合并目录的两种
+        // 观察来源标记——两者启动同一观察管道；其余来源（KnownDevice/
+        // InviteLink/Manual）继续分期拒绝（§8.1）。
+        if (method != aki::device::DiscoveryMethod::LanDiscovery
+            && method != aki::device::DiscoveryMethod::Relay) {
+            return false;
         }
         if (peer_pipeline_ != nullptr) {
             (void)peer_pipeline_->start(std::chrono::milliseconds{200});  // presence/path 观察随发现启停
@@ -382,10 +386,12 @@ public:
     // 口令由用户输入并经 SPI 传入（DEC-018）；scope 冻结
     // {message.send, file.push:inbox}（NodeSession::pair_peer 缺省即该集）。
     // 结果经 set_pairing_observer（构造时登记）→ on_pairing_completed 投递。
+    // 建链发起走通用 connect_peer（M7，DEC-028 决策 6——automatic 自动
+    // 选路：LAN 优先、纯 relay 可见对端经 relay 信令兜底）。
     [[nodiscard]] bool begin_pairing(
         const aki::device::DeviceId& peer) override {
         return !peer.empty() && (options_.session->session_linked(peer)
-            || options_.session->connect_lan(peer));
+            || options_.session->connect_peer(peer));
     }
 
     [[nodiscard]] bool confirm_pairing(
