@@ -184,6 +184,12 @@ SCOPE-02 的 Relay 来源与 SCOPE-10 的 Relay 路径展示。
   包裹 + 关闭序有界等待缓解）。
 - 修复后全量 ctest **48/48**；`relay_certificate_pin` 函数面错误路径
   （不存在/非 PEM 文件）已覆盖。
+- **CI tsan 处置（PR #70 run 37504293005）**：test_host_runtime 报上游
+  heyaki PairingService 审计计数器数据竞争（HEY-20261006-003——主线程
+  rotate_password 写 stats_ vs 内部 schedule_expiry strand 读；Aki 无
+  契约违约）。按 M3-06 usrsctp 先例抑制收口（cmake/tsan-suppressions.
+  supp），上游修复后移除复跑。其余六项（debug/asan/ubsan/MSVC/双包）
+  首轮即 SUCCESS。
 - 未验证（环境限制，如实降级）：真实跨网段双端（外部 relay + coturn、
   两网段真机）——补跑条件：自建 relay（上游 quickstart）+ 双网段真机
   + TURN 3478/49160-49200 放行；负责人 Linductor。对应 M7 退出-3 的

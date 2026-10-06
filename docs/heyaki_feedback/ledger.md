@@ -286,3 +286,28 @@ HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保
 - **负责人及补跑条件**：Linductor；上游提供借用注入后，将
   `relay_enrollment.hpp` 切换为借用形式并补关闭竞争测试（enroll 在途时
   shutdown）。
+
+## HEY-20261006-003：PairingService 审计计数器跨线程无同步
+
+- **状态**：已抑制收口（tsan-suppressions.supp，沿 M3-06 usrsctp 先例）；
+  未修改依赖；待上游修复后移除抑制并复跑 tsan。
+- **可复现证据**：[PR #70](https://github.com/Linductor-alkaid/Aki/pull/70)
+  CI run 37504293005 tsan job 112408875988，test_host_runtime（184 断言
+  全过）后 TSAN 报 1 处 data race：主线程
+  `HostRuntime::set_local_pairing_password → Node::rotate_authorization_password
+  → PairingService::rotate_password → PairingService::audit`
+  （pairing_service.cpp:80 `++stats_.password_rotated`，8 字节写）与
+  heyaki 内部 `schedule_expiry` 定时器 strand 的
+  `Node::Impl::prune_peer_services → metrics_strand`（读）竞争。
+- **根因**：`PairingService::stats_` 为普通计数器结构（非原子、非 strand
+  串行）：公开方法同步路径写、内部定时器经 metrics 快照路径读，两个上下
+  文无公共互斥。Aki 侧无契约违约——读路径是 heyaki 内部定时器，不在
+  NodeSession「调用方串行化」面内。
+- **影响**：诊断计数可能丢失个别增量（对 pairing 结果/授权无影响）；
+  TSAN 门禁不可绿。
+- **期望最小修复**：stats_ 计数器原子化（std::atomic）或 audit 调用
+  一律经 pairing strand 派发；metrics 读侧同步取快照。
+- **Aki 侧处理**：抑制表条目 `race:heyaki::PairingService::audit` /
+  `race:heyaki::Node::Impl::metrics_strand`；修复后移除并复跑全量 tsan。
+- **负责人及补跑条件**：Linductor；上游修复合入并升级 pin 后移除抑制、
+  复跑 tsan 七项门禁。
