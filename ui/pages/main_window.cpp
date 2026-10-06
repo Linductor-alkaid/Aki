@@ -727,9 +727,9 @@ void composeMainWindow(eui::Ui& ui, const eui::Screen& screen,
                     .build();
             }
 
-            // 发现启停（M5-03 出站示范保留在页首）+ 发现来源分期披露
-            //（M3-09：当前仅 LAN 来源产生发现；Relay/邀请链接/手动输入为
-            // 登记补做条件）。
+            // 发现启停（M5-03 出站示范保留在页首）+ 发现来源披露（M7/
+            // DEC-028：LAN 与 relay 来源经同一合并目录发现管线产生发现；
+            // 邀请链接与手动输入为登记补做条件）。
             const float discovery_button_width =
                 (content_width - metrics.spacing.section * 3.0f) * 0.5f;
             if (model.actions) {

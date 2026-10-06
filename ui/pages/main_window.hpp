@@ -65,6 +65,17 @@ struct MainWindowModel {
     bool password_change_open = false;
     std::string peer_password_draft;
     std::string peer_password_feedback;
+    // M7/DEC-028：Settings 页中继区与 TURN 高级区草稿（启动预填 TURN/
+    // 租户默认；保存按状态重置；token/凭据为会话内凭据，用后擦除——
+    // secureInput + clear_secret，DEC-018 同款纪律）。
+    std::string settings_relay_url_draft;
+    std::string settings_relay_tenant_draft = "aki";
+    std::string settings_relay_token_draft;
+    std::string settings_relay_ca_draft;
+    std::string settings_turn_host_draft;
+    std::string settings_turn_port_draft;
+    std::string settings_turn_username_draft;
+    std::string settings_turn_credential_draft;
 
     // ---- M5-03 消费面与出站面（宿主装配，页面只读消费）----
     // 快照消费水位与最近派生视图（宿主 compose 前经 consume_ui_state 推进；

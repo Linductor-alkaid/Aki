@@ -75,6 +75,19 @@ struct UiActions {
     std::function<bool(std::string)> set_language;
     // 本机设备名改名（HostRuntime::set_device_name；M5-16 Settings 入口）。
     std::function<bool(std::string)> set_device_name;
+    // M7/DEC-028：relay 注册/移除与 TURN 配置（HostRuntime 出站面，组合根
+    // 绑定——同 set_language 先例）。enroll_relay(url, tenant, token, ca,
+    // error)：静态校验失败同步 false（error 可展示），网络结果异步经
+    // RelayStatus 状态可见（SetRelayStatus → 快照 → 设置页状态行）；
+    // token 为凭据，页面在结果落地后擦除草稿副本。变更均重启生效
+    //（HEY-20261006-001，设置页文案披露）。
+    std::function<bool(std::string, std::string, std::string, std::string,
+        std::string&)>
+        enroll_relay;
+    std::function<bool(std::string&)> remove_relay;
+    std::function<bool(std::string, unsigned, std::string, std::string,
+        std::string&)>
+        set_turn_server;
     std::function<bool(aki::device::DeviceId)> reject_device;
     std::function<bool(aki::device::DeviceId)> revoke_device;
     std::function<bool(aki::device::DeviceId, std::string)> set_device_remark;
