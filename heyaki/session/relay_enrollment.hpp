@@ -16,8 +16,10 @@
 //
 // 调用纪律：本头文件的函数是阻塞网络操作，调用方（HostRuntime）必须在
 // executor 任务内执行（EXEC-02/§9.1 三不——不得在 UI 点击回调或 compose
-// 上下文直接调用）；bootstrap token 属凭据，入参按值传入、用后由本层与
-// 调用方各自擦除（DEC-018 同款纪律）。已知上游限制：WSS 交换内部经
+// 上下文直接调用）；bootstrap token 属凭据，随请求以非 const 引用传入，
+// 本层在全部退出路径（校验拒绝/证书失败/交换失败/成功）原位擦除，调用方
+// 其余自有副本（lambda 捕获等）各自擦除（DEC-018 同款纪律；原位擦除使
+// 纪律对调用方可断言——M8-02 断言缝合点）。已知上游限制：WSS 交换内部经
 // `RelayWssClient` 自建 owned runtime（HEY-20261006-002），Aki 无法注入
 // 借用 executor——一次性有界（≤12s），由 HostRuntime 包在 executor 任务
 // 内并保持结果可见。
@@ -51,7 +53,8 @@ namespace aki::heyaki {
 struct RelayEnrollRequest {
     std::string relay_url;   // 必须形如 wss://host[:port][/path]
     std::string tenant;      // 非空；与 relay 侧 token 所属租户一致
-    // bootstrap token（凭据）：仅进程内传递，成功/失败后调用方擦除。
+    // bootstrap token（凭据）：随请求以非 const 引用传入 enroll_relay_profile，
+    // 由其在全部退出路径原位擦除（成功/失败一致）。
     std::string bootstrap_token;
     // 自签部署时必填（CA 证书文件路径）；公网证书留空走系统信任根。
     std::optional<std::filesystem::path> ca_file;
@@ -131,21 +134,29 @@ relay_certificate_pin(const std::filesystem::path& file, std::string& error) {
 
 // 执行 enrollment（阻塞，executor 任务内调用）。成功返回记录视图；失败
 // 返回可展示错误（网络/token 拒绝/TLS/pin——上游 safe_detail 语义），
-// profile 不落任何记录。bootstrap_token 为调用方拥有的凭据副本，调用方
-//（HostRuntime）在结果落地后擦除自己的副本。ca_file 提供时其 pin 随
-// 记录持久化（决策 2 修订——登录期 TOFU 信任基）。
+// profile 不落任何记录。request 以非 const 引用传入：bootstrap_token 在
+// 全部退出路径（含上方校验/证书失败早退）原位擦除——凭据纪律对调用方
+// 可断言（M8-02）。ca_file 提供时其 pin 随记录持久化（决策 2 修订——
+// 登录期 TOFU 信任基）。
 [[nodiscard]] inline std::optional<RelayEnrollmentView>
-enroll_relay_profile(LocalProfile& profile, const RelayEnrollRequest& request,
+enroll_relay_profile(LocalProfile& profile, RelayEnrollRequest& request,
     std::string& error) {
+    const auto scrub_token = [&request] {
+        std::fill(request.bootstrap_token.begin(),
+            request.bootstrap_token.end(), '\0');
+        request.bootstrap_token.clear();
+    };
     const auto invalid = validate_relay_enroll_request(request);
     if (invalid.has_value()) {
         error = *invalid;
+        scrub_token();
         return std::nullopt;
     }
     std::optional<std::vector<std::byte>> pin;
     if (request.ca_file.has_value()) {
         pin = relay_certificate_pin(*request.ca_file, error);
         if (!pin.has_value()) {
+            scrub_token();
             return std::nullopt;
         }
     }
@@ -170,6 +181,7 @@ enroll_relay_profile(LocalProfile& profile, const RelayEnrollRequest& request,
             .count());
     auto enrolled = ::heyaki::enroll_relay_profile(
         config, request.bootstrap_token, now_ms);
+    scrub_token();
     if (!enrolled) {
         error = std::string(enrolled.error_if()->safe_detail());
         return std::nullopt;

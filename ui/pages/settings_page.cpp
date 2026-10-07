@@ -4,6 +4,7 @@
 // FollowSystem 的系统主题查询仅在点击回调上下文（有界注册表读取）执行，
 // compose 只读派生）。
 #include "ui/pages/settings_page.hpp"
+#include "ui/components/fold.hpp"
 #include "ui/components/secure_input.hpp"
 
 #include "components/dialog.h"
@@ -273,10 +274,12 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
             .build();
     }
 
-    // ---- 中继服务器（M7/DEC-028）：注册/移除与运行态。enrollment 变更
-    // 重启生效（HEY-20261006-001——文案如实披露）；连接事实经 RelayStatus
-    // 状态行展示（AppState 易失字段 → 快照派生）。URL/CA 为技术内容用
-    // mono（§2.1）；token 走 secureInput（DEC-018 凭据纪律）。----
+    // ---- 中继服务器（M7/DEC-028；M8-01 决策 11 阶段 1 收拢）：注册/移除
+    // 与运行态。未注册主视图 = 地址 + 注册按钮，租户/令牌/证书收拢进高级
+    // 折叠区（默认收起，必填校验失败自动展开）。enrollment 变更重启生效
+    // （HEY-20261006-001——文案如实披露）；连接事实经 RelayStatus 状态行
+    // 展示（AppState 易失字段 → 快照派生）。URL/CA 为技术内容用 mono
+    // （§2.1）；token 走 secureInput（DEC-018 凭据纪律）。----
     if (model.actions && model.actions->enroll_relay
         && model.actions->remove_relay) {
         row_y += metrics.control.field + metrics.spacing.section;
@@ -325,7 +328,10 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
         row_y += metrics.typography.caption + metrics.spacing.compact;
 
         if (!relay.has_value() || !relay->enrolled) {
-            // 注册向导（未注册时展示）：地址 + 租户 / 令牌 + CA。
+            // 注册向导（M8-01/DEC-028 决策 11 阶段 1）：主视图 = 地址 +
+            // 注册按钮；租户/令牌/证书收拢进「高级中继设置」折叠区（默认
+            // 收起，必填校验失败自动展开）。token 制部署能力零删减；阶段 2
+            // 上游密码准入落地后主视图换为地址 + 密码。
             const float relay_url_width =
                 std::min(300.0f, content_width);
             components::input(ui, "aki.settings.relay.url")
@@ -337,29 +343,9 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
                 .onChange([&model](const std::string& value) {
                     model.settings_relay_url_draft = value;
                 }).build();
-            const float tenant_width = std::min(
-                120.0f, content_width - relay_url_width
-                    - metrics.spacing.compact);
-            if (tenant_width > 60.0f) {
-                components::input(ui, "aki.settings.relay.tenant")
-                    .position(pad_x + relay_url_width + metrics.spacing.compact,
-                        row_y)
-                    .size(tenant_width, metrics.control.field)
-                    .theme(tokens)
-                    .value(model.settings_relay_tenant_draft)
-                    .placeholder(tr("Tenant"))
-                    .onChange([&model](const std::string& value) {
-                        model.settings_relay_tenant_draft = value;
-                    }).build();
-            }
-            row_y += metrics.control.field + metrics.spacing.compact;
-            secureInput(ui, "aki.settings.relay.token",
-                model.settings_relay_token_draft, tokens, pad_x, row_y,
-                std::min(300.0f, content_width), metrics.control.field,
-                tr("Bootstrap token"));
             components::button(ui, "aki.settings.relay.enroll")
-                .position(pad_x + std::min(300.0f, content_width)
-                    + metrics.spacing.compact, row_y)
+                .position(pad_x + relay_url_width + metrics.spacing.compact,
+                    row_y)
                 .size(96.0f, metrics.control.field)
                 .text(tr("Enroll"))
                 .theme(tokens, true)
@@ -368,6 +354,9 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
                     if (model.settings_relay_url_draft.empty()
                         || model.settings_relay_tenant_draft.empty()
                         || model.settings_relay_token_draft.empty()) {
+                        // 必填项在折叠区内：先展开再反馈缺失，用户直接
+                        // 落在待填字段上（§2.5 状态不仅靠颜色）。
+                        model.settings_relay_advanced_open = true;
                         set_feedback(model,
                             tr("Relay address, tenant, and token are"
                                " required."));
@@ -394,17 +383,46 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
                            " below."));
                 }).build();
             row_y += metrics.control.field + metrics.spacing.compact;
-            components::input(ui, "aki.settings.relay.ca")
-                .position(pad_x, row_y)
-                .size(std::min(440.0f, content_width),
-                    metrics.control.field)
-                .theme(tokens)
-                .value(model.settings_relay_ca_draft)
-                .placeholder(tr("Relay certificate file (optional)"))
-                .onChange([&model](const std::string& value) {
-                    model.settings_relay_ca_draft = value;
-                }).build();
-            row_y += metrics.control.field + metrics.spacing.tiny;
+            // §2.5 容忍翻译变长：英文标签较长，宽度给足（420 上限）。
+            foldToggle(ui, "aki.settings.relay.advanced",
+                model.settings_relay_advanced_open, tokens, pad_x, row_y,
+                std::min(420.0f, content_width), metrics.control.menuItem,
+                tr("Advanced relay settings (tenant / token /"
+                   " certificate)"));
+            row_y += metrics.control.menuItem + metrics.spacing.tiny;
+            if (model.settings_relay_advanced_open) {
+                // 高级区（token 制部署全保留）：租户 + 准入令牌同行，
+                // 证书路径独占一行（阶段 2 密码模式下租户由 Adapter 层
+                // 落默认值，UI 不出现）。
+                const float tenant_width = std::min(120.0f, content_width);
+                components::input(ui, "aki.settings.relay.tenant")
+                    .position(pad_x, row_y)
+                    .size(tenant_width, metrics.control.field)
+                    .theme(tokens)
+                    .value(model.settings_relay_tenant_draft)
+                    .placeholder(tr("Tenant"))
+                    .onChange([&model](const std::string& value) {
+                        model.settings_relay_tenant_draft = value;
+                    }).build();
+                secureInput(ui, "aki.settings.relay.token",
+                    model.settings_relay_token_draft, tokens,
+                    pad_x + tenant_width + metrics.spacing.compact, row_y,
+                    std::min(300.0f, std::max(60.0f, content_width
+                        - tenant_width - metrics.spacing.compact)),
+                    metrics.control.field, tr("Bootstrap token"));
+                row_y += metrics.control.field + metrics.spacing.compact;
+                components::input(ui, "aki.settings.relay.ca")
+                    .position(pad_x, row_y)
+                    .size(std::min(440.0f, content_width),
+                        metrics.control.field)
+                    .theme(tokens)
+                    .value(model.settings_relay_ca_draft)
+                    .placeholder(tr("Relay certificate file (optional)"))
+                    .onChange([&model](const std::string& value) {
+                        model.settings_relay_ca_draft = value;
+                    }).build();
+                row_y += metrics.control.field + metrics.spacing.tiny;
+            }
             components::text(ui, "aki.settings.relay.hint")
                 .text(tr("Devices discover each other through the relay"
                          " across networks.\nEnrollment changes take effect"

@@ -315,3 +315,57 @@ HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保
   `race:heyaki::Node::Impl::metrics_strand`；修复后移除并复跑全量 tsan。
 - **负责人及补跑条件**：Linductor；上游修复合入并升级 pin 后移除抑制、
   复跑 tsan 七项门禁。
+
+## HEY-20261007-001：relay 密码准入与 `--init` 引导（Aki 侧需求）
+
+- **状态**：待上游能力设计（[DEC-028](../decisions/DEC-028-relay-cross-subnet.md)
+  决策 11 阶段 2 前置）；heyaki 侧 issue 待提交（独立管理上游，需用户
+  授权后建并回填链接）；未修改 pinned 依赖。
+- **用户需求**：机主在 relay 首次运行时设置一个密码即完成服务端配置
+  （对应上游 `heyaki-relay --init` 引导提案）；用户侧只凭「中继地址 +
+  密码」完成注册——租户、bootstrap token、证书文件退出用户视野
+  （Aki M8 里程碑目标形态）。
+- **当前证据**：pinned relay 准入仅 bootstrap token（`apps/relay` 配置 +
+  `RelayDatabase` 种 token；`RelayEnrollmentClientConfig` 无密码字段，
+  `include/heyaki/relay_enrollment_client.hpp`）；注册结果不回传服务端
+  证书信息（`RelayEnrollmentRecord` 无凭据/指纹回传字段，Aki 侧 pin 为
+  客户端自算 ca_file 指纹）。
+- **期望语义**：`--init` 交互设置密码并与 token 模式并存；注册请求以
+  密码准入，默认租户语义明确（或要求显式等于默认租户——Aki 侧 UI 不
+  出现租户字段，由 Adapter 层落默认）；密码错误/限速/未启用密码模式
+  错误码可区分（Aki 反馈文案对齐）；服务端 leaf 证书指纹可随注册结果
+  回传（非安全性必要——客户端可自算所见证书指纹，回传仅作便利）。
+- **最小能力建议**：`RelayConfig` 增密码准入模式；enrollment client
+  公开面接受密码（凭据语义与 token 同级：进程内传递、不落日志）；
+  错误码枚举区分准入失败原因。
+- **影响与 Aki 侧处理**：M8-04（阶段 2）阻塞项；当前 token 模式不受
+  影响，Aki 已先行交付阶段 1（高级折叠收拢 + token 原位擦除断言缝合点，
+  密码擦除断言测试沿同型）。
+- **负责人及补跑条件**：Linductor；上游落地并 pin 后按 DEC-028 决策 11
+  阶段 2 接入（UI 密码主路径 + TOFU pin 锚定注册交换所见证书 + 密码
+  擦除断言 + 错误码映射测试）。
+
+## HEY-20261007-002：relay 登录后下发短时效 TURN/ICE 配置（Aki 侧需求）
+
+- **状态**：待上游能力设计（DEC-028 决策 11 阶段 3 前置）；heyaki 侧
+  issue 待提交（同上）；未修改 pinned 依赖。
+- **用户需求**：跨网段打洞失败自动走 TURN 兜底，用户不配置 TURN
+  host/port/username/credential；凭据短时效（coturn use-auth-secret /
+  REST HMAC 同型），不手工造静态长期凭据。
+- **当前证据**：ICE 仅客户端静态注入（`NodeConfig::path_policy_override`
+  构造期传入，vendored libjuice 仅 TURN/UDP）；relay 控制面（目录/信令）
+  无 ICE 配置下发通道；Aki 侧为 `ice-servers.txt` 静态文件 + 设置页
+  高级区表单（M7/DEC-028 决策 7）。
+- **期望语义**：登录后（或按需）经 relay 下发短时效 TURN 凭据并自动
+  参与选路；**续期触发**（推送/定时拉取）与**过期语义**（进行中
+  allocation 的存活性、续期失败的数据面行为）明确；与客户端静态配置
+  的合并/优先级语义明确（静态作为高级覆盖的先例）；下发与续期结果经
+  既有快照/事件面可观测。
+- **最小能力建议**：relay 配置 TURN 上报；目录/信令帧携带短时效凭据；
+  client `NodeConfig` 或运行期面自动合入下发 ICE 配置。
+- **影响与 Aki 侧处理**：M8-05（阶段 3）阻塞项；当前静态 ICE 路径不受
+  影响；Aki 阶段 3 将同步展示生效 ICE 配置与来源（静态文件 / relay
+  下发，DEC-028 决策 8 可观测同款精神）。
+- **负责人及补跑条件**：Linductor；上游落地并 pin 后按 DEC-028 决策 11
+  阶段 3 接入（自动选路 + 静态降级高级覆盖 + 来源展示 + 续期/过期行为
+  测试）。
