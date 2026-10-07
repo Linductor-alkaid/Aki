@@ -132,8 +132,9 @@ bootstrap token、证书文件退出主视图（降级为高级路径全程保�
   使用真实数据根，不冒充已验证；补跑条件：本机图形会话运行
   `build/debug/aki` → Settings → 中继区目视复核（折叠默认收起、必填
   校验失败自动展开、令牌掩码、深浅两档），负责人 Linductor。
-  ②ASAN/UBSAN/TSAN 与 Windows/打包档归 CI 七项门禁（PR 创建后以 run
-  链接回填）。
+  ②ASAN/UBSAN/TSAN 与 Windows/打包档：[PR #72 CI run 37627726846]
+  (https://github.com/Linductor-alkaid/Aki/actions/runs/37627726846)
+  七项全绿（Linux debug/asan/ubsan/tsan、Windows debug、deb/setup 打包）。
 - 同步：DEC-028（决策 11 + 修订行 + 关联）、UI 规范（§2.6 码点登记/
   §4 映射/2026-10-07 落地记录）、总计划（当前状态/里程碑索引 M8）、
   HEY 台账（HEY-20261007-001/002）、本里程碑文档。
