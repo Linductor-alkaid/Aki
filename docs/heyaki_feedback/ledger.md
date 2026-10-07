@@ -1,7 +1,7 @@
 # Heyaki 能力反馈台账
 
 > 状态：Active
-> 更新日期：2026-10-06
+> 更新日期：2026-10-07
 
 ## HEY-20260929-001：受限会话由接收方直接批准
 
@@ -238,8 +238,9 @@ HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保
 
 ## HEY-20261006-001：Node 运行期不可启用或更新 relay enrollment
 
-- **状态**：已核对 pinned API 与实现，未修改依赖；关联
-  [DEC-028](../decisions/DEC-028-relay-cross-subnet.md) 决策 3。
+- **状态**：已核对 pinned API 与实现，未修改依赖；已提交
+  [Heyaki #19](https://github.com/Linductor-alkaid/heyaki/issues/19)；
+  关联 [DEC-028](../decisions/DEC-028-relay-cross-subnet.md) 决策 3。
 - **可复现证据**：relay enrollment 只在 `Node::create` 的
   `initialize_relay()`（`third_party/heyaki/src/client/node.cpp:1011/1102`）
   读取 profile 首条 `auto_connect && !revoked` 记录；`include/heyaki/node.hpp`
@@ -264,7 +265,9 @@ HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保
 ## HEY-20261006-002：relay enrollment WSS 客户端无法借用宿主 executor
 
 - **状态**：已核对 pinned 实现并登记（M7 端到端验证发现，Independent
-  验证报告 2026-10-06）；未修改依赖。
+  验证报告 2026-10-06）；已提交
+  [Heyaki #20](https://github.com/Linductor-alkaid/heyaki/issues/20)；
+  未修改依赖。
 - **可复现证据**：`RelayEnrollmentWssTransportConfig`
   （`include/heyaki/relay_enrollment_client.hpp:34-43`）无 Runtime/executor
   注入字段；`make_relay_enrollment_wss_exchange` 经 `RelayWssClient::create`
@@ -290,6 +293,7 @@ HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保
 ## HEY-20261006-003：PairingService 审计计数器跨线程无同步
 
 - **状态**：已抑制收口（tsan-suppressions.supp，沿 M3-06 usrsctp 先例）；
+  已提交 [Heyaki #21](https://github.com/Linductor-alkaid/heyaki/issues/21)；
   未修改依赖；待上游修复后移除抑制并复跑 tsan。
 - **可复现证据**：[PR #70](https://github.com/Linductor-alkaid/Aki/pull/70)
   CI run 37504293005 tsan job 112408875988，test_host_runtime（184 断言
