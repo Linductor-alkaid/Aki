@@ -72,6 +72,9 @@ struct MainWindowModel {
     std::string settings_relay_tenant_draft = "aki";
     std::string settings_relay_token_draft;
     std::string settings_relay_ca_draft;
+    // M8-01：中继高级折叠区开合（页面持有 UI 态；主视图只留地址 + 注册，
+    // 租户/令牌/证书收拢进折叠区，必填校验失败自动展开——DEC-028 决策 11）。
+    bool settings_relay_advanced_open = false;
     std::string settings_turn_host_draft;
     std::string settings_turn_port_draft;
     std::string settings_turn_username_draft;

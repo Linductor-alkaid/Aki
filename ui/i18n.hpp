@@ -176,6 +176,8 @@ inline std::string tr(std::string_view english) {
         {"Tenant", "租户"},
         {"Bootstrap token", "准入令牌"},
         {"Relay certificate file (optional)", "中继证书文件（可选）"},
+        {"Advanced relay settings (tenant / token / certificate)",
+         "高级中继设置（租户 / 令牌 / 证书）"},
         {"Enroll", "注册"},
         {"Remove enrollment", "移除注册"},
         {"Relay enrollment removed. Restart Aki to disconnect.",
