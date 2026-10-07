@@ -2,11 +2,18 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-10-03
+> 更新日期：2026-10-07
 > 设计依据：[Aki 设计方案](../design/aki_design.md)
 > 协作约束：[AGENTS.md](../../AGENTS.md)、[项目管理与工程规范](../project/project-standards.md)
 
 ## 当前状态
+
+- 2026-10-07：M8 启动（In Progress）：中继接入简化为「地址 + 密码」
+  （[DEC-028](../decisions/DEC-028-relay-cross-subnet.md) 决策 11 分阶段
+  修订——阶段 1 UI 收拢 + token 原位擦除断言缝合点无上游依赖先行；
+  阶段 2 密码主路径 / 阶段 3 TURN 自动化分别前置上游能力
+  HEY-20261007-001/002）。详见
+  [M8 里程碑文档](m8-relay-simple-enrollment.md)。
 
 - 2026-10-06：M7 启动（In Progress）：基于 Heyaki relay 控制面的跨网段设备
   通信（SCOPE-02 Relay 来源 / SCOPE-10 Relay 路径）。决策
@@ -756,6 +763,7 @@
 | M5 | EUI-NEO UI 与 MVP 验收 | In Progress | M2、M3、M4、DEC-005 | v0.5.0（MVP） | [m5-eui-neo-ui-mvp.md](m5-eui-neo-ui-mvp.md) |
 | M6 | CI 打包与分发基线 | In Progress | M0、M5-02、DEC-017 | 无（工程基础设施） | [m6-ci-packaging.md](m6-ci-packaging.md) |
 | M7 | 中继跨网段通信 | In Progress | M3、M5、DEC-028 | v0.7.0 | [m7-relay-cross-subnet.md](m7-relay-cross-subnet.md) |
+| M8 | 中继接入简化（地址 + 密码） | In Progress | M7 主体、DEC-028 决策 11 | v0.8.0 | [m8-relay-simple-enrollment.md](m8-relay-simple-enrollment.md) |
 
 依赖说明：M1 先以契约与假实现交付可运行的领域骨架（先契约后实现、先假实现后真实依赖）；
 M3 引入真实 Heyaki；M5 整合 UI 并按设计第 15 节逐项验收 MVP。每个里程碑必须产生可独立

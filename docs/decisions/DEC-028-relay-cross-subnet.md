@@ -4,12 +4,15 @@
 > 日期：2026-10-06
 > 负责人：Linductor
 > 修订：2026-10-06 增补决策 10（测试专用消费 heyaki::relay，进程内端到端
-> 验证面）；其余条款不变
+> 验证面）；2026-10-07 增补决策 11（中继接入「地址 + 密码」分阶段简化，
+> 修订决策 2/7 的主路径形态——token 流程降级为高级路径全程保留）；
+> 其余条款不变
 > 冻结里程碑：M7 开工编码前（SCOPE-02 Relay 发现来源 / SCOPE-10 Relay 路径展示）
 > 前置：[DEC-006](DEC-006-heyaki-api-contract.md)（映射 2/5 与 lan_only 分期）、
 > [DEC-015](DEC-015-per-device-connection-path.md)（路径状态模型）、
 > [DEC-018](DEC-018-pairing-password-entry.md)（口令入站面先例）
-> 关联工作项：M7-01~M7-09（[m7-relay-cross-subnet.md](../plans/m7-relay-cross-subnet.md)）
+> 关联工作项：M7-01~M7-09（[m7-relay-cross-subnet.md](../plans/m7-relay-cross-subnet.md)）、
+> M8-01~M8-06（[m8-relay-simple-enrollment.md](../plans/m8-relay-simple-enrollment.md)）
 
 ## 背景与问题
 
@@ -114,6 +117,41 @@ SCOPE-02 把发现来源设计为「局域网发现、已知设备记录、Relay
      处理，不阻塞产品面。
    - 测试纪律：LABELS "integration"、独立临时目录、有界等待 + 环境失败
      [skip] 降级先例、token/证书只存在于临时目录。
+11. **中继接入「地址 + 密码」分阶段简化（2026-10-07 增补）**：产品目标为
+   设置页中继区主路径只出现「中继地址 + 注册密码」两项——租户、
+   bootstrap token、证书文件退出主视图，TURN 概念退出用户视野（机主侧
+   对应上游 `--init` 密码引导提案）。分三阶段落地：阶段 1（UI 收拢 +
+   决策/台账同步）无上游依赖；阶段 2/3 分别依赖上游两项能力
+   （[HEY-20261007-001](../heyaki_feedback/ledger.md) 密码准入 + 注册结果
+   回传 leaf 指纹、[HEY-20261007-002](../heyaki_feedback/ledger.md) relay
+   下发短时效 ICE 配置）。
+   - **阶段 1（Accepted）**：设置页新增折叠组件（`ui/components/fold.hpp`
+     ——EUI-NEO 无 disclosure 组件，chevron 码点按 UI 规范 §2.6 登记并经
+     捆绑字体 cmap 实证）：未注册主视图 = 地址 + 注册按钮，租户/token/
+     CA 收拢进「高级中继设置」折叠区（默认收起，必填校验失败自动展开）；
+     token 制部署能力零删减（高级区回归面）。配套：enrollment wrapper 的
+     bootstrap_token 改为原位擦除（全部退出路径，凭据纪律对调用方可断言
+     ——阶段 2 密码擦除断言测试的同型缝合点）。
+   - **阶段 2（暂定默认值，冻结于开工前；负责人 Linductor）**：上游密码
+     准入落地并 pin 后：主视图换为 URL + 密码（secureInput，DEC-018 纪律，
+     断言测试沿 token 原位擦除同型）；租户不出现在 UI（上游落默认租户；
+     若要求显式等于默认租户则由 Adapter 层自动填充）；信任基 = 注册交换
+     实际呈现的 leaf 证书 SHA-256 以 `relay_pin` 持久化（决策 2 的 pin
+     语义不变，来源从「用户提供的 ca_file」变为「注册交换所见证书」）。
+     **TOFU 首连窗口如实披露**：安全假设为「地址 + 密码的送达渠道可信」；
+     首次连接被 MITM 时攻击者可完成准入并被锚定为 pin（注册结果回传的
+     指纹来自同一 TLS 连接，不提供额外保证），设置页文案与部署文档按此
+     表述；公网 CA relay 与严格自签部署继续走高级模式（系统信任根 /
+     显式 ca_file）。
+   - **阶段 3（暂定默认值，冻结于开工前；负责人 Linductor）**：上游 ICE
+     下发落地并 pin 后：relay 凭据自动参与选路，`ice-servers.txt` 降级为
+     高级覆盖（合并/优先级跟随上游语义）；设置页展示当前生效 ICE 配置与
+     来源（静态文件 / relay 下发，决策 8 可观测同款精神）；短时效凭据的
+     续期触发与过期时进行中 allocation 的存活语义随上游定型后在本决策
+     补记。
+   - 原 token 流程降级为高级路径**全程保留**（多租户、严格证书分发部署）；
+     本修订不改变决策 2/7 已落地行为的语义，执行链（executor 任务、重启
+     生效披露）不变。
 
 ## 备选方案
 
@@ -178,13 +216,15 @@ host 候选，无需 TURN）；⑨真实跨网段双端联调（依赖外部 rel
 - [Aki 设计方案](../design/aki_design.md)§4（发现来源）、§8.1（SPI）、
   §8.3（装配）、§10（状态边界）
 - [M7：中继跨网段通信](../plans/m7-relay-cross-subnet.md)（M7-01~M7-09）
+- [M8：中继接入简化](../plans/m8-relay-simple-enrollment.md)
+  （M8-01~M8-06，决策 11 分阶段落地）
 - [M3](../plans/m3-heyaki-integration.md)验证记录③（发现来源分期——Relay
   部分由本决策接续）
 - [DEC-006](DEC-006-heyaki-api-contract.md)（映射 2 发现/映射 5 路径）
 - [DEC-020](DEC-020-lan-name-beacon.md)（LAN 名称广播——relay 对端名称沿
   配对/持久化路径，不经组播）
 - `docs/heyaki_feedback/ledger.md`（HEY-20261006-001：Node 运行期不可更新
-  relay enrollment）
+  relay enrollment；HEY-20261007-001/002：决策 11 阶段 2/3 上游前置）
 
 ## 附录 A：上游 relay 能力核实（pinned third_party/heyaki）
 

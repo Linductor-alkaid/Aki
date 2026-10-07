@@ -2,7 +2,7 @@
 
 > 状态：Active
 > 负责人：Linductor
-> 更新日期：2026-10-01
+> 更新日期：2026-10-07
 > 权威约束：[ZCode Design System](zcode-design-system.md)（直接采用，见下）
 > 上位设计：[Aki 设计方案](aki_design.md)第 9/10 节
 > 实现基线：pinned `third_party/EUI-NEO`
@@ -125,6 +125,7 @@ Tailwind 默认调色板取值（hex→归一化在实现时完成）：
 | 路径 LAN / P2P / Relay | network-wired / link / tower-broadcast | `f6ff` / `f0c1` / `f519` |
 | 操作 发送 / 附件 / 图片 / 发现开始·停止 | paper-plane / paperclip / image / magnifying-glass·stop | `f1d8` / `f0c6` / `f03e` / `f002`·`f04d` |
 | 会话断连横幅 | triangle-exclamation | `f071` |
+| 高级折叠展开/收起 | chevron-down / chevron-right | `f077` / `f054` |
 | Presence 圆点 | 维持第 3 节 rect 几何实现（实心/空心），不换字体图标 | — |
 
 - **应用图标（程序图标）**：经用户确认（2026-09-27）采用 Heyaki 图标。
@@ -180,6 +181,7 @@ Transfers / Settings。组件选型（`RISK-2026-002` 的盘点基线，M5 用 p
 | 弹窗 / 右键菜单 / Toast | `dialog` / `contextmenu` / `toast` | 弹窗 `2xl`、菜单壳 `lg`、菜单项 `md`、Toast `2xl`+`shadow-lg` |
 | 设置页 | `segmented` / `switch` / `dropdown` | 主题三选（跟随系统/浅/深），中文/英文切换 |
 | 设置页中继/TURN 区（M7） | `input` × N + `secureInput`（令牌/凭据）+ `button` | URL/CA 路径/状态行 mono（技术内容）；状态行只读派生自快照，compose 无 IO；错误用 `destructive` |
+| 设置页高级折叠区（M8） | `button`（ghost）+ chevron 图标双态 + 条件内容 | 折叠态以 chevron-down/right 图标编码（非仅颜色）；内容渲染由页面持有 UI 态驱动 |
 
 设备页左栏列出对端名称（有备注时优先显示本机备注），右栏只显示选中设备
 的身份、连接和信任详情及备注编辑。会话列表的名称与时间、聊天头部名称与
@@ -346,3 +348,17 @@ token/凭据为会话内秘密，提交后即 clear_secret 擦除草稿。TURN �
 须重新输入），端口校验 1-65535。两区块变更均重启生效（HEY-20261006-001），
 文案如实披露。Devices/会话路径徽标沿用既有 ConnectionPath 标签，Relay
 路径无需新增资产。
+
+## 2026-10-07：中继高级设置折叠（M8-01，DEC-028 决策 11 阶段 1）
+
+未注册态中继区主视图收拢为「地址 input + 注册 primary 按钮」一行；租户/
+准入令牌/证书路径收拢进新增的高级折叠区（默认收起）。折叠开关 =
+`ui/components/fold.hpp` 组合单元：ghost 按钮承载 chevron-down（展开）/
+chevron-right（收起）图标双态（§2.6 登记码点 `f077`/`f054`，2026-10-07
+以最小 cmap 解析器对 pinned 捆绑 FA7 Solid 实证存在，映射码位 2929），
+开合为页面持有 UI 态（`settings_relay_advanced_open`），onClick 仅翻转
+标志、重组拾取，compose 无 IO。注册必填校验失败时自动展开折叠区并反馈
+缺失字段（用户直接落在待填字段上，状态非仅颜色编码）。高级区内租户 +
+令牌同行、证书独占一行，令牌仍走 secureInput；token 制部署能力零删减。
+阶段 2（上游密码准入落地后）主视图换为地址 + 密码，租户由 Adapter 层
+落默认值。TURN 高级区本阶段不变。
