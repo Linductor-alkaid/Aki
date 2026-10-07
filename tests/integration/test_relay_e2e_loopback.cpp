@@ -435,6 +435,10 @@ TEST_CASE("Relay enrollment, login, discovery, pairing and messaging in-process"
         REQUIRE(view->enrollment_generation >= 1U);
         REQUIRE(view->auto_connect);
         REQUIRE_FALSE(view->revoked);
+        // M8-02（DEC-018 凭据纪律）：成功路径同样原位擦除——调用方持有的
+        // request.bootstrap_token 出函数即空（失败路径见 test_relay_integration
+        // 的 M8 用例；下方测试侧 token 副本仍各自擦除）。
+        REQUIRE(request.bootstrap_token.empty());
     }
     // 决策 2 修订（缺陷修复验证点）：ca_file 提供时 enrollment 记录持久化
     // relay_pin = SHA-256(首证书 DER)。直查 heyaki 记录本体（RelayEnrollment-

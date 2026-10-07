@@ -9,6 +9,9 @@
 //     （relay_enrollment.hpp，含 ca_file 存在性）；
 //   - enroll_relay_profile 对不可达地址失败可见且 profile 不落记录
 //     （阻塞调用，超时上界由上游 transport 配置约束，见头注）；
+//   - enroll_relay_profile 全部失败退出路径原位擦除调用方持有的
+//     bootstrap_token（M8-02/DEC-018：校验拒绝 ×3、非 PEM pin 失败、
+//     不可达交换失败，兼回归 nullopt + error 非空 + 不落记录）；
 //   - revoke_relay_enrollment：无记录 false；put 造记录后撤销成功、视图
 //     revoked 可见（relay_enrollment_views 投影）；
 //   - ICE 配置（ice_config.hpp）：parse 各合法/非法行、invalid_lines 计数、
@@ -310,6 +313,85 @@ TEST_CASE("enroll_relay_profile fails visibly against an unreachable relay",
     REQUIRE_FALSE(error.empty());
     // 失败不落记录：profile 无任何 enrollment（RULE-09：拒绝面不产生副作用）。
     REQUIRE(aki::heyaki::relay_enrollment_views(profile).empty());
+
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+}
+
+// M8-02（DEC-028 决策 11 阶段 1 / DEC-018 凭据纪律）：enroll_relay_profile
+// 以非 const 引用收 request，在全部失败退出路径原位擦除调用方持有的
+// bootstrap_token（成功路径的真实注册流证据见 test_relay_e2e_loopback）。
+// 网络无关纪律沿文件头：仅静态校验拒绝与 127.0.0.1 不可达端口。
+TEST_CASE("enroll_relay_profile scrubs the bootstrap token on every failure path",
+    "[unit][relay_integration][m8_relay]") {
+    const auto root = make_temp_root("enroll-scrub");
+    auto profile = aki::heyaki::LocalProfile::open(root.string(),
+        "test-local-password");
+
+    // 各失败退出路径的公共断言：失败可见（nullopt + error 非空）、无记录
+    // 落库（RULE-09 副作用面）、调用方 request.bootstrap_token 原位为空。
+    const auto expect_failed_and_scrubbed =
+        [&profile](RelayEnrollRequest& request, std::string& error) {
+            REQUIRE_FALSE(request.bootstrap_token.empty());  // 前置：凭据在场
+            const auto result =
+                aki::heyaki::enroll_relay_profile(profile, request, error);
+            REQUIRE_FALSE(result.has_value());
+            REQUIRE_FALSE(error.empty());
+            REQUIRE(request.bootstrap_token.empty());
+            REQUIRE(aki::heyaki::relay_enrollment_views(profile).empty());
+        };
+
+    RelayEnrollRequest base;
+    base.relay_url = "wss://relay.example.com/relay";
+    base.tenant = "aki";
+    base.bootstrap_token = "bootstrap-secret-token";
+
+    // 静态校验拒绝：URL 非 wss://（validate_relay_enroll_request 早退）。
+    SECTION("non-wss url is rejected and scrubbed") {
+        auto request = base;
+        request.relay_url = "http://relay.example.com";
+        std::string error;
+        expect_failed_and_scrubbed(request, error);
+    }
+    // 静态校验拒绝：tenant 为空。
+    SECTION("empty tenant is rejected and scrubbed") {
+        auto request = base;
+        request.tenant.clear();
+        std::string error;
+        expect_failed_and_scrubbed(request, error);
+    }
+    // 校验拒绝：ca_file 指向不存在文件（存在性检查在 validate 面早退）。
+    SECTION("missing ca file is rejected and scrubbed") {
+        auto request = base;
+        request.ca_file = std::filesystem::path{
+            "/nonexistent/aki-relay-scrub-ca.pem"};
+        std::string error;
+        expect_failed_and_scrubbed(request, error);
+    }
+    // pin 失败：文件存在但非 PEM——validate 通过、relay_certificate_pin
+    // 同步拒绝（构造临时文件的写法沿上方 ca-ok 用例）。
+    SECTION("non-PEM ca file fails the pin and scrubs") {
+        const auto pem_root = make_temp_root("enroll-scrub-notpem");
+        const auto not_pem = pem_root / "not-a-cert.pem";
+        {
+            std::ofstream out(not_pem, std::ios::binary);
+            out << "this is not a PEM certificate\n";
+        }
+        auto request = base;
+        request.ca_file = not_pem;
+        std::string error;
+        expect_failed_and_scrubbed(request, error);
+        std::error_code pem_ec;
+        std::filesystem::remove_all(pem_root, pem_ec);
+    }
+    // 上游 WSS 交换失败：127.0.0.1:1 本机不可达端口（连接拒绝；阻塞上界
+    // connect 5s + handshake 5s + close 2s，见 relay_enrollment.hpp 头注）。
+    SECTION("unreachable relay exchange failure scrubs") {
+        auto request = base;
+        request.relay_url = "wss://127.0.0.1:1";
+        std::string error;
+        expect_failed_and_scrubbed(request, error);
+    }
 
     std::error_code ec;
     std::filesystem::remove_all(root, ec);
