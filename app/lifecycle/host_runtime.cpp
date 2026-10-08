@@ -987,8 +987,13 @@ bool HostRuntime::Impl::launch_relay_enroll(
     auto* profile_for_task = &*profile;
     auto* owner_for_task = &*state_owner;
     auto* runtime_for_task = &*relay_enroll_runtime;
+    // 热生效（M8-08，HEY-20261006-001 收口）：注册成功后按新记录热更新
+    // 运行中 Node 的 relay 配置（无需重启；update_relay_config 免锁投递
+    // 到 node strand，worker 上下文安全）。node_session 为 Impl 成员且
+    // 注册任务 future 在关闭序先消费——存续覆盖任务。
+    auto* node_for_task = &*node_session;
     relay_enroll_task = executor_owner.executor().submit_auto(
-        [profile_for_task, owner_for_task, runtime_for_task,
+        [profile_for_task, owner_for_task, runtime_for_task, node_for_task,
             token = std::move(request.bootstrap_token),
             password = std::move(request.enrollment_password),
             url = std::move(request.relay_url),
@@ -1011,8 +1016,15 @@ bool HostRuntime::Impl::launch_relay_enroll(
             status.tenant = tenant;
             status.connection_state_name = "disabled";
             if (result.has_value()) {
-                // 注册成功：记录已持久化，重启后 Node 自动登录（决策 3）。
+                // 注册成功：记录已持久化，热更新即时连接（M8-08，决策 3
+                // 修订——连接态收敛经 5s sweep / SetRelayStatus 可见）。
                 status.enrolled = true;
+                std::string apply_error;
+                if (!node_for_task->apply_relay_enrollment_now(
+                        apply_error)) {
+                    status.last_error = "relay hot-apply failed: "
+                        + apply_error;
+                }
             } else {
                 status.enrolled = false;
                 status.last_error = task_error;
@@ -1092,7 +1104,10 @@ bool HostRuntime::remove_relay(std::string& error) {
         return false;
     }
     // 状态推进（同步——本地 profile 写，无网络面）：enrolled=false 保留
-    // URL/租户上下文；运行中连接至重启保持（决策 4，设置页披露）。
+    // URL/租户上下文。热断开（M8-08，决策 3/4 修订）：按已撤销记录热更新
+    // 运行中 Node（无有效记录 → update_relay_config(nullopt) 断开控制面；
+    // 已认证会话直连传输保留）。撤销已持久化，热断开失败如实进 error
+    // 但不移除结果（下次启动不再自动连接）。
     kairo::comm::Snapshot<AppState> snapshot;
     RelayStatus status;
     if (impl_->state_owner->try_load_snapshot(snapshot)
@@ -1101,6 +1116,11 @@ bool HostRuntime::remove_relay(std::string& error) {
     }
     status.enrolled = false;
     status.last_error.clear();
+    std::string apply_error;
+    if (impl_->node_session.has_value()
+        && !impl_->node_session->apply_relay_enrollment_now(apply_error)) {
+        status.last_error = "relay hot-disconnect failed: " + apply_error;
+    }
     (void)impl_->state_owner->submit_update(SetRelayStatus{status});
     return true;
 }

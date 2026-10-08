@@ -6,7 +6,8 @@
 > 修订：2026-10-06 增补决策 10（测试专用消费 heyaki::relay，进程内端到端
 > 验证面）；2026-10-07 增补决策 11（中继接入「地址 + 密码」分阶段简化，
 > 修订决策 2/7 的主路径形态——token 流程降级为高级路径全程保留）；
-> 其余条款不变
+> 2026-10-08 决策 11 阶段 2/3 随实测冻结、决策 3 修订（注册/移除热生效
+> ——M8-08）；其余条款不变
 > 冻结里程碑：M7 开工编码前（SCOPE-02 Relay 发现来源 / SCOPE-10 Relay 路径展示）
 > 前置：[DEC-006](DEC-006-heyaki-api-contract.md)（映射 2/5 与 lan_only 分期）、
 > [DEC-015](DEC-015-per-device-connection-path.md)（路径状态模型）、
@@ -63,6 +64,18 @@ SCOPE-02 把发现来源设计为「局域网发现、已知设备记录、Relay
    ReconnectCoordinator/对账 sweep 均捕获 `NodeSession` 裸指针，运行期重建
    网络栈等于二次装配，风险不可接受。UI 在注册成功与移除后提示「重启 Aki 后
    生效」。上游能力缺口登记 `HEY-20261006-001`（见反馈台账）。
+   **2026-10-08 修订（M8-08，HEY-20261006-001 收口）**：上游
+   `Node::update_relay_config(optional<RelayNodeConfig>)`（heyaki #19，pin
+   1b0447b）落地后，注册/移除改为**热生效**——enroll 任务成功后与移除后
+   按 profile 当前首条有效记录热更新运行中 Node
+   （`NodeSession::apply_relay_enrollment_now`，字段映射镜像上游
+   `load_relay_config_from_profile`：有 pin 时 `tls_verify_peer=false`；
+   无有效记录传 nullopt 断开控制面，已认证会话直连传输保留；上游
+   strand 投递免锁、非法配置保留旧连接且错误经快照可见、与关闭竞争
+   no-op）。设置页全部「重启生效」文案废止（TURN 静态配置仍重启生效并
+   如实披露——ice-servers.txt 装配期注入）。备选 C 的否决理由随上游
+   能力落地失效，但结论不变：不做运行期重建 NodeSession，仅热更新
+   relay 配置面（裸指针捕获组件全部不受影响）。
 4. **移除 = 标记撤销**：`mark_relay_revoked(relay_url, generation)`（profile
    持久化），同样重启生效。不做多 relay 管理：v1 单条 enrollment（upstream
    `initialize_relay` 只取首条 auto_connect 记录），设置页展示当前记录与

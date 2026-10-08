@@ -8,6 +8,12 @@
 
 ## 当前状态
 
+- 2026-10-08：`M8-08` 热生效实现（In Progress）：上游
+  `Node::update_relay_config`（heyaki #19）接入——注册/移除即时生效
+  （决策 3 修订，设置页「重启生效」文案废止，TURN 静态配置除外）；
+  HEY-20261006-001 收口。测试与 CI 随热生效 PR 出证。详见
+  [M8 里程碑文档](m8-relay-simple-enrollment.md)。
+
 - 2026-10-08：`M8-05` 阶段 3 实现（In Progress）：relay 下发短时效 TURN
   的消费落地——选路零接线（上游 Node 自动合并，静态优先），Aki 侧交付
   来源/到期可观测（RelayStatus 增下发 ICE 计数 + 设置页展示）与 TURN

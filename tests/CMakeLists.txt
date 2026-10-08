@@ -554,12 +554,19 @@ set_tests_properties(test_relay_integration PROPERTIES LABELS "unit")
 # ice-servers.txt 的数据根装配，覆盖装配报告 1/1、turn_server() 预填视图、
 # enroll_relay 异步失败路径与 set_turn_server 覆写；main 模式同
 # test_host_runtime（进程唯一 Executor owner 是 HostRuntime 单例）。
+# M8-08：增补注册成功热连接/移除热断开（进程内 token 模式 RelayServer 经
+# HostRuntime::executor() 借用运行）——链接面沿 test_relay_e2e_loopback
+#（heyaki::relay 内部头 + OpenSSL 显式 find_package）。
+find_package(OpenSSL 3.0 REQUIRED COMPONENTS SSL Crypto)
 add_executable(test_host_relay_config unit/test_host_relay_config.cpp)
 target_compile_features(test_host_relay_config PRIVATE cxx_std_20)
 aki_apply_warnings(test_host_relay_config PRIVATE)
 target_link_libraries(test_host_relay_config PRIVATE
     Catch2::Catch2
-    aki_host)
+    aki_host
+    heyaki::relay
+    OpenSSL::SSL
+    OpenSSL::Crypto)
 aki_deploy_openssl_dlls(test_host_relay_config)
 add_test(NAME test_host_relay_config COMMAND test_host_relay_config)
 set_tests_properties(test_host_relay_config PROPERTIES LABELS "unit")
@@ -569,8 +576,8 @@ set_tests_properties(test_host_relay_config PROPERTIES LABELS "unit")
 # 登录/发现/connect_peer 配对/aki.text 往返 + 借用 Runtime 关闭序。仅测试
 # 目标链接 heyaki::relay（src/relay 内部头，PUBLIC 链 heyaki::client）；证书
 # 生成直用 OpenSSL 头（heyaki_relay PRIVATE 链 OpenSSL 不传播 include，本处
-# 显式 find_package）。单用例二进制（[skip] 受控退出纪律沿回环先例）。
-find_package(OpenSSL 3.0 REQUIRED COMPONENTS SSL Crypto)
+# 显式 find_package——已在 test_host_relay_config 前置调用）。单用例二进制
+#（[skip] 受控退出纪律沿回环先例）。
 add_executable(test_relay_e2e_loopback
     integration/test_relay_e2e_loopback.cpp)
 target_compile_features(test_relay_e2e_loopback PRIVATE cxx_std_20)
