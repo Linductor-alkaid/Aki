@@ -334,11 +334,19 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
             if (relay->ice_config_expires_unix_seconds > 0) {
                 const std::time_t expires = static_cast<std::time_t>(
                     relay->ice_config_expires_unix_seconds);
-                const std::tm* parts = std::localtime(&expires);
-                if (parts != nullptr) {
+                std::tm parts{};
+                // std::localtime 在 MSVC 为 C4996 弃用告警（第一方 -Werror）；
+                // 平台分支取可重入/安全变体（compose 单线程主线程上下文）。
+                const bool parts_ok =
+#if defined(_WIN32)
+                    localtime_s(&parts, &expires) == 0;
+#else
+                    localtime_r(&expires, &parts) != nullptr;
+#endif
+                if (parts_ok) {
                     char buffer[16];
                     if (std::strftime(buffer, sizeof(buffer), "%H:%M:%S",
-                            parts)
+                            &parts)
                         > 0) {
                         expires_text = buffer;
                     }
