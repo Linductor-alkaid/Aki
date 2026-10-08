@@ -165,6 +165,10 @@ bootstrap token、证书文件退出主视图（降级为高级路径全程保�
   host 层 hot-apply/hot-disconnect 失败分支仅 profile 读失败或 node
   已停时可达（健康态公开 API 不可达），未注入；UI 文案变更经 diff
   核对与全量 ui 测试回归，无 GUI 自动化断言。
+- CI 门禁：[PR #76](https://github.com/Linductor-alkaid/Aki/pull/76)
+  两轮后七项全绿（[run 37750364757]
+  (https://github.com/Linductor-alkaid/Aki/actions/runs/37750364757)；
+  首轮为 MSVC C4456 遮蔽修复），Squash 合入 0cfe32e。
 
 ### 2026-10-08：M8-05 relay 下发 TURN 的消费与可观测（阶段 3）
 
@@ -191,6 +195,10 @@ bootstrap token、证书文件退出主视图（降级为高级路径全程保�
   代码检视确认（两端已测，低风险）；设置页展示行无 GUI 测试面
   （GUI 目视复核并入 M8-01/04 的补跑项）；静态覆盖 + 下发的实际选路
   合并属上游行为（上游 m4 测试覆盖，Aki 零接线）。
+- CI 门禁：[PR #75](https://github.com/Linductor-alkaid/Aki/pull/75)
+  两轮后七项全绿（[run 37740750072]
+  (https://github.com/Linductor-alkaid/Aki/actions/runs/37740750072)；
+  首轮为 MSVC localtime C4996 修复），Squash 合入 7474a78。
 
 ### 2026-10-08：M8-04 密码模式注册主路径（阶段 2）
 
@@ -253,6 +261,10 @@ bootstrap token、证书文件退出主视图（降级为高级路径全程保�
   测试注入面。
 - 残余未验证（如实登记）：pin 回写失败分支（读回缺失/UPSERT 失败）仅
   静态走查；GUI 目视复核未执行（补跑条件见 M8-04 工作项注）。
+- CI 门禁：[PR #74](https://github.com/Linductor-alkaid/Aki/pull/74)
+  三轮后七项全绿（[run 37734425526]
+  (https://github.com/Linductor-alkaid/Aki/actions/runs/37734425526)），
+  Squash 合入 ac7d277。
 
 ### 2026-10-08：M8-07 依赖升级（Heyaki 1b0447b + Executor v0.6.0 kairo）
 

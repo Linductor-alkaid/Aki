@@ -8,25 +8,24 @@
 
 ## 当前状态
 
-- 2026-10-08：`M8-08` 热生效实现（In Progress）：上游
-  `Node::update_relay_config`（heyaki #19）接入——注册/移除即时生效
-  （决策 3 修订，设置页「重启生效」文案废止，TURN 静态配置除外）；
-  HEY-20261006-001 收口。测试与 CI 随热生效 PR 出证。详见
+- 2026-10-08：`M8-08` 热生效合入（PR #76 / CI [run 37750364757]
+  (https://github.com/Linductor-alkaid/Aki/actions/runs/37750364757) 七项
+  全绿，Squash 0cfe32e）：上游 `Node::update_relay_config`（heyaki #19）
+  接入——注册/移除即时生效（决策 3 修订，设置页「重启生效」文案废止，
+  TURN 静态配置除外）。**HEY-20261006-001 收口——M8 关联的六条 heyaki
+  反馈（20261006-001/002/003、20261002-001、20261007-001/002）全部
+  Resolved**。M8 剩余开放项：M8-01/06 的 GUI 目视复核（补跑条件在案）
+  与退出-3/4 的真实跨网段联调。
+
+- 2026-10-08：`M8-05` 阶段 3 合入（PR #75 / run 37740750072 七项全绿，
+  Squash 7474a78）：relay 下发短时效 TURN 的消费落地——选路零接线
+  （上游 Node 自动合并，静态优先），Aki 侧交付来源/到期可观测
+  （RelayStatus 增下发 ICE 计数 + 设置页展示）与 TURN 高级区「覆盖」
+  语义文案；决策 11 阶段 3 条款随实测冻结。阶段 2 `M8-04` 此前随
+  PR #74（run 37734425526，Squash ac7d277）合入——密码注册主路径 +
+  TOFU 指纹 UPSERT 锚定 + 借用 Runtime（HEY-20261006-002 消费），IVA
+  四轮验证渐进修复三处缺陷。详见
   [M8 里程碑文档](m8-relay-simple-enrollment.md)。
-
-- 2026-10-08：`M8-05` 阶段 3 实现（In Progress）：relay 下发短时效 TURN
-  的消费落地——选路零接线（上游 Node 自动合并，静态优先），Aki 侧交付
-  来源/到期可观测（RelayStatus 增下发 ICE 计数 + 设置页展示）与 TURN
-  高级区「覆盖」语义文案；决策 11 阶段 3 条款随实测冻结。测试与 CI 随
-  阶段 3 PR 出证。详见 [M8 里程碑文档](m8-relay-simple-enrollment.md)。
-
-- 2026-10-08：`M8-04` 阶段 2 完成（In Progress）：中继密码注册主路径
-  （地址 + 密码；TOFU 首连 + relay 回传指纹 UPSERT 锚定；令牌流程收拢
-  高级路径零删减）随 M8-07 升级落地——IVA 三轮测试 49/49 全绿，渐进
-  发现并修复三处缺陷（上游返回值指纹不落库、worker 内 Runtime 生命
-  周期、worker 名冲突）；enrollment 切换借用 Runtime（HEY-20261006-002
-  消费）。决策 11 阶段 2 条款随实测冻结。GUI 目视复核与 CI 门禁随阶段
-  2 PR 出证。详见 [M8 里程碑文档](m8-relay-simple-enrollment.md)。
 
 - 2026-10-08：`M8-07` 依赖升级：Heyaki 7e9758a → 1b0447b（v1.2.0-13；
   relay 密码准入 + `--init`、`Node::update_relay_config` 运行期更新、
