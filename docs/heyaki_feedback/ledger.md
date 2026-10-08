@@ -375,13 +375,20 @@ HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保
 
 ## HEY-20261007-002：relay 登录后下发短时效 TURN/ICE 配置（Aki 侧需求）
 
-- **状态**：上游已实现（提交 1b0447b：relay_ice_config_v1 经
-  login_result/heartbeat_ack 下发短时效 TURN 凭据；`RelayNodeSnapshot`
-  计数器 `ice_config_updates/rejected/servers_active/expires_unix_seconds`
-  ——凭据材料不进快照；公开 `merge_relay_ice_servers` 合并/过期剔除/
-  8 服务器上限），随 Aki pin 1b0447b 进入构建图；无独立 heyaki issue
-  （随 #22 接入卡/TURN 密钥衔接落地）。Aki 接入 = M8-05（DEC-028 决策 11
-  阶段 3），完成前本条保持未关闭。
+- **状态**：**Resolved（2026-10-08，Aki 接入完成）**。上游实现见提交
+  1b0447b（relay_ice_config_v1 经 login_result/heartbeat_ack 下发短时效
+  TURN 凭据；`RelayNodeSnapshot` 计数器——凭据材料不进快照；
+  `merge_relay_ice_servers` 静态优先/过期剔除/8 服务器上限）；无独立
+  heyaki issue（随 #22 接入卡/TURN 密钥衔接落地）。Aki 接入 = M8-05
+  （[DEC-028](../decisions/DEC-028-relay-cross-subnet.md) 决策 11 阶段
+  3，2026-10-08 冻结落地）：选路零接线（上游 Node 自动合并/心跳整体
+  换新/断连回落静态），静态 `ice-servers.txt` 降级为高级覆盖（「静态
+  优先」天然形成覆盖语义），Aki 侧交付来源/到期可观测
+  （RelayStatusView/RelayStatus 计数投影 + 设置页「TURN（中继下发）：
+  N · 到期 HH:MM:SS」）。验证：进程内 e2e（token 模式注册——tsan 档
+  保留覆盖）断言 login 下发与 heartbeat 换新（updates 1→2、
+  servers_active==advertised 数、expires−now==TTL 精确值）；AppState
+  整体替换/幂等含新字段。证据见 M8 里程碑文档 M8-05 验证记录。
 - **用户需求**：跨网段打洞失败自动走 TURN 兜底，用户不配置 TURN
   host/port/username/credential；凭据短时效（coturn use-auth-secret /
   REST HMAC 同型），不手工造静态长期凭据。

@@ -81,9 +81,13 @@ bootstrap token、证书文件退出主视图（降级为高级路径全程保�
   密码行/TOFU 披露/令牌高级路径，负责人 Linductor。）
 - [ ] `M8-05` TURN 自动化（阶段 3；上游能力已随 pin 1b0447b 落地——
   HEY-20261007-002：relay_ice_config_v1 下发 + 快照计数器 +
-  `merge_relay_ice_servers`；待启动）：relay 凭据自动参与选路；静态
-  `ice-servers.txt` 降级为高级覆盖（合并/优先级跟随上游语义）；设置页
-  展示生效 ICE 配置与来源；短时效凭据续期/过期语义接入与测试。
+  `merge_relay_ice_servers`）：选路零接线（上游 Node 自动合并，静态
+  优先/过期剔除/心跳整体换新/断连回落静态）；静态 `ice-servers.txt` +
+  TURN 高级区降级为高级覆盖（提示文案更新）；`RelayStatusView`/AppState
+  `RelayStatus` 增下发 ICE 计数，设置页展示「TURN（中继下发）：N ·
+  到期 HH:MM:SS」；凭据续期由 relay 心跳承载，无 Aki 侧定时器。
+  （实现完成，2026-10-08；测试与回归见验证记录 M8-05 条。）
+
 - [ ] `M8-06` 阶段 1 回归验证：全量 ctest 零回归 + CI 七项全绿 + GUI
   视觉复核（折叠开合/校验自动展开/深浅两档）；阶段 2/3 各自开工时另立
   回归项。
@@ -124,6 +128,32 @@ bootstrap token、证书文件退出主视图（降级为高级路径全程保�
   明确可观测。
 
 ## 验证记录
+
+### 2026-10-08：M8-05 relay 下发 TURN 的消费与可观测（阶段 3）
+
+- 环境：Ubuntu 24.04 / GCC 13.3.0 / CMake 3.28.3 / debug + tsan 预设；
+  heyaki 1b0447b。
+- 实现：`RelayStatusView` +4 ICE 计数字段（relay_status() 投影）、
+  AppState `RelayStatus` 同名字段（make_relay_status 透传）、设置页
+  「TURN（中继下发）：N · 到期 HH:MM:SS」行 + TURN 高级区覆盖语义
+  文案 + i18n；选路/续期零接线（上游 Node 合并 + 心跳换新，决策 11
+  阶段 3 冻结条款引用 node.cpp 语义）。
+- 测试（Independent-Verification-Agent）：`test_app_state` 扩展
+  SetRelayStatus 用例（首推非零计数逐字段/同值幂等/换值整体替换恰发
+  一次，41 断言含 4 条字段类型静态断言）；password e2e 新增独立 ICE
+  用例（**token 模式注册——不触发 Argon2id，tsan 档保留覆盖**；fixture
+  扩展 turn_credentials_enabled + secret 文件 + advertised turn_udp，
+  上游 m4_node_turn_ice_test 同型）：login 下发
+  `updates=1/servers_active=1/expires−now==600s==TTL` 精确、heartbeat
+  换新 `updates=2` 计数不漂移、rejected=0、凭据材料无字段面（静态
+  断言）、关闭序闭合（29 断言）。tsan 档实测执行通过（4 密码用例按
+  既定 kTsanBuild 跳过，本用例不受影响）。
+- 全量：`ctest --preset debug` **49/49**（条目数持平——两处改动均在
+  既有二进制内）。
+- 残余未验证（如实登记）：make_relay_status 透传为 .cpp 内部函数，经
+  代码检视确认（两端已测，低风险）；设置页展示行无 GUI 测试面
+  （GUI 目视复核并入 M8-01/04 的补跑项）；静态覆盖 + 下发的实际选路
+  合并属上游行为（上游 m4 测试覆盖，Aki 零接线）。
 
 ### 2026-10-08：M8-04 密码模式注册主路径（阶段 2）
 

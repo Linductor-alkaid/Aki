@@ -134,6 +134,11 @@ RelayStatus make_relay_status(
         status.tenant = view.tenant;
     }
     status.last_error = view.last_error;
+    // M8-05：relay 下发 ICE 可观测计数（决策 11 阶段 3——连接事实可观测）。
+    status.ice_config_updates = view.ice_config_updates;
+    status.ice_config_rejected = view.ice_config_rejected;
+    status.ice_config_servers_active = view.ice_config_servers_active;
+    status.ice_config_expires_unix_seconds = view.ice_config_expires_unix_seconds;
     return status;
 }
 

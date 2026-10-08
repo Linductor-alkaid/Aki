@@ -17,6 +17,7 @@
 #include "components/text.h"
 
 #include <algorithm>
+#include <ctime>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -325,6 +326,50 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
                 .color(semantic.destructive)
                 .build();
         }
+        // M8-05：relay 下发 ICE 的来源与到期可观测（决策 11 阶段 3——
+        // 仅计数与到期时刻，凭据不展示；静态覆盖在下方 TURN 高级区）。
+        if (relay.has_value() && relay->enrolled
+            && relay->ice_config_servers_active > 0) {
+            std::string expires_text;
+            if (relay->ice_config_expires_unix_seconds > 0) {
+                const std::time_t expires = static_cast<std::time_t>(
+                    relay->ice_config_expires_unix_seconds);
+                std::tm parts{};
+                // std::localtime 在 MSVC 为 C4996 弃用告警（第一方 -Werror）；
+                // 平台分支取可重入/安全变体（compose 单线程主线程上下文）。
+                const bool parts_ok =
+#if defined(_WIN32)
+                    localtime_s(&parts, &expires) == 0;
+#else
+                    localtime_r(&expires, &parts) != nullptr;
+#endif
+                if (parts_ok) {
+                    char buffer[16];
+                    if (std::strftime(buffer, sizeof(buffer), "%H:%M:%S",
+                            &parts)
+                        > 0) {
+                        expires_text = buffer;
+                    }
+                }
+            }
+            const std::string ice_text =
+                tr("TURN servers issued by relay") + std::string(": ")
+                + std::to_string(relay->ice_config_servers_active)
+                + (expires_text.empty()
+                        ? std::string()
+                        : std::string(" · ") + tr("expires") + " "
+                            + expires_text);
+            row_y += metrics.typography.caption + metrics.spacing.tiny;
+            components::text(ui, "aki.settings.relay.ice")
+                .text(ice_text)
+                .position(pad_x, row_y)
+                .fontSize(metrics.typography.caption)
+                .fontFamily("Mono")
+                .wrap(true)
+                .maxWidth(content_width)
+                .color(semantic.text_subtle)
+                .build();
+        }
         row_y += metrics.typography.caption + metrics.spacing.compact;
 
         if (!relay.has_value() || !relay->enrolled) {
@@ -540,8 +585,9 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
         row_y += metrics.typography.body + metrics.spacing.compact;
         components::text(ui, "aki.settings.turn.hint")
             .text(tr("TURN carries data when direct connection fails"
-                     " across networks.\nChanges take effect after"
-                     " restart."))
+                     " across networks.\nRelay-issued short-lived servers"
+                     " apply automatically; entries here override them"
+                     " after restart."))
             .position(pad_x, row_y)
             .fontSize(metrics.typography.caption)
             .wrap(true)
