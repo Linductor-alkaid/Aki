@@ -359,6 +359,10 @@ struct HostRuntime::Impl {
     std::uint64_t ice_invalid_lines = 0;
     std::future<void> ice_write;
     std::future<void> relay_enroll_task;
+    // 注册交换借用 Runtime 句柄（M8-04）：主线程首次注册时构造一次，任务
+    // 内只读使用；关闭序消费注册任务 future 后、executor 回收前销毁
+    //（heyaki Runtime 创建/析构须在非 worker 线程——IVA 缺陷修复纪律）。
+    std::optional<aki::heyaki::RelayEnrollRuntime> relay_enroll_runtime;
     // 重连对账周期句柄（DEC-021）与启动信任校准任务 future（有界单次）。
     kairo::TimerHandle reconnect_sweep;
     // Lifecycle barrier only: queued/running sweeps finish before Node shutdown.
@@ -375,6 +379,12 @@ struct HostRuntime::Impl {
 
     bool shutdown_attempted = false;
     HostShutdownReport shutdown_report;
+
+    // 注册共享管线（M8-04）：静态校验 + 在途互斥 + executor 任务提交。
+    // 凭据（token/密码）随请求进入任务后由适配层原位擦除，本层的 lambda
+    // 副本在任务末尾擦除（DEC-018 纪律；与 token/密码入口共用）。
+    [[nodiscard]] bool launch_relay_enroll(
+        aki::heyaki::RelayEnrollRequest&& request, std::string& error);
 
     Impl() : executor_owner{[] {
         ExecutorOwnerOptions options;
@@ -928,6 +938,93 @@ bool HostRuntime::set_device_name(std::string name) {
     return true;
 }
 
+bool HostRuntime::Impl::launch_relay_enroll(
+    aki::heyaki::RelayEnrollRequest&& request, std::string& error) {
+    const auto scrub_request_secrets = [](aki::heyaki::RelayEnrollRequest& r) {
+        std::fill(r.bootstrap_token.begin(), r.bootstrap_token.end(), '\0');
+        std::fill(r.enrollment_password.begin(), r.enrollment_password.end(),
+            '\0');
+    };
+    const auto invalid = aki::heyaki::validate_relay_enroll_request(request);
+    if (invalid.has_value()) {
+        error = *invalid;
+        scrub_request_secrets(request);
+        return false;
+    }
+    if (relay_enroll_task.valid()) {
+        if (relay_enroll_task.wait_for(0ms) != std::future_status::ready) {
+            error = "relay enrollment already in progress";
+            scrub_request_secrets(request);
+            return false;
+        }
+        try {
+            relay_enroll_task.get();
+        } catch (...) {
+            error = "previous relay enrollment task failed";
+            scrub_request_secrets(request);
+            return false;
+        }
+    }
+    // 阻塞 WSS 交换放 executor 任务（M7/DEC-028 决策 2：一次性有界
+    // ~12s，不得在点击回调上下文执行）；结果经 SetRelayStatus 回传
+    //（owner 受理点唤醒主循环 drain，M5-05 起接线）。M8-04：交换经借用
+    // Runtime 运行在宿主 executor 上（HEY-20261006-002 收口）；句柄在
+    // 此（主线程）构造、任务内只读使用——worker 内创建/析构 Runtime 会
+    // 自等待并破坏后续 Node 关闭（IVA 缺陷修复）。凭据副本任务末擦除。
+    if (!relay_enroll_runtime.has_value()) {
+        relay_enroll_runtime.emplace(executor_owner.executor());
+    }
+    if (!relay_enroll_runtime->valid()) {
+        error = "relay enrollment runtime unavailable";
+        scrub_request_secrets(request);
+        return false;
+    }
+    auto* profile_for_task = &*profile;
+    auto* owner_for_task = &*state_owner;
+    auto* runtime_for_task = &*relay_enroll_runtime;
+    relay_enroll_task = executor_owner.executor().submit_auto(
+        [profile_for_task, owner_for_task, runtime_for_task,
+            token = std::move(request.bootstrap_token),
+            password = std::move(request.enrollment_password),
+            url = std::move(request.relay_url),
+            tenant = std::move(request.tenant),
+            ca = request.ca_file]() mutable {
+            aki::heyaki::RelayEnrollRequest task_request;
+            task_request.relay_url = url;
+            task_request.tenant = tenant;
+            task_request.bootstrap_token = token;
+            task_request.enrollment_password = password;
+            task_request.ca_file = ca;
+            std::string task_error;
+            auto result = aki::heyaki::enroll_relay_profile(
+                *profile_for_task, task_request, task_error,
+                runtime_for_task);
+            std::fill(token.begin(), token.end(), '\0');
+            std::fill(password.begin(), password.end(), '\0');
+            RelayStatus status;
+            status.relay_url = url;
+            status.tenant = tenant;
+            status.connection_state_name = "disabled";
+            if (result.has_value()) {
+                // 注册成功：记录已持久化，重启后 Node 自动登录（决策 3）。
+                status.enrolled = true;
+            } else {
+                status.enrolled = false;
+                status.last_error = task_error;
+            }
+            (void)owner_for_task->submit_update(SetRelayStatus{status});
+        });
+    if (relay_enroll_task.wait_for(0ms) == std::future_status::ready) {
+        try {
+            relay_enroll_task.get();
+        } catch (...) {
+            error = "relay enrollment task failed";
+            return false;
+        }
+    }
+    return true;
+}
+
 bool HostRuntime::enroll_relay(std::string relay_url, std::string tenant,
     std::string bootstrap_token, std::string ca_file, std::string& error) {
     if (!impl_->assembled || impl_->shutdown_attempted || !impl_->profile
@@ -943,75 +1040,27 @@ bool HostRuntime::enroll_relay(std::string relay_url, std::string tenant,
     if (!ca_file.empty()) {
         request.ca_file = std::filesystem::path{std::move(ca_file)};
     }
-    const auto invalid = aki::heyaki::validate_relay_enroll_request(request);
-    if (invalid.has_value()) {
-        error = *invalid;
-        std::fill(request.bootstrap_token.begin(),
-            request.bootstrap_token.end(), '\0');
+    return impl_->launch_relay_enroll(std::move(request), error);
+}
+
+bool HostRuntime::enroll_relay_with_password(std::string relay_url,
+    std::string enrollment_password, std::string ca_file,
+    std::string& error) {
+    if (!impl_->assembled || impl_->shutdown_attempted || !impl_->profile
+        || !impl_->state_owner) {
+        error = "Host is not available";
+        std::fill(enrollment_password.begin(), enrollment_password.end(),
+            '\0');
         return false;
     }
-    if (impl_->relay_enroll_task.valid()) {
-        if (impl_->relay_enroll_task.wait_for(0ms)
-            != std::future_status::ready) {
-            error = "relay enrollment already in progress";
-            std::fill(request.bootstrap_token.begin(),
-                request.bootstrap_token.end(), '\0');
-            return false;
-        }
-        try {
-            impl_->relay_enroll_task.get();
-        } catch (...) {
-            error = "previous relay enrollment task failed";
-            std::fill(request.bootstrap_token.begin(),
-                request.bootstrap_token.end(), '\0');
-            return false;
-        }
+    aki::heyaki::RelayEnrollRequest request;
+    request.relay_url = std::move(relay_url);
+    // 密码模式空租户由适配层归一为默认值（validate 内处理）。
+    request.enrollment_password = std::move(enrollment_password);
+    if (!ca_file.empty()) {
+        request.ca_file = std::filesystem::path{std::move(ca_file)};
     }
-    // 阻塞 WSS 交换放 executor 任务（M7/DEC-028 决策 2：一次性有界
-    // ~12s，不得在点击回调上下文执行）；结果经 SetRelayStatus 回传
-    //（owner 受理点唤醒主循环 drain，M5-05 起接线）。token 副本在任务
-    // 末尾擦除（凭据纪律，DEC-018 同款）。
-    auto* profile_for_task = &*impl_->profile;
-    auto* owner_for_task = &*impl_->state_owner;
-    const auto ca_for_task = request.ca_file;
-    impl_->relay_enroll_task = impl_->executor_owner.executor().submit_auto(
-        [profile_for_task, owner_for_task,
-            token = std::move(request.bootstrap_token),
-            url = std::move(request.relay_url),
-            tenant = std::move(request.tenant),
-            ca = ca_for_task]() mutable {
-            aki::heyaki::RelayEnrollRequest task_request;
-            task_request.relay_url = url;
-            task_request.tenant = tenant;
-            task_request.bootstrap_token = token;
-            task_request.ca_file = ca;
-            std::string task_error;
-            auto result = aki::heyaki::enroll_relay_profile(
-                *profile_for_task, task_request, task_error);
-            std::fill(token.begin(), token.end(), '\0');
-            RelayStatus status;
-            status.relay_url = url;
-            status.tenant = tenant;
-            status.connection_state_name = "disabled";
-            if (result.has_value()) {
-                // 注册成功：记录已持久化，重启后 Node 自动登录（决策 3）。
-                status.enrolled = true;
-            } else {
-                status.enrolled = false;
-                status.last_error = task_error;
-            }
-            (void)owner_for_task->submit_update(SetRelayStatus{status});
-        });
-    if (impl_->relay_enroll_task.wait_for(0ms)
-        == std::future_status::ready) {
-        try {
-            impl_->relay_enroll_task.get();
-        } catch (...) {
-            error = "relay enrollment task failed";
-            return false;
-        }
-    }
-    return true;
+    return impl_->launch_relay_enroll(std::move(request), error);
 }
 
 bool HostRuntime::remove_relay(std::string& error) {
@@ -1220,6 +1269,9 @@ const HostShutdownReport& HostRuntime::shutdown_with_report() {
         try { impl.relay_enroll_task.get(); }
         catch (...) { }
     }
+    // M8-04：注册交换借用 Runtime 在 executor 回收前于主线程销毁
+    //（非 worker 析构纪律；任务已消费，无在途使用者）。
+    impl.relay_enroll_runtime.reset();
     if (impl.ice_write.valid()) {
         try { impl.ice_write.get(); }
         catch (...) { }

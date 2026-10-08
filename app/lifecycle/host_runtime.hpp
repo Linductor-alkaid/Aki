@@ -136,12 +136,18 @@ public:
 
     // ---- M7/DEC-028：relay 注册与 TURN 配置（主线程调用，沿
     // set_language/set_device_name 先例）。静态校验失败同步 false 且
-    // error 可展示；enroll_relay 的网络结果异步经 RelayStatus 状态可见
-    //（SetRelayStatus），注册/移除/TURN 变更均重启后生效（上游 Node
-    // 构造期一次性读取配置，HEY-20261006-001，设置页如实披露）。----
+    // error 可展示；enroll_relay / enroll_relay_with_password 的网络结果
+    // 异步经 RelayStatus 状态可见（SetRelayStatus），注册/移除/TURN 变更
+    // 均重启后生效（上游 Node 构造期一次性读取配置，HEY-20261006-001，
+    // 设置页如实披露）。M8-04：密码模式为主路径（DEC-028 决策 11 阶段 2
+    // ——TOFU 首连 + relay 回传指纹自动锚定；无 ca_file 时不校验链）；
+    // token 模式保留为高级路径；两种凭据均用后擦除（DEC-018 纪律）。----
     [[nodiscard]] bool enroll_relay(std::string relay_url,
         std::string tenant, std::string bootstrap_token,
         std::string ca_file, std::string& error);
+    [[nodiscard]] bool enroll_relay_with_password(std::string relay_url,
+        std::string enrollment_password, std::string ca_file,
+        std::string& error);
     [[nodiscard]] bool remove_relay(std::string& error);
     [[nodiscard]] bool set_turn_server(std::string host, unsigned port,
         std::string username, std::string credential, std::string& error);
