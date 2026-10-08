@@ -170,6 +170,9 @@ bootstrap token、证书文件退出主视图（降级为高级路径全程保�
     （2.0s）、二轮注册毫秒级干净失败、无进程残留；password e2e 达
     5 用例/107 断言，全量维持 **49/49**。「worker 回收提前打断」路径
     未观察到（需上游可中断等待面），台账 002 残余声明如实记录。
+    本注入用例的悬置 listener 为 POSIX 实现，**Windows 编译面跳过**
+    （MSVC 无 arpa/inet.h；CI Windows 档不含本用例）——Windows 等价
+    （Winsock 悬置 listener）为补跑项，负责人 Linductor。
 - 残余未验证（如实登记）：pin 回写失败分支（读回缺失/UPSERT 失败）仅
   静态走查；GUI 目视复核未执行（补跑条件见 M8-04 工作项注）。
 

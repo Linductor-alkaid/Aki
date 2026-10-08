@@ -50,10 +50,15 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
+#if !defined(_WIN32)
+// 注入用例的 HangingTcpListener 为 POSIX socket 实现（arpa/inet.h 等
+// MSVC 不可用）；Windows 等价面（Winsock 悬置 listener）未实现——该用例
+// 在 Windows 编译面跳过，补跑条件与限制登记于 M8-04 验证记录。
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -693,6 +698,9 @@ TEST_CASE("Relay password enrollment with a live node session stops cleanly",
 // 共同断言：关闭有界（≤15s 实测收紧）、无崩溃、交换以失败终态可见
 //（error 非空 + 密码原位擦除 + 不落记录）、句柄主线程析构有界、
 // 进程内无残留（新一轮 owner+句柄+注册仍可用且干净关闭）。
+// Windows：POSIX listener 不可移植（见文件头 include 注），本段整体
+// 仅在非 Windows 编译——CI Windows 档不含本注入用例，限制如实登记。
+#if !defined(_WIN32)
 namespace {
 
 // 只 listen 不 accept：客户端 TCP connect 由内核 backlog 完成，TLS
@@ -881,3 +889,4 @@ TEST_CASE("In-flight relay enrollment exchange exits bounded on host shutdown",
     std::error_code ec;
     std::filesystem::remove_all(node_root, ec);
 }
+#endif  // !defined(_WIN32)
