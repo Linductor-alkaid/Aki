@@ -404,15 +404,18 @@ TEST_CASE("HostRuntime assembles ice config and surfaces relay enrollment state"
             std::printf("    [diag] host hot-connect did not converge: "
                         "state=%s\n",
                 observed_state.c_str());
-            const auto snapshot = relay.server->snapshot();
+            const auto server_snapshot = relay.server->snapshot();
             std::printf(
                 "    [diag] relay server: state=%d port=%u active=%llu "
                 "enroll_ok=%llu login_ok=%llu\n",
-                static_cast<int>(snapshot.state),
-                static_cast<unsigned>(snapshot.listen_port),
-                static_cast<unsigned long long>(snapshot.active_sessions),
-                static_cast<unsigned long long>(snapshot.enrollments_completed),
-                static_cast<unsigned long long>(snapshot.logins_completed));
+                static_cast<int>(server_snapshot.state),
+                static_cast<unsigned>(server_snapshot.listen_port),
+                static_cast<unsigned long long>(
+                    server_snapshot.active_sessions),
+                static_cast<unsigned long long>(
+                    server_snapshot.enrollments_completed),
+                static_cast<unsigned long long>(
+                    server_snapshot.logins_completed));
         }
         REQUIRE(hot_connected);
         // 服务器侧证据：真实登录会话在线（enroll_ok 来自注册交换）。
