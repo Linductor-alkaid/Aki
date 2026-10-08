@@ -6,13 +6,13 @@
             "name": "executor",
             "path": "third_party/executor",
             "url": "https://github.com/Linductor-alkaid/executor.git",
-            "commit": "e2362736c697cb215e914b3f1cdfeedb0c1544d6",
-            "version": "v0.5.2-20-ge236273",
+            "commit": "d9602ea6762806be320b9543e3b36f27f7dd5b1a",
+            "version": "v0.6.0",
             "license": "MIT",
             "license_file": "third_party/executor/LICENSE",
             "class": "pinned",
             "submodule": true,
-            "used_by": "M3-01 起经 heyaki 单图间接进入构建（DEC-006；M5-43 双侧同步 pin e2362736，configure 三方一致性校验）"
+            "used_by": "M3-01 起经 heyaki 单图间接进入构建（DEC-006；随 heyaki 1b0447b 双侧同步 pin d9602ea=v0.6.0——Executor 更名 kairo，Aki 全量迁移 executor::→kairo::）"
         },
         {
             "name": "EUI-NEO",
@@ -41,13 +41,13 @@
             "name": "heyaki",
             "path": "third_party/heyaki",
             "url": "https://github.com/Linductor-alkaid/heyaki.git",
-            "commit": "7e9758a370d047db1e511b50627c7f3b3edc78e2",
-            "version": "v1.1.1-4-g7e9758a",
+            "commit": "1b0447bcf5064418cd52b829ecccb391c4d783b5",
+            "version": "v1.2.0-13-g1b0447b",
             "license": "MIT",
             "license_file": "third_party/heyaki/LICENSE",
             "class": "pinned",
             "submodule": true,
-            "used_by": "M3 设备通信网络（设计第 8 节）"
+            "used_by": "M3 设备通信网络（设计第 8 节）；M8 起消费 relay 密码准入/短时效 ICE 下发/运行期 relay 更新（DEC-028 决策 11，随 pin 升级分阶段接入）"
         },
         {
             "name": "sqlite",

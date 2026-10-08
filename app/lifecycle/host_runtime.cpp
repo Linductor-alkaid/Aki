@@ -63,7 +63,7 @@ using aki::transfer::TransferState;
 
 // DoubleBuffer try_load 槽位忙时可重试（消费侧契约，设计第 10.1 节）。
 bool load_snapshot(AppStateOwner& state_owner,
-    executor::comm::Snapshot<AppState>& out) {
+    kairo::comm::Snapshot<AppState>& out) {
     for (int attempt = 0; attempt < 64; ++attempt) {
         if (state_owner.try_load_snapshot(out)) {
             return true;
@@ -252,14 +252,14 @@ private:
                                     auto result = owner->submit_update_for(
                                         aki::app::SetLocalTransferArtifact{{id, file.relative_path,
                                             file.sha256, file.size_bytes, true}}, std::chrono::milliseconds{0});
-                                    if (!result && result.error_code != executor::comm::CommErrorCode::Closed)
+                                    if (!result && result.error_code != kairo::comm::CommErrorCode::Closed)
                                         throw std::runtime_error("local file publication rejected: " + result.message);
                                 }, [owner = artifact_owner, id = concrete.transfer](std::string error) {
                                     if (owner == nullptr) return;
                                     const auto result = owner->submit_update_for(
                                         aki::app::SetLocalTransferArtifactFailure{id, std::move(error)},
                                         std::chrono::milliseconds{0});
-                                    if (!result && result.error_code != executor::comm::CommErrorCode::Closed)
+                                    if (!result && result.error_code != kairo::comm::CommErrorCode::Closed)
                                         throw std::runtime_error("archive failure publication rejected: " + result.message);
                                 }));
                     } else {
@@ -360,7 +360,7 @@ struct HostRuntime::Impl {
     std::future<void> ice_write;
     std::future<void> relay_enroll_task;
     // 重连对账周期句柄（DEC-021）与启动信任校准任务 future（有界单次）。
-    executor::TimerHandle reconnect_sweep;
+    kairo::TimerHandle reconnect_sweep;
     // Lifecycle barrier only: queued/running sweeps finish before Node shutdown.
     std::mutex reconnect_sweep_mutex;
     bool reconnect_sweep_stopped = false;
@@ -637,7 +637,7 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
     // 6) 注册 DatabaseWorker（EXEC-07 唯一入口 start_blocking_worker）。
     {
         auto db_runnable = std::make_unique<DatabaseWorkerRunnable>(impl.db);
-        executor::BlockingWorkerSpec db_spec;
+        kairo::BlockingWorkerSpec db_spec;
         db_spec.name = "aki.db-worker";
         db_spec.config.thread_name = "aki-db-worker";
         db_spec.worker = std::move(db_runnable);
@@ -653,7 +653,7 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
         auto transfer_io_runnable =
             std::make_unique<aki::persistence::TransferIoRunnable>(
                 impl.transfer_io->impl());
-        executor::BlockingWorkerSpec transfer_io_spec;
+        kairo::BlockingWorkerSpec transfer_io_spec;
         transfer_io_spec.name = "aki.transfer-io";
         transfer_io_spec.config.thread_name = "aki-transfer-io";
         transfer_io_spec.worker = std::move(transfer_io_runnable);
@@ -751,7 +751,7 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
 
     // 首帧播种快照即刻可读（装配完成即恢复结果可见，§11.1 ② 播种断言先例
     // 由 console 驱动承载）。
-    executor::comm::Snapshot<AppState> seeded_snapshot;
+    kairo::comm::Snapshot<AppState> seeded_snapshot;
     if (!load_snapshot(*impl.state_owner, seeded_snapshot)) {
         return fail("seeded snapshot unreadable after assembly");
     }
@@ -798,7 +798,7 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
         auto* reconnect_for_sweep = impl.reconnect.get();
         const auto& local_for_sweep = impl.assembly_report.local_device_id;
         impl.reconnect_sweep =
-            impl.executor_owner.executor().submit_periodic_with_handle(5000,
+            impl.executor_owner.executor().submit_periodic(5000,
                 [owner_for_sweep, node_for_sweep, reconnect_for_sweep,
                     &local_for_sweep, &sweep_mutex = impl.reconnect_sweep_mutex,
                     &sweep_stopped = impl.reconnect_sweep_stopped] {
@@ -806,7 +806,7 @@ const HostAssemblyReport& HostRuntime::ensure_assembled(std::string data_root,
                     if (sweep_stopped) {
                         return;
                     }
-                    executor::comm::Snapshot<AppState> snapshot;
+                    kairo::comm::Snapshot<AppState> snapshot;
                     if (!owner_for_sweep->try_load_snapshot(snapshot)) {
                         return;
                     }
@@ -1039,7 +1039,7 @@ bool HostRuntime::remove_relay(std::string& error) {
     }
     // 状态推进（同步——本地 profile 写，无网络面）：enrolled=false 保留
     // URL/租户上下文；运行中连接至重启保持（决策 4，设置页披露）。
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     RelayStatus status;
     if (impl_->state_owner->try_load_snapshot(snapshot)
         && snapshot.value.relay.has_value()) {
@@ -1191,7 +1191,7 @@ bool HostRuntime::load_state_snapshot(AppState& out) const {
     if (!impl_->assembled) {
         return false;
     }
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     if (!load_snapshot(*impl_->state_owner, snapshot)) {
         return false;
     }
@@ -1240,7 +1240,7 @@ const HostShutdownReport& HostRuntime::shutdown_with_report() {
             impl.reconnect_sweep_stopped = true;
             if (impl.reconnect_sweep.valid()) {
                 (void)impl.reconnect_sweep.cancel();
-                impl.reconnect_sweep = executor::TimerHandle{};
+                impl.reconnect_sweep = kairo::TimerHandle{};
             }
         }
         report.transfers_cancelled = true;
@@ -1353,7 +1353,7 @@ const HostShutdownReport& HostRuntime::last_shutdown_report() const noexcept {
     return impl_->shutdown_report;
 }
 
-executor::Executor& HostRuntime::executor() {
+kairo::Executor& HostRuntime::executor() {
     return impl_->executor_owner.executor();
 }
 

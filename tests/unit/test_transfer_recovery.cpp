@@ -327,7 +327,7 @@ TEST_CASE("Seeded Paused rows resume via wire progress and cancel terminates "
     REQUIRE(adapter.inject_transfer_progress(TransferId{"t-seed"}, 16, 40));
     settle();
     {
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         REQUIRE(state_owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.front().state
             == TransferState::Transferring);
@@ -338,7 +338,7 @@ TEST_CASE("Seeded Paused rows resume via wire progress and cancel terminates "
     REQUIRE(transfers.cancel_transfer(TransferId{"t-seed"}));
     settle();
     {
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         REQUIRE(state_owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.front().state
             == TransferState::Cancelled);
@@ -515,14 +515,14 @@ TEST_CASE("Full-chain combo: archive, image message, receive merge, "
 
     auto io_runnable =
         std::make_unique<aki::persistence::TransferIoRunnable>(io->impl());
-    executor::BlockingWorkerSpec io_spec;
+    kairo::BlockingWorkerSpec io_spec;
     io_spec.name = "aki.transfer-io";
     io_spec.config.thread_name = "aki-transfer-io";
     io_spec.worker = std::move(io_runnable);
     REQUIRE(host.start_blocking_worker(std::move(io_spec)));
     auto db_runnable =
         std::make_unique<aki::persistence::DatabaseWorkerRunnable>(db);
-    executor::BlockingWorkerSpec db_spec;
+    kairo::BlockingWorkerSpec db_spec;
     db_spec.name = "aki.db-worker";
     db_spec.config.thread_name = "aki-db-worker";
     db_spec.worker = std::move(db_runnable);
@@ -552,7 +552,7 @@ TEST_CASE("Full-chain combo: archive, image message, receive merge, "
         (void)transfers.flush(100ms);
         (void)messages.flush(100ms);
         state_owner.drain();
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         if (!state_owner.try_load_snapshot(snapshot)) {
             return false;
         }
@@ -575,7 +575,7 @@ TEST_CASE("Full-chain combo: archive, image message, receive merge, "
     REQUIRE(got_hash == expected_hash);
     REQUIRE(wait_until([&] {
         state_owner.drain();
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         if (!state_owner.try_load_snapshot(snapshot)) {
             return false;
         }
@@ -613,7 +613,7 @@ TEST_CASE("Full-chain combo: archive, image message, receive merge, "
     REQUIRE(wait_until([&] {
         (void)transfers.flush(100ms);
         state_owner.drain();
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         if (!state_owner.try_load_snapshot(snapshot)) {
             return false;
         }

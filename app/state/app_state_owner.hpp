@@ -1,6 +1,6 @@
 // Application State 单写者 owner（设计第 10/10.1 节，EXEC-03，DEC-002）。
 //
-// 跨上下文交付到 pinned executor `executor::comm` 组件的映射：
+// 跨上下文交付到 pinned executor `kairo::comm` 组件的映射：
 //   - Manager -> owner 更新汇聚：MpscChannel<AppStateUpdate>（有界，满即拒绝）
 //   - Manager -> owner 事件入口：MpscChannel<AppEvent>（有界，满即拒绝）
 //   - owner -> 渲染侧一致快照：DoubleBuffer<AppState>（SWMR，单写者硬契约）
@@ -22,11 +22,11 @@
 #include "app/state/app_state.hpp"
 #include "app/state/app_state_updates.hpp"
 
-#include <executor/comm/channel.hpp>
-#include <executor/comm/double_buffer.hpp>
-#include <executor/comm/mailbox.hpp>
-#include <executor/comm/topic.hpp>
-#include <executor/comm/types.hpp>
+#include <kairo/comm/channel.hpp>
+#include <kairo/comm/double_buffer.hpp>
+#include <kairo/comm/mailbox.hpp>
+#include <kairo/comm/topic.hpp>
+#include <kairo/comm/types.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -105,13 +105,13 @@ public:
           limits_(options_.limits),
           snapshot_(std::move(initial), options_.name + ".snapshot"),
           current_(snapshot_.load().value),
-          updates_(executor::comm::ChannelOptions{.capacity = options_.update_capacity,
+          updates_(kairo::comm::ChannelOptions{.capacity = options_.update_capacity,
               .enable_stats = true,
               .name = options_.name + ".updates"}),
-          event_inbox_(executor::comm::ChannelOptions{.capacity = options_.event_inbox_capacity,
+          event_inbox_(kairo::comm::ChannelOptions{.capacity = options_.event_inbox_capacity,
               .enable_stats = true,
               .name = options_.name + ".event_inbox"}),
-          event_outbox_(executor::comm::ChannelOptions{.capacity = options_.event_outbox_capacity,
+          event_outbox_(kairo::comm::ChannelOptions{.capacity = options_.event_outbox_capacity,
               .enable_stats = true,
               .name = options_.name + ".event_outbox"}),
           observers_(options_.name + ".observers"),
@@ -131,7 +131,7 @@ public:
 
     // 满载时的有界等待投递适配（非实时；超时/关闭均为明确结果，不静默重试）。
     template <class Rep, class Period>
-    [[nodiscard]] executor::comm::CommResult submit_update_for(
+    [[nodiscard]] kairo::comm::CommResult submit_update_for(
         AppStateUpdate update, std::chrono::duration<Rep, Period> timeout) {
         auto result = updates_.send_for(std::move(update), timeout);
         if (result.ok) {
@@ -185,12 +185,12 @@ public:
 
     // DoubleBuffer 一致快照：try_load 失败（槽位忙）可重试；消费侧应保存
     // sequence 并用 load_snapshot_newer_than 去重，避免重复消费同一快照。
-    [[nodiscard]] bool try_load_snapshot(executor::comm::Snapshot<AppState>& out) const {
+    [[nodiscard]] bool try_load_snapshot(kairo::comm::Snapshot<AppState>& out) const {
         return snapshot_.try_load(out);
     }
 
     [[nodiscard]] bool load_snapshot_newer_than(
-        std::uint64_t last_seen_sequence, executor::comm::Snapshot<AppState>& out) const {
+        std::uint64_t last_seen_sequence, kairo::comm::Snapshot<AppState>& out) const {
         return snapshot_.load_newer_than(last_seen_sequence, out);
     }
 
@@ -205,7 +205,7 @@ public:
     }
 
     template <class Rep, class Period>
-    [[nodiscard]] executor::comm::CommResult receive_event_for(
+    [[nodiscard]] kairo::comm::CommResult receive_event_for(
         AppEvent& out, std::chrono::duration<Rep, Period> timeout) {
         return event_outbox_.receive_for(out, timeout);
     }
@@ -216,20 +216,20 @@ public:
 
     // best-effort 观察者订阅：只收到订阅创建之后的发布，无重放；
     // 慢订阅者按自身 DropPolicy 被拒，不影响其他订阅者。
-    [[nodiscard]] executor::comm::TopicSubscription<AppEventPtr> subscribe_observer(
-        executor::comm::TopicSubscriptionOptions options = {}) {
+    [[nodiscard]] kairo::comm::TopicSubscription<AppEventPtr> subscribe_observer(
+        kairo::comm::TopicSubscriptionOptions options = {}) {
         return observers_.subscribe(std::move(options));
     }
 
     // ---- 可观测性（EXEC-06；stats 仅 owner 上下文读取）----
     [[nodiscard]] const AppStateOwnerStats& stats() const noexcept { return stats_; }
-    [[nodiscard]] executor::comm::CommStats update_channel_stats() const noexcept {
+    [[nodiscard]] kairo::comm::CommStats update_channel_stats() const noexcept {
         return updates_.stats();
     }
-    [[nodiscard]] executor::comm::CommStats event_inbox_stats() const noexcept {
+    [[nodiscard]] kairo::comm::CommStats event_inbox_stats() const noexcept {
         return event_inbox_.stats();
     }
-    [[nodiscard]] executor::comm::CommStats event_outbox_stats() const noexcept {
+    [[nodiscard]] kairo::comm::CommStats event_outbox_stats() const noexcept {
         return event_outbox_.stats();
     }
 
@@ -724,12 +724,12 @@ private:
 
     Options options_;
     AppStateLimits limits_;
-    executor::comm::DoubleBuffer<AppState> snapshot_;
+    kairo::comm::DoubleBuffer<AppState> snapshot_;
     AppState current_;  // 仅 owner 上下文访问的合成中的状态。
-    executor::comm::MpscChannel<AppStateUpdate> updates_;
-    executor::comm::MpscChannel<AppEvent> event_inbox_;
-    executor::comm::MpscChannel<AppEvent> event_outbox_;
-    executor::comm::Topic<AppEventPtr> observers_;
+    kairo::comm::MpscChannel<AppStateUpdate> updates_;
+    kairo::comm::MpscChannel<AppEvent> event_inbox_;
+    kairo::comm::MpscChannel<AppEvent> event_outbox_;
+    kairo::comm::Topic<AppEventPtr> observers_;
     PostAcceptHandler post_accept_;  // 仅 owner 上下文调用（DEC-009）。
     AppStateOwnerStats stats_;
     std::uint64_t next_event_sequence_ = 1;

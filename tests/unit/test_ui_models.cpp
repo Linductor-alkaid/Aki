@@ -558,7 +558,7 @@ TEST_CASE("on_publish fires after publish; throwing hook stays contained",
     REQUIRE(throwing_owner.submit_update(UpsertDevice{make_device("beta")}));
     throwing_owner.drain();  // 异常不得逃逸 drain。
     REQUIRE(throwing_owner.stats().publish_hook_failures == 1);
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     int attempts = 0;
     while (!throwing_owner.try_load_snapshot(snapshot) && attempts < 64) {
         ++attempts;

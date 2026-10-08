@@ -228,3 +228,16 @@ build；最终二进制单份 sqlite3 符号与有效版本（dumpbin/nm）；bo
 单图只编译一份 Executor、唯一外部 owner 与 borrowed Runtime 契约不变。
 版本差异与实际门禁见 [M5-43](../plans/m5-eui-neo-ui-mvp.md) 和
 [升级审计](../supply-chain/heyaki-file-cancel-reentry.md)。
+
+## 2026-10-08：M8-07 同步依赖升级
+
+Heyaki 7e9758a → 1b0447b（v1.2.0-13-g1b0447b）：relay 密码准入 + `--init`
+（heyaki #22）、运行期 relay enrollment 更新 `Node::update_relay_config`
+（#19）、enrollment WSS 客户端借用 Runtime（#20）、控制面下发短时效
+TURN/ICE 凭据（1b0447b）、PairingService 计数器同步（#21）。Executor 随
+heyaki lock 同步 v0.6.0（更名 kairo，Aki 第一方全量迁移）。DEC-006 既有
+冻结面（只链 heyaki::client、单图单 kairo、borrowed Runtime、wire {1,3}）
+不变；新增公开能力（`RelayEnrollmentCredential`、`RelayNodeSnapshot`
+ICE 计数器、`merge_relay_ice_servers`）的消费按 DEC-028 决策 11 阶段 2/3
+分阶段接入，不随升级一并实现。审计与门禁证据见
+[升级审计](../supply-chain/heyaki-1b0447b-relay-upgrade.md)。

@@ -26,8 +26,8 @@
 #include "persistence/repository/repositories.hpp"
 #include "persistence/repository/update_jobs.hpp"
 
-#include <executor/comm/types.hpp>
-#include <executor/executor.hpp>
+#include <kairo/comm/types.hpp>
+#include <kairo/executor.hpp>
 
 #include <catch2/catch_session.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -48,7 +48,7 @@
 
 namespace {
 
-executor::Executor* g_test_executor = nullptr;
+kairo::Executor* g_test_executor = nullptr;
 
 }  // namespace
 
@@ -56,11 +56,11 @@ namespace aki::test {
 
 // 本进程唯一 Executor owner 是 main()（见文件末尾）；用例经此获取执行上下文。
 // AGENTS.md 规则 7/8：owner 显式、传递显式，不隐藏生命周期。
-[[nodiscard]] executor::Executor& executor() {
+[[nodiscard]] kairo::Executor& executor() {
     return *g_test_executor;
 }
 
-void use_executor(executor::Executor& executor) {
+void use_executor(kairo::Executor& executor) {
     g_test_executor = &executor;
 }
 
@@ -206,7 +206,7 @@ TEST_CASE("Single-writer drain publishes one consistent snapshot per batch",
 
     owner.drain();
 
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.sequence > before);
     REQUIRE(snapshot.value.devices.devices.size() == 2);
@@ -216,7 +216,7 @@ TEST_CASE("Single-writer drain publishes one consistent snapshot per batch",
     REQUIRE(owner.stats().updates_rejected == 0);
 
     // sequence 去重：load_newer_than 对旧序列取到新快照，对最新序列返回 false。
-    executor::comm::Snapshot<AppState> newer;
+    kairo::comm::Snapshot<AppState> newer;
     REQUIRE(owner.load_snapshot_newer_than(before, newer));
     REQUIRE(newer.sequence == snapshot.sequence);
     REQUIRE_FALSE(owner.load_snapshot_newer_than(snapshot.sequence, newer));
@@ -252,7 +252,7 @@ TEST_CASE("Per-device connection path upserts, idempotence and rejection",
     REQUIRE(owner.stats().snapshots_published == published_before);
 
     // 逐设备取值：按设备键 join 后为最新值。
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.devices.connection_paths.size() == 1);
     REQUIRE(snapshot.value.devices.connection_paths[0].device.value
@@ -281,7 +281,7 @@ TEST_CASE("SetDeviceInboundTrust applies field-level, is idempotent and rejects 
     REQUIRE(owner.submit_update(
         aki::app::SetDeviceInboundTrust{DeviceId{"local"}, true}));
     owner.drain();
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.devices.devices.front().inbound_trust);
 
@@ -320,9 +320,9 @@ TEST_CASE("Topic fans out events in order and makes rejection visible",
     AppStateOwner owner;
 
     auto observer_a = owner.subscribe_observer(
-        executor::comm::TopicSubscriptionOptions{.capacity = 8, .name = "obs-a"});
+        kairo::comm::TopicSubscriptionOptions{.capacity = 8, .name = "obs-a"});
     auto observer_b = owner.subscribe_observer(
-        executor::comm::TopicSubscriptionOptions{.capacity = 8, .name = "obs-b"});
+        kairo::comm::TopicSubscriptionOptions{.capacity = 8, .name = "obs-b"});
 
     for (std::uint64_t marker = 1; marker <= 3; ++marker) {
         REQUIRE(owner.post_event(make_text_event(marker)));
@@ -354,7 +354,7 @@ TEST_CASE("Topic fans out events in order and makes rejection visible",
     // 慢订阅者（capacity=1, RejectNewest）：自己的队列被拒，不影响他人，
     // 拒绝计入 owner 统计（RULE-09 / EXEC-06）。
     auto observer_c = owner.subscribe_observer(
-        executor::comm::TopicSubscriptionOptions{.capacity = 1, .name = "obs-c"});
+        kairo::comm::TopicSubscriptionOptions{.capacity = 1, .name = "obs-c"});
     REQUIRE(owner.post_event(make_text_event(4)));
     REQUIRE(owner.post_event(make_text_event(5)));
     owner.drain();
@@ -368,7 +368,7 @@ TEST_CASE("Topic fans out events in order and makes rejection visible",
 
     // 无重放：新订阅者只收创建之后的发布。
     auto observer_d = owner.subscribe_observer(
-        executor::comm::TopicSubscriptionOptions{.capacity = 8, .name = "obs-d"});
+        kairo::comm::TopicSubscriptionOptions{.capacity = 8, .name = "obs-d"});
     aki::app::AppEventPtr replay;
     REQUIRE_FALSE(observer_d.try_receive(replay));
 }
@@ -388,7 +388,7 @@ TEST_CASE("DOD-02 normal completion: update flows through executor tasks to snap
     });
     REQUIRE(applied.get() == 1);
 
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.devices.devices.size() == 1);
     REQUIRE(snapshot.value.devices.devices.front().id == DeviceId{"dev-ok"});
@@ -413,7 +413,7 @@ TEST_CASE("DOD-02 task exception: visible to caller, admitted work survives",
 
     // admission 与执行分离：已入队的更新不因任务崩溃丢失，异常也不被吞掉。
     owner.drain();
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.devices.devices.size() == 1);
 }
@@ -463,7 +463,7 @@ TEST_CASE("DOD-02 in-flight cancellation: close releases a waiting consumer",
 
     const auto result = consumer.get();
     REQUIRE_FALSE(result.ok);
-    REQUIRE(result.error_code == executor::comm::CommErrorCode::Closed);
+    REQUIRE(result.error_code == kairo::comm::CommErrorCode::Closed);
 }
 
 TEST_CASE("DOD-02 timeout: empty outbox and full inbox return explicit Timeout",
@@ -473,14 +473,14 @@ TEST_CASE("DOD-02 timeout: empty outbox and full inbox return explicit Timeout",
     AppEvent event;
     const auto receive = owner.receive_event_for(event, 20ms);
     REQUIRE_FALSE(receive.ok);
-    REQUIRE(receive.error_code == executor::comm::CommErrorCode::Timeout);
+    REQUIRE(receive.error_code == kairo::comm::CommErrorCode::Timeout);
     REQUIRE(owner.event_outbox_stats().timeout_count == 1);
 
     // 满队列上的有界等待发送同样超时可见。
     REQUIRE(owner.submit_update(UpsertDevice{make_device("dev-1")}));
     const auto send = owner.submit_update_for(UpsertDevice{make_device("dev-2")}, 20ms);
     REQUIRE_FALSE(send.ok);
-    REQUIRE(send.error_code == executor::comm::CommErrorCode::Timeout);
+    REQUIRE(send.error_code == kairo::comm::CommErrorCode::Timeout);
     REQUIRE(owner.update_channel_stats().timeout_count == 1);
 }
 
@@ -507,7 +507,7 @@ TEST_CASE("DOD-02 shutdown: close drains backlog, rejects new work, state readab
     REQUIRE(owner.stats().updates_applied == 2);
 
     // 末次快照仍可读。
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.devices.devices.size() == 2);
     REQUIRE(snapshot.value.devices.devices.back().trust_state == TrustState::Trusted);
@@ -520,7 +520,7 @@ TEST_CASE("DOD-02 shutdown: close drains backlog, rejects new work, state readab
     REQUIRE(event.sequence == 2);
     const auto after_drain = owner.receive_event_for(event, 20ms);
     REQUIRE_FALSE(after_drain.ok);
-    REQUIRE(after_drain.error_code == executor::comm::CommErrorCode::Closed);
+    REQUIRE(after_drain.error_code == kairo::comm::CommErrorCode::Closed);
 
     // 关闭后的订阅返回已关闭句柄；重复 close 幂等。
     auto late_observer = owner.subscribe_observer();
@@ -547,7 +547,7 @@ TEST_CASE("Late events cannot revive terminal entities (RULE-08)",
             TransferState::Transferring, 9)}));
         owner.drain();
 
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         const auto& transfers = snapshot.value.transfers.transfers;
         REQUIRE(transfers.size() == 1);
@@ -574,7 +574,7 @@ TEST_CASE("Late events cannot revive terminal entities (RULE-08)",
         owner.drain();
         REQUIRE(owner.stats().updates_rejected >= 1);
 
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.messages.messages.front().state == DeliveryState::Failed);
         REQUIRE(owner.stats().updates_applied == 4);
@@ -587,7 +587,7 @@ TEST_CASE("Late events cannot revive terminal entities (RULE-08)",
         REQUIRE(owner.submit_update(UpsertDevice{make_device("d-1", TrustState::Trusted)}));
         owner.drain();
 
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.front().trust_state == TrustState::Revoked);
         REQUIRE(owner.stats().updates_rejected == 1);
@@ -602,7 +602,7 @@ TEST_CASE("Late events cannot revive terminal entities (RULE-08)",
             ConversationState::Active)}));
         owner.drain();
 
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.conversations.conversations.front().state
             == ConversationState::Archived);
@@ -620,7 +620,7 @@ TEST_CASE("Store capacity limits reject overflow explicitly (RULE-09)",
 
     REQUIRE(owner.stats().updates_applied == 1);
     REQUIRE(owner.stats().updates_rejected == 1);
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.devices.devices.size() == 1);
 }
@@ -651,7 +651,7 @@ TEST_CASE("Concurrent producers converge through the single writer without loss"
     auto reader = executor.submit_auto([&owner, &stop_readers, &reader_started] {
         reader_started.store(true, std::memory_order_release);
         ReaderResult result;
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         while (!stop_readers.load() && result.loads < 100000) {
             if (owner.try_load_snapshot(snapshot)) {
                 if (snapshot.sequence < result.last_sequence) {
@@ -705,7 +705,7 @@ TEST_CASE("Concurrent producers converge through the single writer without loss"
     REQUIRE(owner.stats().updates_applied == kProducers * kUpdatesPerProducer);
     REQUIRE(owner.stats().updates_rejected == 0);
 
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.devices.devices.size() == kProducers * kUpdatesPerProducer);
 }
@@ -833,7 +833,7 @@ TEST_CASE("Idempotent no-op acceptance enqueues and is absorbed by the job",
     REQUIRE(owner_executor.initialize());
     auto runnable = std::make_unique<aki::persistence::DatabaseWorkerRunnable>(
         control);
-    executor::BlockingWorkerSpec worker_spec;
+    kairo::BlockingWorkerSpec worker_spec;
     worker_spec.name = "aki.db-worker";
     worker_spec.config.thread_name = "aki-db-worker";
     worker_spec.worker = std::move(runnable);
@@ -894,10 +894,10 @@ int main(int argc, char* argv[]) {
     // owner 纪律落点说明（设计第 8.2 节）：此处的裸 Executor 实例是 M1-02 落地时
     // 的测试形态——正式 owner 为 app/lifecycle 的 ExecutorOwner（M1-04 已交付，
     // 见 test_executor_lifecycle）；自 M1-06 冒烟宿主起进程内改用 ExecutorOwner。
-    executor::Executor executor;
-    const auto initialized = executor.initialize_ex({});
+    kairo::Executor executor;
+    const auto initialized = executor.initialize({});
     if (!initialized.ok) {
-        std::fputs("executor initialize_ex failed\n", stderr);
+        std::fputs("executor initialize failed\n", stderr);
         return 1;
     }
     aki::test::use_executor(executor);
@@ -918,7 +918,7 @@ TEST_CASE("Local archives publish only for completed transfers and remain immuta
     aki::app::LocalTransferArtifact file{{"ready"}, "files/ready/photo.png", std::string(64, 'a'), 3};
     REQUIRE(owner.submit_update(aki::app::SetLocalTransferArtifact{file}));
     owner.drain();
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.load_snapshot_newer_than(before, snapshot));
     REQUIRE(snapshot.value.transfers.local_artifacts.size() == 1);
     REQUIRE(snapshot.value.transfers.local_artifacts[0].available);
@@ -942,7 +942,7 @@ TEST_CASE("Local archives publish only for completed transfers and remain immuta
     REQUIRE_FALSE(snapshot.value.transfers.local_artifacts[0].available);
     owner.close();
     const auto closed = owner.submit_update_for(aki::app::SetLocalTransferArtifact{file}, 0ms);
-    REQUIRE(closed.error_code == executor::comm::CommErrorCode::Closed);
+    REQUIRE(closed.error_code == kairo::comm::CommErrorCode::Closed);
 }
 
 TEST_CASE("Archive failure and successful replay use the bounded update channel",
@@ -954,7 +954,7 @@ TEST_CASE("Archive failure and successful replay use the bounded update channel"
     const auto full = owner.submit_update_for(aki::app::SetLocalTransferArtifactFailure{{"retry"}, "more"}, 0ms);
     REQUIRE_FALSE(full.ok);
     owner.drain();
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.transfers.local_artifacts[0].error == "disk full");
     REQUIRE(owner.submit_update(aki::app::SetLocalTransferArtifact{{{"retry"},
@@ -978,7 +978,7 @@ TEST_CASE("Local chat preferences survive connection updates and reveal atomical
         owner.drain();
     };
     const auto current = [&] {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         return snapshot.value;
     };
@@ -1014,7 +1014,7 @@ TEST_CASE("Local chat preferences survive connection updates and reveal atomical
     AppStateOwner accepting{AppStateOwnerOptions{}, hidden_seed};
     REQUIRE(accepting.submit_update(UpsertMessage{inbound, id}));
     accepting.drain();
-    executor::comm::Snapshot<AppState> restored;
+    kairo::comm::Snapshot<AppState> restored;
     REQUIRE(accepting.try_load_snapshot(restored));
     REQUIRE_FALSE(restored.value.conversations.conversations[0].hidden);
     REQUIRE(restored.value.messages.messages.size() == 1);
@@ -1031,7 +1031,7 @@ TEST_CASE("SetRelayStatus replaces wholesale, is idempotent and starts unset",
 
     // 初始：未注册 = 缺省展示（nullopt）。
     owner.drain();
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE_FALSE(snapshot.value.relay.has_value());
 

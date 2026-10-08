@@ -1,7 +1,7 @@
 # Heyaki 能力反馈台账
 
 > 状态：Active
-> 更新日期：2026-10-07
+> 更新日期：2026-10-08
 
 ## HEY-20260929-001：受限会话由接收方直接批准
 
@@ -175,8 +175,11 @@ paused=1 / linked=0，是上游明确保留的“拒绝后后续 push 破坏会�
 
 ## HEY-20261002-001：策略拒绝后再次推送破坏会话
 
-- 状态 Reported：[Heyaki #15](https://github.com/Linductor-alkaid/heyaki/issues/15)，
-  上游 #14 已提及但此前未独立跟踪。关联 M5-34；负责人 Linductor。
+- 状态：上游已修复关闭（[Heyaki #15](https://github.com/Linductor-alkaid/heyaki/issues/15)
+  closed 2026-10-07；修复提交 176db92「会话结束后 parked transfer 保持
+  可见可取消」随 Aki pin 1b0447b 进入构建）。Aki 侧复验（拒绝后续推送
+  不破坏健康会话、双端策略矩阵）未随上游关闭执行，待 M5-34 按补跑条件
+  复跑。关联 M5-34；负责人 Linductor。
 - 516815c / Ubuntu 24.04 / GCC 13 / Aki ASAN；fresh profiles、零 grant、
   单 Executor / 两 borrowed Runtime。A basic=true，B=false；文本 TTL 拒绝
   后 A 的文件 push 被接纳，随后 offered→paused，会话快照最终断连。
@@ -238,8 +241,11 @@ HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保
 
 ## HEY-20261006-001：Node 运行期不可启用或更新 relay enrollment
 
-- **状态**：已核对 pinned API 与实现，未修改依赖；已提交
-  [Heyaki #19](https://github.com/Linductor-alkaid/heyaki/issues/19)；
+- **状态**：上游能力已落地（[Heyaki #19](https://github.com/Linductor-alkaid/heyaki/issues/19)
+  closed 2026-10-07；`Node::update_relay_config(std::optional<RelayNodeConfig>)`
+  公开 API，提交 82147d5），随 Aki pin 1b0447b 进入构建图。Aki 接入
+  （HostRuntime 热生效 + 注册/移除/失败/恢复测试 + DEC-028 决策 3 修订）
+  立为独立工作项；完成前本条保持未关闭。
   关联 [DEC-028](../decisions/DEC-028-relay-cross-subnet.md) 决策 3。
 - **可复现证据**：relay enrollment 只在 `Node::create` 的
   `initialize_relay()`（`third_party/heyaki/src/client/node.cpp:1011/1102`）
@@ -264,10 +270,12 @@ HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保
 
 ## HEY-20261006-002：relay enrollment WSS 客户端无法借用宿主 executor
 
-- **状态**：已核对 pinned 实现并登记（M7 端到端验证发现，Independent
-  验证报告 2026-10-06）；已提交
-  [Heyaki #20](https://github.com/Linductor-alkaid/heyaki/issues/20)；
-  未修改依赖。
+- **状态**：上游能力已落地（[Heyaki #20](https://github.com/Linductor-alkaid/heyaki/issues/20)
+  closed 2026-10-07；`RelayEnrollmentWssTransportConfig.runtime_borrowed`
+  借用注入，提交 d5be571），随 Aki pin 1b0447b 进入构建图。Aki 切换
+  借用形式并补关闭竞争测试（enroll 在途时 shutdown）随 M8-04 执行；
+  完成前本条保持未关闭（M7 端到端验证发现，Independent 验证报告
+  2026-10-06；未修改依赖）。
 - **可复现证据**：`RelayEnrollmentWssTransportConfig`
   （`include/heyaki/relay_enrollment_client.hpp:34-43`）无 Runtime/executor
   注入字段；`make_relay_enrollment_wss_exchange` 经 `RelayWssClient::create`
@@ -292,9 +300,11 @@ HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保
 
 ## HEY-20261006-003：PairingService 审计计数器跨线程无同步
 
-- **状态**：已抑制收口（tsan-suppressions.supp，沿 M3-06 usrsctp 先例）；
-  已提交 [Heyaki #21](https://github.com/Linductor-alkaid/heyaki/issues/21)；
-  未修改依赖；待上游修复后移除抑制并复跑 tsan。
+- **状态**：上游已修复（[Heyaki #21](https://github.com/Linductor-alkaid/heyaki/issues/21)
+  closed 2026-10-07；提交 ab6418c 计数器跨线程同步），随 Aki pin 1b0447b
+  进入构建。Aki 抑制表条目已移除（2026-10-08，cmake/tsan-suppressions.supp）；
+  tsan 门禁复跑证据见 M8-07 验证记录（本升级 MR 的 CI tsan job），
+  全绿后本条置 Resolved。
 - **可复现证据**：[PR #70](https://github.com/Linductor-alkaid/Aki/pull/70)
   CI run 37504293005 tsan job 112408875988，test_host_runtime（184 断言
   全过）后 TSAN 报 1 处 data race：主线程
@@ -318,9 +328,14 @@ HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保
 
 ## HEY-20261007-001：relay 密码准入与 `--init` 引导（Aki 侧需求）
 
-- **状态**：待上游能力设计（[DEC-028](../decisions/DEC-028-relay-cross-subnet.md)
-  决策 11 阶段 2 前置）；heyaki 侧 issue 待提交（独立管理上游，需用户
-  授权后建并回填链接）；未修改 pinned 依赖。
+- **状态**：上游已实现（[Heyaki #22](https://github.com/Linductor-alkaid/heyaki/issues/22)
+  closed 2026-10-07；提交 3763dfd 及收尾修复 51338f6/82f10e6/1a2acdd/
+  d869bb6/482ff8a/7dcf115——`enrollment_mode = token|password|closed`、
+  `enrollment_default_tenant`、`RelayEnrollmentCredential`（token|password）、
+  Argon2id 挑战绑定证明、`EnrollmentResult` 回传 relay leaf 证书 SHA-256、
+  `--init` 首跑引导），随 Aki pin 1b0447b 进入构建图。Aki 接入 = M8-04
+  （[DEC-028](../decisions/DEC-028-relay-cross-subnet.md) 决策 11 阶段 2），
+  完成前本条保持未关闭。
 - **用户需求**：机主在 relay 首次运行时设置一个密码即完成服务端配置
   （对应上游 `heyaki-relay --init` 引导提案）；用户侧只凭「中继地址 +
   密码」完成注册——租户、bootstrap token、证书文件退出用户视野
@@ -347,8 +362,13 @@ HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保
 
 ## HEY-20261007-002：relay 登录后下发短时效 TURN/ICE 配置（Aki 侧需求）
 
-- **状态**：待上游能力设计（DEC-028 决策 11 阶段 3 前置）；heyaki 侧
-  issue 待提交（同上）；未修改 pinned 依赖。
+- **状态**：上游已实现（提交 1b0447b：relay_ice_config_v1 经
+  login_result/heartbeat_ack 下发短时效 TURN 凭据；`RelayNodeSnapshot`
+  计数器 `ice_config_updates/rejected/servers_active/expires_unix_seconds`
+  ——凭据材料不进快照；公开 `merge_relay_ice_servers` 合并/过期剔除/
+  8 服务器上限），随 Aki pin 1b0447b 进入构建图；无独立 heyaki issue
+  （随 #22 接入卡/TURN 密钥衔接落地）。Aki 接入 = M8-05（DEC-028 决策 11
+  阶段 3），完成前本条保持未关闭。
 - **用户需求**：跨网段打洞失败自动走 TURN 兜底，用户不配置 TURN
   host/port/username/credential；凭据短时效（coturn use-auth-secret /
   REST HMAC 同型），不手工造静态长期凭据。

@@ -78,7 +78,7 @@ struct TrustStack {
     }
 
     [[nodiscard]] aki::device::TrustState trust_of(const std::string& id) {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         int attempts = 0;
         while (!state.try_load_snapshot(snapshot) && attempts < 64) {
             ++attempts;
@@ -94,7 +94,7 @@ struct TrustStack {
 
     // 对向信任（DEC-021）：快照中该行的 inbound_trust；无行 = false。
     [[nodiscard]] bool inbound_of(const std::string& id) {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         int attempts = 0;
         while (!state.try_load_snapshot(snapshot) && attempts < 64) {
             ++attempts;
@@ -109,7 +109,7 @@ struct TrustStack {
     }
 
     [[nodiscard]] aki::device::ConnectionPath path_of(const std::string& id) {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(state.try_load_snapshot(snapshot));
         for (const auto& entry : snapshot.value.devices.connection_paths) {
             if (entry.device.value == id) {
@@ -142,7 +142,7 @@ TEST_CASE("Pairing completion routes to trust transitions (Pending edges)",
         aki::device::DeviceId{"beta"}, false, "password mismatch"));
     stack.settle();
     REQUIRE(stack.trust_of("beta") == aki::device::TrustState::Pending);
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(stack.state.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.devices.pairing_failures.size() == 2);
     REQUIRE(snapshot.value.devices.pairing_failures.back().device.value
@@ -277,7 +277,7 @@ TEST_CASE("Incoming restricted session is confirmable without starting scan",
     stack.settle();
     REQUIRE(stack.trust_of("incoming-peer")
         == aki::device::TrustState::Pending);
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(stack.state.try_load_snapshot(snapshot));
     const auto views = aki::ui::models::derive_device_views(
         snapshot.value.devices);
@@ -299,7 +299,7 @@ TEST_CASE("Adapter pairing rejection is visible after UI queue admission",
     stack.settle();
     REQUIRE(stack.devices.stats().handler_rejections == rejected_before + 1);
     REQUIRE(stack.trust_of("alpha") == aki::device::TrustState::Pending);
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(stack.state.try_load_snapshot(snapshot));
     const auto views = aki::ui::models::derive_device_views(snapshot.value.devices);
     REQUIRE(views.size() == 1);

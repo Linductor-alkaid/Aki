@@ -73,7 +73,7 @@ TEST_CASE("UiActions route page operations through Manager pumps to the SPI",
     REQUIRE(stack.actions.ensure_conversation(
         aki::device::DeviceId{"local"}, aki::device::DeviceId{"alpha"}));
     stack.quiesce();
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     int attempts = 0;
     while (!stack.state.try_load_snapshot(snapshot) && attempts < 64) {
         ++attempts;
@@ -228,7 +228,7 @@ TEST_CASE("Chat actions preserve hidden history and only new inbound messages re
     stack.quiesce();
     REQUIRE(stack.actions.set_conversation_pinned(id, true));
     stack.quiesce();
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(stack.state.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.conversations.conversations[0].pinned);
     REQUIRE(stack.actions.hide_conversation(id));

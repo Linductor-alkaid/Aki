@@ -138,7 +138,7 @@ TEST_CASE("Full closure over the real adapter SPI: pair, text, recover",
     REQUIRE(recovery.state.devices.empty());
     auto control = std::make_shared<DatabaseWorkerControl>(
         std::move(recovery.repositories));
-    executor::BlockingWorkerSpec worker_spec;
+    kairo::BlockingWorkerSpec worker_spec;
     worker_spec.name = "aki.db-worker";
     worker_spec.config.thread_name = "aki-db-worker";
     worker_spec.worker =

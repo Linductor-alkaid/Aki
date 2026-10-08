@@ -12,7 +12,7 @@
 //     完成/失败/拒绝计数（EXEC-06）。对象由宿主持有（shared_ptr 语义由
 //     调用方管理），生命周期覆盖注册→运行→关闭全过程。
 //   - DatabaseWorkerRunnable（database_worker_adapter.hpp）：实现
-//     executor::IBlockingIoWorker，单一 Database 连接独占 + 串行消费作业
+//     kairo::IBlockingIoWorker，单一 Database 连接独占 + 串行消费作业
 //     （消费 M2-04 仓储层），经宿主 `ExecutorOwner::start_blocking_worker`
 //     注册（EXEC-07：WorkerHandle 归 owner）。
 //

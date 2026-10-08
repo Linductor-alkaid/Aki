@@ -21,4 +21,4 @@ target_include_directories(aki_persistence PUBLIC ${PROJECT_SOURCE_DIR})
 # sqlite3 与 executor 均为 PRIVATE：两者类型都封死在本层（RULE-10；消费者
 # 经公开头只见领域/std 类型；注册侧接线头 database_worker_adapter.hpp 的
 # executor 依赖由测试/宿主目标各自链接 executor 提供）。
-target_link_libraries(aki_persistence PRIVATE sqlite3 executor::executor)
+target_link_libraries(aki_persistence PRIVATE sqlite3 kairo::kairo)

@@ -40,7 +40,7 @@
 
 #include "conversation/codec/image_payload_codec.hpp"
 
-#include <executor/executor.hpp>
+#include <kairo/executor.hpp>
 
 #include <atomic>
 #include <algorithm>
@@ -77,7 +77,7 @@ public:
         std::string push_root = "inbox";
     };
 
-    HeyakiNodeAdapter(executor::Executor& executor, Options options)
+    HeyakiNodeAdapter(kairo::Executor& executor, Options options)
         : options_(std::move(options)) {
         if (options_.profile == nullptr || options_.session == nullptr
             || !options_.conversation_for) {

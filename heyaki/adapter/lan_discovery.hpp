@@ -1,7 +1,7 @@
 // LAN 发现观察管道（DEC-006 映射 2；设计第 8.1 节触发语义；M3-04）。
 //
 // start/stop_discovery 的真实语义 = 启停本管道（Node 常驻 LAN 广播/监听）：
-// executor timer（EXEC-04 submit_periodic_with_handle，EXEC-04 timer 能力
+// executor timer（EXEC-04 submit_periodic，EXEC-04 timer 能力
 // 首次启用）周期轮询 NodeSession::endpoints()，diff 出新出现的**未信任**端点
 // 合成 on_device_discovered（设计第 8.1 节：已知设备记录不重放 discovered；
 // 重复出现在 diff 中为幂等 no-op，由 seen 集吸收）。目录条目即「对端正在
@@ -26,8 +26,8 @@
 #include "device/device/device_types.hpp"
 #include "heyaki/session/runtime_node.hpp"
 
-#include <executor/executor.hpp>
-#include <executor/timer.hpp>
+#include <kairo/executor.hpp>
+#include <kairo/timer.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -123,7 +123,7 @@ public:
     using PresenceSink =
         std::function<void(const aki::device::DeviceId&)>;
 
-    LanDiscoveryPipeline(executor::Executor& executor,
+    LanDiscoveryPipeline(kairo::Executor& executor,
         aki::heyaki::NodeSession& session, Sink sink,
         PresenceSink presence_sink = {})
         : executor_(executor), session_(session), sink_(std::move(sink)),
@@ -148,7 +148,7 @@ public:
         state_.seen.clear();
         state_.live.clear();
         const auto generation = ++generation_;
-        timer_ = executor_.submit_periodic_with_handle(
+        timer_ = executor_.submit_periodic(
             static_cast<std::int64_t>(period.count()),
             [this, generation] { poll(generation); });
         return timer_.valid();
@@ -161,7 +161,7 @@ public:
         std::lock_guard<std::mutex> guard(mutex_);
         if (timer_.valid()) {
             (void)timer_.cancel();
-            timer_ = executor::TimerHandle{};
+            timer_ = kairo::TimerHandle{};
         }
     }
 
@@ -200,13 +200,13 @@ private:
         // failure 体系（EXEC-06 可见，不静默重试）。
     }
 
-    executor::Executor& executor_;
+    kairo::Executor& executor_;
     aki::heyaki::NodeSession& session_;
     Sink sink_;
     PresenceSink presence_sink_;
     mutable std::mutex mutex_;
     LanDiscoveryState state_;
-    executor::TimerHandle timer_;
+    kairo::TimerHandle timer_;
     std::uint64_t generation_{0};
     std::atomic<std::uint64_t> discovered_{0};
 };

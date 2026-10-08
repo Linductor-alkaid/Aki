@@ -7,7 +7,7 @@
 > [DEC-028](../decisions/DEC-028-relay-cross-subnet.md)（2026-10-07 修订：
 > 决策 11 分阶段简化）
 > 建议发布点：v0.8.0
-> 更新日期：2026-10-07（创建）
+> 更新日期：2026-10-08（M8-07 依赖升级）
 
 ## 目标
 
@@ -64,28 +64,42 @@ bootstrap token、证书文件退出主视图（降级为高级路径全程保�
   e2e 成功路径）——阶段 2 密码擦除断言的同型缝合点。
 - [x] `M8-03` 决策与台账同步（阶段 1）：DEC-028 决策 11、HEY-20261007-001/
   002 台账条目、UI 规范 §2.6/§4 与落地记录、总计划当前状态与里程碑索引。
-- [ ] `M8-04` 密码模式注册主路径（阶段 2，Blocked：HEY-20261007-001 上游
-  未落地）：主视图 URL + 密码 secureInput；租户不出现在 UI（Adapter 层
-  落默认）；TOFU pin 锚定注册交换所见 leaf 证书；TOFU 首连窗口文案如实
-  披露；密码擦除断言测试；错误码对齐（密码错误/限速/未启用密码模式）。
-- [ ] `M8-05` TURN 自动化（阶段 3，Blocked：HEY-20261007-002 上游未落地）：
-  relay 凭据自动参与选路；静态 `ice-servers.txt` 降级为高级覆盖（合并/
-  优先级跟随上游语义）；设置页展示生效 ICE 配置与来源；短时效凭据续期/
-  过期语义接入与测试。
+- [ ] `M8-04` 密码模式注册主路径（阶段 2；上游能力已随 pin 1b0447b 落地
+  ——HEY-20261007-001/heyaki #22：`enrollment_mode=password`、
+  `RelayEnrollmentCredential`、`EnrollmentResult` 回传 leaf 指纹；待启动）：
+  主视图 URL + 密码 secureInput；租户不出现在 UI（上游
+  `enrollment_default_tenant` 落默认，客户端不传）；TOFU pin 锚定注册交换
+  所见 leaf 证书；TOFU 首连窗口文案如实披露；密码擦除断言测试；错误码
+  对齐（密码错误/限速/未启用密码模式）；配套 enrollment WSS 客户端切换
+  借用 Runtime（HEY-20261006-002 收口）。
+- [ ] `M8-05` TURN 自动化（阶段 3；上游能力已随 pin 1b0447b 落地——
+  HEY-20261007-002：relay_ice_config_v1 下发 + 快照计数器 +
+  `merge_relay_ice_servers`；待启动）：relay 凭据自动参与选路；静态
+  `ice-servers.txt` 降级为高级覆盖（合并/优先级跟随上游语义）；设置页
+  展示生效 ICE 配置与来源；短时效凭据续期/过期语义接入与测试。
 - [ ] `M8-06` 阶段 1 回归验证：全量 ctest 零回归 + CI 七项全绿 + GUI
   视觉复核（折叠开合/校验自动展开/深浅两档）；阶段 2/3 各自开工时另立
   回归项。
+  （debug 48/48 与 CI run 37627726846/37630681885 已过，2026-10-07；
+  GUI 视觉复核补跑条件见验证记录。）
+- [ ] `M8-07` 依赖升级 M8 前置解锁（2026-10-08）：Heyaki 7e9758a →
+  1b0447b、Executor 同步升级 v0.6.0（更名 kairo，Aki 第一方 42 文件全量
+  迁移 `executor::`→`kairo::`/include/CMake target/定时器与 `_ex` API）；
+  移除 HEY-20261006-003 tsan 抑制并复跑 tsan；六条台账回写上游证据；
+  supply-chain 审计登记（[heyaki-1b0447b-relay-upgrade.md]
+  (../supply-chain/heyaki-1b0447b-relay-upgrade.md)）。
 
 ## 风险与阻塞
 
-- **阶段 2/3 上游前置**（HEY-20261007-001/002）：上游语义（默认租户、
-  错误码、ICE 合并优先级、凭据续期）未定型，决策 11 对应条款为暂定
-  默认值；开工前按实测冻结，避免预实现上游想象。
+- **阶段 2/3 上游前置已落地**（2026-10-08 pin 1b0447b）：剩余风险从
+  「上游未定型」转为「Aki 接入期语义实测冻结」（默认租户、错误码、ICE
+  合并优先级、凭据续期），按决策 11 开工前冻结条款执行。
 - **折叠区默认收起的可发现性**（阶段 1 过渡期租户/令牌仍必填）：缓解 =
   折叠标签明示内容清单 + 必填校验失败自动展开；阶段 2 主路径不再依赖
   折叠区必填项。
-- **heyaki 侧 issue 互链未建**：HEY-20261007-001/002 的上游 issue 需用户
-  授权后在 heyaki 仓库提交后回填链接（独立管理上游纪律）。
+- **heyaki 侧 issue 互链**：HEY-20261007-001 已由用户提交并关闭
+  （[heyaki #22](https://github.com/Linductor-alkaid/heyaki/issues/22)），
+  台账已回填；002 无独立 issue（随 #22 衔接落地，台账已注明）。
 
 ## 测试与退出条件
 
@@ -100,6 +114,39 @@ bootstrap token、证书文件退出主视图（降级为高级路径全程保�
   明确可观测。
 
 ## 验证记录
+
+### 2026-10-08：M8-07 依赖升级（Heyaki 1b0447b + Executor v0.6.0 kairo）
+
+- 环境：Ubuntu 24.04 / x86_64 / GCC 13.3.0 / CMake 3.28.3；debug 与 tsan
+  预设；heyaki `1b0447b`（v1.2.0-13）、executor `d9602ea`（v0.6.0，
+  更名 kairo）、heyaki 内部依赖经 `scripts/fetch_third_party.sh` 刷新
+  （executor d9602ea、vendored openssl 3.5.9——后者不进 Aki 构建图，
+  configure 输出核实系统 OpenSSL 3.0.13 仍被 find_package 使用）。
+- 迁移：第一方 42 文件 `executor::`→`kairo::`/`<executor/…>`→`<kairo/…>`
+  （残留 grep 零命中）；`submit_periodic_with_handle`→`submit_periodic`
+  （产品 4 处 + 测试 6 处）、`initialize_ex`→`initialize`、
+  `wait_for_completion_ex`→`wait_for_completion`（executor_owner + 3 测试
+  文件）；CMake `executor::executor`→`kairo::kairo`（app/persistence）、
+  SYSTEM include 目标 `executor`→`kairo`。configure 三方一致校验通过。
+- 测试（Independent-Verification-Agent，两轮）：
+  - 第一轮回归：debug 全量 47/48——发现 **上游 176db92（heyaki #15）
+    有意变更与 Aki 既有断言冲突**：会话 parked 传输的取消从「拒绝
+    （peer_session_missing）」改为「成功并产生一次 cancelled 终态」；
+    `test_basic_communication_loopback` 旧断言（两路径均拒绝取消）约
+    50% 竞态触发失败（失败签名 terminal=0 paused=1）。IVA 给出决定性
+    归因链（pin 区间提交考古 + 新旧行为对照）。处置：断言按收敛路径
+    拆分——parked 路径 `REQUIRE(cancel)` + 等待 cancelled 终态（与 Aki
+    UI 契约 DEC-013⑥「Paused 行 Cancel = 直接终态入口」一致）；expired
+    路径保持拒绝。
+  - 第二轮复验：debug 直跑 10/10 + ctest 通过（原失败率 ~50% 下 10 连过
+    概率 ~0.1%，统计上确认两路径覆盖）；tsan 全量（本机内核高熵 ASLR
+    需 `setarch -R` 运行，per-process 关闭，不改系统）**48/48 零
+    ThreadSanitizer 报告**；HEY-20261006-003 原报出点 test_host_runtime
+    专项 3 次复跑干净（两条抑制移除后）。tsan `test_database_worker`
+    首轮为 0 字节中断产物（全量并行构建期链接被中断），重建后 8 用例
+    /102 断言通过零报告。
+- 未验证（如实降级）：CI 七项门禁以本 MR 的 run 为准（链接回填下方）；
+  本地 tsan 经 setarch 关 ASLR 运行，CI runner 环境不同但插桩语义等价。
 
 ### 2026-10-07：M8-01~M8-03 阶段 1 实现与验证
 

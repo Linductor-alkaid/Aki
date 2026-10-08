@@ -204,7 +204,7 @@ struct ReceivePathStack {
         adapter.set_sink(&sink);
         auto db_runnable =
             std::make_unique<aki::persistence::DatabaseWorkerRunnable>(db);
-        executor::BlockingWorkerSpec db_spec;
+        kairo::BlockingWorkerSpec db_spec;
         db_spec.name = "aki.db-worker";
         db_spec.config.thread_name = "aki-db-worker";
         db_spec.worker = std::move(db_runnable);
@@ -360,7 +360,7 @@ TEST_CASE("Inbound transfer merges from the receive root and survives restart",
         REQUIRE(stack.adapter.inject_transfer_progress(id, 16, 40));
         stack.quiesce();
         {
-            executor::comm::Snapshot<aki::app::AppState> snapshot;
+            kairo::comm::Snapshot<aki::app::AppState> snapshot;
             REQUIRE(stack.state_owner->try_load_snapshot(snapshot));
             REQUIRE(snapshot.value.transfers.transfers.front().state
                 == TransferState::Transferring);
@@ -368,7 +368,7 @@ TEST_CASE("Inbound transfer merges from the receive root and survives restart",
         REQUIRE(stack.adapter.inject_transfer_paused(id));
         stack.quiesce();
         {
-            executor::comm::Snapshot<aki::app::AppState> snapshot;
+            kairo::comm::Snapshot<aki::app::AppState> snapshot;
             REQUIRE(stack.state_owner->try_load_snapshot(snapshot));
             REQUIRE(snapshot.value.transfers.transfers.front().state
                 == TransferState::Paused);
@@ -376,7 +376,7 @@ TEST_CASE("Inbound transfer merges from the receive root and survives restart",
         REQUIRE(stack.adapter.inject_transfer_progress(id, 40, 40));
         stack.quiesce();  // 恢复：Paused → Transferring（§7.1⑤）
         {
-            executor::comm::Snapshot<aki::app::AppState> snapshot;
+            kairo::comm::Snapshot<aki::app::AppState> snapshot;
             REQUIRE(stack.state_owner->try_load_snapshot(snapshot));
             REQUIRE(snapshot.value.transfers.transfers.front().state
                 == TransferState::Transferring);
@@ -386,7 +386,7 @@ TEST_CASE("Inbound transfer merges from the receive root and survives restart",
         REQUIRE(wait_until([&] {
             (void)stack.transfers->flush(100ms);
             stack.state_owner->drain();
-            executor::comm::Snapshot<aki::app::AppState> snapshot;
+            kairo::comm::Snapshot<aki::app::AppState> snapshot;
             return stack.state_owner->try_load_snapshot(snapshot)
                 && snapshot.value.transfers.transfers.front().state
                     == TransferState::Completed;
@@ -476,7 +476,7 @@ TEST_CASE("Complete source resolution falls back and fails visibly",
     REQUIRE(wait_until([&] {
         (void)stack.transfers->flush(100ms);
         stack.state_owner->drain();
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         return stack.state_owner->try_load_snapshot(snapshot)
             && snapshot.value.transfers.transfers.front().state
                 == TransferState::Completed;
@@ -538,7 +538,7 @@ TEST_CASE("Inbound failure paths discard idempotently and stay terminal",
     stack.quiesce();
     stack.drain_db();
     {
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         REQUIRE(stack.state_owner->try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.front().state
             == TransferState::Cancelled);
@@ -552,7 +552,7 @@ TEST_CASE("Inbound failure paths discard idempotently and stay terminal",
         stack.adapter.inject_transfer_completed(id, TransferState::Completed));
     stack.quiesce();
     {
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         REQUIRE(stack.state_owner->try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.front().state
             == TransferState::Cancelled);

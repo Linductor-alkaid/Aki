@@ -110,7 +110,7 @@ struct WorkerFixture {
     explicit WorkerFixture(std::shared_ptr<DatabaseWorkerControl> shared)
         : control(std::move(shared)), repos(control->repositories()) {
         runnable = std::make_unique<DatabaseWorkerRunnable>(control);
-        executor::BlockingWorkerSpec spec;
+        kairo::BlockingWorkerSpec spec;
         spec.name = "aki.db-worker";
         spec.config.thread_name = "aki-db-worker";
         spec.worker = std::move(runnable);

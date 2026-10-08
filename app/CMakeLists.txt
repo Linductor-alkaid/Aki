@@ -5,7 +5,7 @@
 # 头文件接口库；executor::comm 是跨上下文交付的指定设施（EXEC-03），
 # 经 PUBLIC 依赖向 app 消费方（tests、Manager 与 UI 宿主）传播。
 aki_add_skeleton_library(aki_app)
-target_link_libraries(aki_app INTERFACE executor::executor)
+target_link_libraries(aki_app INTERFACE kairo::kairo)
 
 # M5-02：宿主组合根实体库（设计 §9.1 首帧装配例外/启动↔关闭配对条款）。
 # EUI-NEO 无关（RULE-10/RULE-01：console 测试 exe 链接本目标保持 console、

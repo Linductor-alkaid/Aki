@@ -18,10 +18,11 @@ add_subdirectory(third_party/sqlite)
 
 # M3-01（heyaki）目标级接入（DEC-006 构建接入条款）：单一构建图
 # add_subdirectory(third_party/heyaki)，只消费 heyaki::client（heyaki::services
-# 为空伞 target，不链）。executor target 由 heyaki 的 third_party/executor 提供
-# （双侧同 pin e2362736，构建图内只编译一份 executor）——Aki 移除自己的
-# executor add_subdirectory（DEC-003 executor 接入条款按 DEC-006 修订），
-# SYSTEM include 与告警豁免设置转移到下方 heyaki 提供的 executor target。
+# 为空伞 target，不链）。kairo（原 executor，v0.6.0 更名）target 由 heyaki 的
+# third_party/executor 提供（双侧同 pin d9602ea=v0.6.0，构建图内只编译一份
+# kairo）——Aki 移除自己的 add_subdirectory（DEC-003 executor 接入条款按
+# DEC-006 修订），SYSTEM include 与告警豁免设置转移到下方 heyaki 提供的
+# kairo target。
 # 构建开关冻结（DEC-006）：HEYAKI_BUILD_APPS=OFF、HEYAKI_AUTO_INSTALL=OFF；
 # heyaki 测试不进入 Aki 构建面（BUILD_TESTING 在 heyaki 子目录内置 OFF，
 # Aki 自身测试仍经文件末尾的 enable_testing/add_test 注册）。
@@ -78,16 +79,17 @@ if(WIN32)
     set_property(GLOBAL PROPERTY EUI_NEO_APP_ICON_RESOURCE "${AKI_APP_ICON_RC}")
 endif()
 
-# executor 公开头文件按 SYSTEM include 处理：其头文件告警（如 MSVC C4324 对齐
+# executor（v0.6.0 起更名 kairo）公开头文件按 SYSTEM include 处理：其头文件
+# 告警（如 MSVC C4324 对齐
 # 填充）不进入第一方 -Werror 门禁，与“第三方依赖不继承告警级别”的约定一致。
-# M3-01 起设置转移到 heyaki 提供的 executor target（Aki 侧副本不再进入构建图，
+# M3-01 起设置转移到 heyaki 提供的 kairo target（Aki 侧副本不再进入构建图，
 # DEC-006/DEC-003 修订）。
 # 门控说明：CMake 3.x 的 VS/Xcode IDE 生成器在 generate 阶段拒绝“源目录前缀路径”
 # 进入 INTERFACE_SYSTEM_INCLUDE_DIRECTORIES（CI Windows job 实测报错），而 MSVC 上
 # 该标注本就未落为 /external:I（见下方 /wd4324 注），故 IDE 生成器跳过此设置，
 # 行为不变；Makefile/Ninja 生成器（CI Linux 三档）保持 SYSTEM 标注。
 if(NOT CMAKE_GENERATOR MATCHES "Visual Studio|Xcode")
-    set_target_properties(executor PROPERTIES
+    set_target_properties(kairo PROPERTIES
         INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
         "${PROJECT_SOURCE_DIR}/third_party/heyaki/third_party/executor/include")
     # M5-02（DEC-005）：eui_neo 公开头文件同款 SYSTEM 标注——EUI-NEO 头文件

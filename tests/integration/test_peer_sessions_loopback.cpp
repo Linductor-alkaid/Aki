@@ -155,7 +155,7 @@ TEST_CASE("Peer session pipeline drives presence and path state over the loopbac
         aki::persistence::perform_startup_recovery(root_a);
     auto control = std::make_shared<aki::persistence::DatabaseWorkerControl>(
         std::move(recovered.repositories));
-    executor::BlockingWorkerSpec worker_spec;
+    kairo::BlockingWorkerSpec worker_spec;
     worker_spec.name = "aki.db-worker";
     worker_spec.config.thread_name = "aki-db-worker";
     worker_spec.worker =
@@ -311,7 +311,7 @@ TEST_CASE("Peer session pipeline drives presence and path state over the loopbac
     // 的 owner 上下文是测试线程——事件达标时更新尚未经 drain 应用（CI run
     // 36278949737 asan 实测原单次快照断言挂）。沿 test_transfer_full_loopback
     // 先例在轮询谓词内 drain+load：按截止时间等 Online 生效。
-    executor::comm::Snapshot<aki::app::AppState> snapshot;
+    kairo::comm::Snapshot<aki::app::AppState> snapshot;
     // 回调提交失败即失败（原回调内 REQUIRE 语义迁移到主线程，置于 [skip]
     // 退出点之后第一个主线程断言位——提交缺陷不被环境降级掩盖；管道仍
     // 运行中，迟到回调的残余失败由 stop 后的权威断言兜底）。
@@ -342,7 +342,7 @@ TEST_CASE("Peer session pipeline drives presence and path state over the loopbac
     REQUIRE(state_owner.submit_update(aki::app::SetDeviceConnectionPath{
         identity_b.id, aki::device::ConnectionPath::Relay}));
     state_owner.drain();
-    executor::comm::Snapshot<aki::app::AppState> paths;
+    kairo::comm::Snapshot<aki::app::AppState> paths;
     REQUIRE(state_owner.try_load_snapshot(paths));
     bool latest_seen = false;
     for (const auto& entry : paths.value.devices.connection_paths) {

@@ -12,13 +12,7 @@
 race:sctp_
 race:usrsctp_
 
-# heyaki PairingService 审计计数器（HEY-20261006-003，PR #70 CI run
-# 37504293005 tsan job 112408875988 实测）：stats_ 计数器非原子——主线程
-# rotate_password → PairingService::audit 写（pairing_service.cpp:80）与
-# Node 内部 schedule_expiry 定时器 strand 的 metrics_strand 读竞争
-#（node.cpp:2307）。诊断计数器语义（丢失个别计数无害）；Aki 侧调用契约
-# 无违约（写路径为 Node 公开方法同步调用，读路径为 heyaki 内部定时器，
-# 不在 NodeSession「调用方串行化」契约面内）。上游修复（计数器原子化或
-# audit 入 strand）后移除本条。
-race:heyaki::PairingService::audit
-race:heyaki::Node::Impl::metrics_strand
+# HEY-20261006-003（PairingService 审计计数器竞争）抑制条目已于
+# 2026-10-08 随 heyaki 1b0447b 升级移除：上游 ab6418c
+#（heyaki #21）已将 stats_ 计数器跨线程同步；tsan 门禁复跑证据见
+# M8 里程碑验证记录（本 MR 的 CI tsan job）。

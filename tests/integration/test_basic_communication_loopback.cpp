@@ -110,7 +110,7 @@ struct ApplicationSide {
     aki::app::RouterSink router;
     aki::heyaki::PeerSessionPipeline peers;
 
-    ApplicationSide(executor::Executor& executor, LocalProfile& profile, NodeSession& session)
+    ApplicationSide(kairo::Executor& executor, LocalProfile& profile, NodeSession& session)
         : adapter(executor,
                   {.profile = &profile,
                    .session = &session,
@@ -155,7 +155,7 @@ struct ApplicationSide {
     }
     aki::app::AppState snapshot() {
         settle();
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         if (!state.try_load_snapshot(snapshot))
             throw std::runtime_error("snapshot unavailable");
         return snapshot.value;
@@ -310,10 +310,17 @@ TEST_CASE("One-sided basic policy refuses untrusted traffic explicitly", "[integ
         REQUIRE(file_paused > 0);
         // The paused callback precedes publication of the failed session snapshot.
         REQUIRE(await([&] { return !pair.a->session_linked(pair.b_id); }, 5s));
+        // heyaki 176db92 (#15 / HEY-20261002-001): cancelling a session-parked
+        // transfer is implemented — the book entry retires with one cancelled
+        // terminal. Supersedes the 7e9758a-era "parked IDs refuse cancel"
+        // expectation; mirrors the Aki UI contract (DEC-013⑥: Paused row
+        // Cancel is the direct terminal entry).
+        REQUIRE(pair.a->cancel_file_transfer(pair.b_id, transfer));
+        REQUIRE(await([&] { return file_terminal == 1; }, 5s));
+    } else {
+        // An expired ID is already terminal and refuses re-cancellation.
+        REQUIRE_FALSE(pair.a->cancel_file_transfer(pair.b_id, transfer));
     }
-    // Expired and session-parked IDs both refuse this later cancellation.
-    // This does not claim that cancelling a parked transfer is implemented.
-    REQUIRE_FALSE(pair.a->cancel_file_transfer(pair.b_id, transfer));
     REQUIRE(file_committed == 0);
     REQUIRE_FALSE(std::filesystem::exists(pair.root + "/b/inbox/blocked.bin"));
     pair.no_grants();

@@ -1,7 +1,7 @@
 // DatabaseWorker 注册侧接线头（M2-05；设计第 8.2 节 / 第 11.1 节 ③）。
 //
 // 本头文件是注册侧“接线”层：DatabaseWorkerRunnable 实现
-// executor::IBlockingIoWorker（executor 类型按设计第 8.2 节允许存在于该
+// kairo::IBlockingIoWorker（executor 类型按设计第 8.2 节允许存在于该
 // 接线层；RULE-10 守卫的公开面是 database_worker.hpp 及仓储/迁移公开头，
 // 均不含 executor/sqlite 类型）。
 //
@@ -11,7 +11,7 @@
 //   auto control = std::make_shared<DatabaseWorkerControl>(
 //       std::move(repositories), options);
 //   auto runnable = std::make_unique<DatabaseWorkerRunnable>(control);
-//   executor::BlockingWorkerSpec spec;
+//   kairo::BlockingWorkerSpec spec;
 //   spec.name = "aki.db-worker";
 //   spec.config.thread_name = "aki-db-worker";   // 库校验必填
 //   spec.worker = std::move(runnable);
@@ -22,10 +22,10 @@
 
 #include "persistence/database/database_worker.hpp"
 
-#include <executor/blocking_io.hpp>
-#include <executor/comm/channel.hpp>
-#include <executor/comm/types.hpp>
-#include <executor/stop_token.hpp>
+#include <kairo/blocking_io.hpp>
+#include <kairo/comm/channel.hpp>
+#include <kairo/comm/types.hpp>
+#include <kairo/stop_token.hpp>
 
 #include <atomic>
 #include <memory>
@@ -38,14 +38,14 @@ struct DatabaseWorkerControl::Impl {
     Impl(DatabaseWorkerOptions worker_options,
         std::unique_ptr<Repositories> worker_repositories)
         : options(worker_options),
-          channel(executor::comm::ChannelOptions{
+          channel(kairo::comm::ChannelOptions{
               .capacity = worker_options.channel_capacity,
               .enable_stats = true,
               .name = "aki.db-worker.jobs"}),
           repos(std::move(worker_repositories)) {}
 
     DatabaseWorkerOptions options;
-    executor::comm::MpscChannel<DbJob> channel;
+    kairo::comm::MpscChannel<DbJob> channel;
     std::unique_ptr<Repositories> repos;
     std::atomic<bool> registered{false};
     std::atomic<bool> drain_requested{false};
@@ -60,7 +60,7 @@ struct DatabaseWorkerControl::Impl {
 // IBlockingIoWorker 适配器：单一连接独占 + 有界通道串行消费（EXEC-04）。
 // 对象所有权归 executor facade（注册后由其销毁，M1-04 实测）；宿主仅经
 // DatabaseWorkerControl 交互。
-class DatabaseWorkerRunnable final : public executor::IBlockingIoWorker {
+class DatabaseWorkerRunnable final : public kairo::IBlockingIoWorker {
 public:
     explicit DatabaseWorkerRunnable(
         std::shared_ptr<DatabaseWorkerControl> control)
@@ -77,7 +77,7 @@ public:
     // pinned v0.5.0-7 的 receive_for 在本场景观测到已 admit 作业不可见/进程
     // 异常终止（上游缺陷，经官方 DLL 复现），轮询环为集成指南备选 ⑧；
     // 停止/排空响应延迟上界 = 轮询间隔（默认 10ms），满足 §8.2 步骤 3。
-    void run(executor::StopToken stop_token) override {
+    void run(kairo::StopToken stop_token) override {
         // 排空预算锚定于 drain 分支首次被观察到时（非 run 启动）：进程存活
         // 超过 drain_budget 后才请求排空时预算仍须完整可用——锚定启动时刻会
         // 使排空在首个作业后耗尽、已 admit 存量被放弃，违反第 11.1 节 ③
