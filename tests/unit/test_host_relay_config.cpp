@@ -13,6 +13,16 @@
 //   - set_turn_server 整文件覆写既有 ice-servers.txt；
 //   - 受控关闭写路径零失败。
 //
+// M8-08（HEY-20261006-001 收口）增补：注册成功热连接 + 移除热断开的 Host 级
+// 验证——经 HostRuntime::executor()（公开宿主生命周期路径，DOD-02）在同一
+// 宿主 executor 上起进程内 token 模式 RelayServer（借用 Runtime + 测试证书
+// + bootstrap token 种入，fixture 同型 test_relay_password_e2e_loopback），
+// host.enroll_relay 成功后装配期已存在的 NodeSession 热连接（RelayStatus 经
+// enrollment 任务 + 5s 连接态 sweep 收敛 ready），host.remove_relay 热断开
+//（sweep 收敛 disabled + 服务器侧 active_sessions 归零）。NodeSession 层的
+// 逐字段/关闭序证据由 test_relay_password_e2e_loopback 三个热生效用例承载
+//（本用例验证 Host 编排面：任务接线、状态投影、单 executor 拓扑共存）。
+//
 // 进程唯一 Executor owner 是 HostRuntime 单例（AGENTS 规则 7/8；
 // test_host_runtime 同款 main 模式）；测试线程只做有界轮询（yield），
 // 不创建线程。
@@ -20,13 +30,32 @@
 #include "heyaki/adapter/local_identity.hpp"
 #include "heyaki/session/relay_enrollment.hpp"
 
+#include <heyaki/runtime.hpp>
+
+// 进程内 relay fixture（heyaki::relay 内部头，PUBLIC 传播 heyaki::client；
+// 先例 tests/integration/test_relay_password_e2e_loopback.cpp）。
+#include "relay_database.hpp"
+#include "relay_server.hpp"
+
 #include <catch2/catch_session.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+
+#include <array>
 #include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
+#include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -70,6 +99,172 @@ std::string read_file(const std::filesystem::path& path) {
     buffer << file.rdbuf();
     return buffer.str();
 }
+
+// ---- 进程内 token 模式 relay fixture（M8-08 Host 级热生效验证用）----
+// test_relay_password_e2e_loopback 同型自签证书（EC prime256v1、随机序列号、
+// SAN = IP:127.0.0.1——ca_file 交换期主机名校验面）与 token 种入。
+bool write_test_certificate(const std::filesystem::path& directory) {
+    const auto certificate_path = directory / "test-only-cert.pem";
+    const auto key_path = directory / "test-only-key.pem";
+
+    EVP_PKEY* key = EVP_PKEY_Q_keygen(nullptr, nullptr, "EC", "prime256v1");
+    if (key == nullptr) {
+        return false;
+    }
+    X509* certificate = X509_new();
+    if (certificate == nullptr) {
+        EVP_PKEY_free(key);
+        return false;
+    }
+
+    std::array<unsigned char, 8U> serial_bytes{};
+    std::uint64_t serial = 1U;
+    if (RAND_bytes(serial_bytes.data(), static_cast<int>(serial_bytes.size())) == 1) {
+        std::memcpy(&serial, serial_bytes.data(), serial_bytes.size());
+        serial &= (std::numeric_limits<std::uint64_t>::max)() >> 1U;
+        serial = std::max<std::uint64_t>(serial, 1U);
+    }
+    bool configured =
+        X509_set_version(certificate, 2L) == 1 &&
+        ASN1_INTEGER_set_uint64(X509_get_serialNumber(certificate), serial) == 1 &&
+        X509_gmtime_adj(X509_getm_notBefore(certificate), -60L) != nullptr &&
+        X509_gmtime_adj(X509_getm_notAfter(certificate), 24L * 60L * 60L) != nullptr &&
+        X509_set_pubkey(certificate, key) == 1;
+    X509_NAME* name = X509_get_subject_name(certificate);
+    configured =
+        configured && name != nullptr &&
+        X509_NAME_add_entry_by_txt(
+            name, "CN", MBSTRING_ASC,
+            reinterpret_cast<const unsigned char*>("heyaki-relay-host-e2e"), -1, -1, 0) == 1 &&
+        X509_set_issuer_name(certificate, name) == 1;
+    X509_EXTENSION* alt_names = X509V3_EXT_conf_nid(
+        nullptr, nullptr, NID_subject_alt_name, const_cast<char*>("IP:127.0.0.1"));
+    if (alt_names != nullptr) {
+        configured = configured && X509_add_ext(certificate, alt_names, -1) == 1;
+        X509_EXTENSION_free(alt_names);
+    } else {
+        configured = false;
+    }
+    configured = configured && X509_sign(certificate, key, EVP_sha256()) > 0;
+
+    BIO* certificate_output = BIO_new_file(certificate_path.string().c_str(), "wb");
+    BIO* key_output = BIO_new_file(key_path.string().c_str(), "wb");
+    configured = configured && certificate_output != nullptr && key_output != nullptr &&
+                 PEM_write_bio_X509(certificate_output, certificate) == 1 &&
+                 PEM_write_bio_PrivateKey(key_output, key, nullptr, nullptr, 0, nullptr, nullptr) == 1;
+    if (certificate_output != nullptr) {
+        BIO_free(certificate_output);
+    }
+    if (key_output != nullptr) {
+        BIO_free(key_output);
+    }
+    X509_free(certificate);
+    EVP_PKEY_free(key);
+    return configured;
+}
+
+// 宿主 executor 上的进程内 token 模式 relay（RAII 承载资源；skip_reason
+// 非空表示环境性失败，调用方按既有纪律受控降级）。
+struct HostRelayFixture {
+    std::filesystem::path root;
+    std::unique_ptr<heyaki::Runtime> relay_runtime;
+    std::unique_ptr<heyaki::RelayServer> server;
+    std::string tenant = "aki-host-e2e";
+    std::string bootstrap_token;
+    std::string relay_url;
+    std::string skip_reason;
+
+    ~HostRelayFixture() {
+        if (server != nullptr) {
+            (void)server->shutdown();
+        }
+        if (relay_runtime != nullptr) {
+            (void)relay_runtime->shutdown();
+        }
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+    }
+
+    bool setup(kairo::Executor& host_executor) {
+        root = make_temp_data_root();
+        if (!write_test_certificate(root)) {
+            skip_reason = "OpenSSL certificate generation unavailable";
+            return false;
+        }
+        std::array<unsigned char, 16U> raw{};
+        if (RAND_bytes(raw.data(), static_cast<int>(raw.size())) != 1) {
+            skip_reason = "bootstrap token generation failed";
+            return false;
+        }
+        static constexpr char hex[] = "0123456789abcdef";
+        bootstrap_token.reserve(raw.size() * 2U);
+        for (const auto byte : raw) {
+            bootstrap_token.push_back(hex[byte >> 4U]);
+            bootstrap_token.push_back(hex[byte & 0x0fU]);
+        }
+        auto database = heyaki::RelayDatabase::open(root / "relay.sqlite");
+        if (!database) {
+            skip_reason = "relay database open failed";
+            return false;
+        }
+        const auto expires = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch() + 10min)
+                .count());
+        auto seeded = database.value_if()->create_bootstrap_token(
+            tenant, bootstrap_token, expires, 5U);
+        if (!seeded) {
+            skip_reason = "bootstrap token seeding failed";
+            return false;
+        }
+        heyaki::RuntimeConfig runtime_config;
+        // blocking worker 名与宿主 NodeSession（heyaki-asio）/注册句柄
+        //（aki-relay-enroll）互异。
+        runtime_config.worker_name = "aki-relay-host-e2e";
+        auto runtime_result =
+            heyaki::Runtime::create_borrowed(host_executor, runtime_config);
+        if (!runtime_result) {
+            skip_reason = "borrowed relay runtime create failed: "
+                + std::string(runtime_result.error_if()->safe_detail());
+            return false;
+        }
+        relay_runtime = std::make_unique<heyaki::Runtime>(
+            std::move(*runtime_result.value_if()));
+        heyaki::RelayServerConfig config;
+        config.listen_address = "127.0.0.1";
+        config.listen_port = 0U;
+        config.tls_certificate_file = root / "test-only-cert.pem";
+        config.tls_private_key_file = root / "test-only-key.pem";
+        config.database_file = root / "relay.sqlite";
+        config.health_path = "/health";
+        config.max_connections = 8U;
+        config.handshake_timeout = 5000ms;
+        config.shutdown_timeout = 5000ms;
+        config.install_signal_handlers = false;
+        config.runtime.worker_name = "aki-relay-host-e2e";
+        config.enrollment_mode = heyaki::RelayEnrollmentMode::token;
+        auto server_result =
+            heyaki::RelayServer::create(std::move(config), relay_runtime.get());
+        if (!server_result) {
+            skip_reason = "relay server create failed: "
+                + std::string(server_result.error_if()->safe_detail());
+            return false;
+        }
+        server = std::make_unique<heyaki::RelayServer>(
+            std::move(*server_result.value_if()));
+        if (!wait_until([&] {
+                const auto snapshot = server->snapshot();
+                return snapshot.state == heyaki::RelayServerState::running
+                    && snapshot.listen_port != 0U;
+            }, 10s)) {
+            skip_reason = "relay server did not reach running state";
+            return false;
+        }
+        relay_url = "wss://127.0.0.1:"
+            + std::to_string(server->snapshot().listen_port);
+        return true;
+    }
+};
 
 }  // namespace
 
@@ -170,6 +365,121 @@ TEST_CASE("HostRuntime assembles ice config and surfaces relay enrollment state"
     const auto turn_view_after = host.turn_server();
     REQUIRE(turn_view_after.host == "turn.example.org");
     REQUIRE(turn_view_after.port == 3478);
+
+    // ---- M8-08：注册成功热连接 + 移除热断开（Host 级，进程内 token 模式
+    // relay 于宿主 executor）----
+    // 前序异步失败用例已证明 profile 无记录；此处装配期已存在的
+    // NodeSession（fresh 数据根）处于 relay disabled——注册成功后同会话
+    // 热连接（无重启），移除后热断开。状态投影链：enrollment 任务
+    // SetRelayStatus（enrolled）+ 5s 连接态 sweep（connection_state_name）。
+    HostRelayFixture relay;
+    if (!relay.setup(host.executor())) {
+        std::printf("[skip] %s; Host-level hot-connect not verified in this "
+                    "environment\n",
+            relay.skip_reason.c_str());
+    } else {
+        const auto enroll_started = std::chrono::steady_clock::now();
+        error.clear();
+        REQUIRE(host.enroll_relay(relay.relay_url, relay.tenant,
+            relay.bootstrap_token, (relay.root / "test-only-cert.pem").string(),
+            error));
+        REQUIRE(error.empty());
+        // enrolled=true（任务面）+ ready（sweep 面，≤5s 周期 + 余量）。
+        std::string observed_state;
+        bool hot_connected = wait_until([&] {
+            host.pump_state();
+            aki::app::AppState current;
+            if (!host.load_state_snapshot(current)
+                || !current.relay.has_value()) {
+                return false;
+            }
+            observed_state = current.relay->connection_state_name;
+            return current.relay->enrolled
+                && current.relay->connection_state_name == "ready"
+                && current.relay->relay_url == relay.relay_url
+                && current.relay->tenant == relay.tenant
+                && current.relay->last_error.empty();
+        }, 30s);
+        if (!hot_connected) {
+            std::printf("    [diag] host hot-connect did not converge: "
+                        "state=%s\n",
+                observed_state.c_str());
+            const auto snapshot = relay.server->snapshot();
+            std::printf(
+                "    [diag] relay server: state=%d port=%u active=%llu "
+                "enroll_ok=%llu login_ok=%llu\n",
+                static_cast<int>(snapshot.state),
+                static_cast<unsigned>(snapshot.listen_port),
+                static_cast<unsigned long long>(snapshot.active_sessions),
+                static_cast<unsigned long long>(snapshot.enrollments_completed),
+                static_cast<unsigned long long>(snapshot.logins_completed));
+        }
+        REQUIRE(hot_connected);
+        // 服务器侧证据：真实登录会话在线（enroll_ok 来自注册交换）。
+        REQUIRE(wait_until([&] {
+            return relay.server->snapshot().active_sessions >= 1U;
+        }, 10s));
+        REQUIRE(wait_until([&] {
+            return relay.server->snapshot().logins_completed >= 1U;
+        }, 10s));
+        const auto connect_elapsed =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - enroll_started);
+        std::printf("    [diag] host hot connect: enroll->ready %lldms "
+                    "(no restart; state=%s)\n",
+            static_cast<long long>(connect_elapsed.count()),
+            observed_state.c_str());
+
+        // 移除热断开：撤销持久化 + 同会话断开；enrolled=false 同步可见，
+        // 连接态经 sweep（≤5s）收敛 disabled。
+        error.clear();
+        REQUIRE(host.remove_relay(error));
+        REQUIRE(error.empty());  // 热断开失败会以 "relay hot-disconnect ..." 进 error
+        std::string disconnect_state;
+        bool hot_disconnected = wait_until([&] {
+            host.pump_state();
+            aki::app::AppState current;
+            if (!host.load_state_snapshot(current)
+                || !current.relay.has_value()) {
+                return false;
+            }
+            disconnect_state = current.relay->connection_state_name;
+            return !current.relay->enrolled
+                && current.relay->connection_state_name == "disabled"
+                && current.relay->last_error.empty();
+        }, 15s);
+        if (!hot_disconnected) {
+            std::printf("    [diag] host hot-disconnect did not converge: "
+                        "state=%s\n",
+                disconnect_state.c_str());
+        }
+        REQUIRE(hot_disconnected);
+        // 记录面：唯一记录已撤销（重启后不再自动连接）。
+        {
+            auto profile = aki::heyaki::LocalProfile::open(data_root.string());
+            const auto views = aki::heyaki::relay_enrollment_views(profile);
+            REQUIRE(views.size() == 1U);
+            REQUIRE(views.front().relay_url == relay.relay_url);
+            REQUIRE(views.front().revoked);
+        }
+        // 服务器侧证据：控制面拆除（active_sessions 归零）。
+        REQUIRE(wait_until([&] {
+            return relay.server->snapshot().active_sessions == 0U;
+        }, 15s));
+        std::printf("    [diag] host hot disconnect: state=%s, server "
+                    "active_sessions=0\n",
+            disconnect_state.c_str());
+
+        // relay fixture 受控回收（先于宿主关闭；借用语义不收官宿主
+        // executor——与宿主关闭序内 Runtime 报告同一断言面）。
+        const auto server_report = relay.server->shutdown();
+        REQUIRE(server_report.stopped);
+        REQUIRE_FALSE(server_report.timed_out);
+        const auto relay_runtime_report = relay.relay_runtime->shutdown();
+        REQUIRE_FALSE(relay_runtime_report.executor_shutdown_performed);
+        REQUIRE(relay_runtime_report.final_phase
+            == heyaki::RuntimePhase::stopped);
+    }
 
     // ---- 受控关闭（relay 任务 future 有界消费 + 写路径零失败）----
     const auto& closed = host.shutdown_with_report();

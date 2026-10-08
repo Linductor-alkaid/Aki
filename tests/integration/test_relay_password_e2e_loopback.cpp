@@ -984,6 +984,438 @@ TEST_CASE("Relay-delivered TURN/ICE counters surface through the node projection
     teardown_fixture(fixture);
 }
 
+// ---- M8-08（HEY-20261006-001 收口，DEC-028 决策 3 修订）：relay 注册/移除
+// 热生效端到端验证。三用例均 token 模式（fixture turn_token_mode=true：
+// token 种入 + 测试证书，无 Argon2id——TSAN 档照常执行，kTsanBuild 跳过
+// 纪律不适用），各自独立 fixture（单用例 REQUIRE 失败不掩盖其余场景证据）：
+//   - 热连接：fresh profile 的 NodeSession 运行中（relay disabled）经句柄
+//     token 注册成功后，同一 NodeSession 对象上调
+//     apply_relay_enrollment_now → relay_status 有界收敛 ready（enabled/
+//     state_name/relay_url/tenant 断言）+ 服务器侧 active_sessions/
+//     logins_completed 佐证真实登录。不重建会话——热路径与构造期
+//     initialize_relay 是两条不同入口（上游 apply_relay_update）。
+//   - 热断开：热连接 ready 后撤销记录（HostRuntime::remove_relay 的记录面
+//     同型 aki 包装 revoke）→ apply → 离开 ready 收敛 disabled（上游
+//     disable_relay_control：snapshot 整体清空——enabled=false、url/tenant/
+//     last_error/ICE 计数归零，无 failure/backoff 机面）+ 服务器侧
+//     active_sessions 归零佐证控制面拆除。
+//   - 错误可见：put_relay_enrollment 直写指向 127.0.0.1:1（连接拒绝）的
+//     auto_connect 记录 → apply 准入成功（配置语法合法）→ 连接失败经
+//     relay_status().last_error 有界可见（上游语义：非 security 错误 →
+//     degraded + last_error，enabled 保持）；随后撤销坏记录、注册真实
+//     relay、再 apply → ready（错误路径不卡死状态机）；再撤销真实记录、
+//     重写坏记录、再 apply → ready 控制面被替换拆除 + 新错误可见。
+TEST_CASE("Relay enrollment hot-connects a running node session",
+    "[integration][relay_password_e2e]") {
+    RelayPasswordFixture fixture;
+    if (!fixture.setup("hot-connect", /*turn_token_mode=*/true)) {
+        std::printf("[skip] %s; relay hot-connect e2e not verified in this "
+                    "environment\n",
+            fixture.skip_reason.c_str());
+        SUCCEED();
+        return;
+    }
+    auto profile = LocalProfile::open(
+        fixture.new_node_root("hot-connect-node"), "relay-pw-e2e-golf-local");
+
+    // 主线程构造句柄（IVA 修复纪律；NodeSession 用显式 worker_name 隔离）。
+    aki::heyaki::RelayEnrollRuntime enroll_runtime{fixture.owner->executor()};
+    REQUIRE(enroll_runtime.valid());
+
+    // 运行中会话先于注册存在（fresh profile——构造期 initialize_relay 无
+    // 记录可读，relay disabled；这一先序正是热生效语义的前提）。
+    auto lan_config = aki::heyaki::production_lan_configuration();
+    lan_config.enabled = false;
+    auto node = aki::heyaki::NodeSession::create(fixture.owner->executor(),
+        {.profile = &profile,
+            .lan_override = lan_config,
+            .worker_name = "aki-relay-hot-node"});
+    {
+        const auto status = node.relay_status();
+        REQUIRE_FALSE(status.enabled);
+        REQUIRE(status.state_name == "disabled");
+        REQUIRE(status.relay_url.empty());
+        REQUIRE(status.last_error.empty());
+    }
+
+    // 经句柄 token 注册（ca_file = 测试证书 → 交换期链校验 + relay_pin
+    // 随记录持久化；成功后 token 原位擦除）。
+    aki::heyaki::RelayEnrollRequest request;
+    request.relay_url = fixture.relay_url;
+    request.tenant = fixture.tenant;
+    request.bootstrap_token = fixture.bootstrap_token;
+    request.ca_file = fixture.cert_file;
+    std::string error;
+    auto view = aki::heyaki::enroll_relay_profile(
+        profile, request, error, &enroll_runtime);
+    if (!view.has_value()) {
+        std::printf("    [diag] hot-connect enrollment failed: %s\n",
+            error.c_str());
+        print_server_snapshot(fixture.server->snapshot());
+    }
+    REQUIRE(view.has_value());
+    REQUIRE(request.bootstrap_token.empty());
+
+    // 注册成功但未 apply：会话仍 disabled（热连接是显式调用面，非副作用）。
+    {
+        const auto status = node.relay_status();
+        REQUIRE_FALSE(status.enabled);
+        REQUIRE(status.state_name == "disabled");
+    }
+
+    // 热生效：同一 NodeSession 对象（不重建、不重启）。
+    std::string apply_error;
+    const auto apply_started = std::chrono::steady_clock::now();
+    REQUIRE(node.apply_relay_enrollment_now(apply_error));
+    REQUIRE(apply_error.empty());
+
+    const bool login_ready = wait_until(
+        [&] { return node.relay_status().state_name == "ready"; }, 60s);
+    const auto hot_connect_elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - apply_started);
+    if (!login_ready) {
+        const auto status = node.relay_status();
+        std::printf("    [diag] hot-connect node relay: enabled=%d state=%d"
+                    "(%s) url=%s tenant=%s error=%s\n",
+            status.enabled ? 1 : 0, status.state,
+            status.state_name.c_str(), status.relay_url.c_str(),
+            status.tenant.c_str(), status.last_error.c_str());
+        print_server_snapshot(fixture.server->snapshot());
+    }
+    REQUIRE(login_ready);
+    {
+        const auto status = node.relay_status();
+        REQUIRE(status.enabled);
+        REQUIRE(status.state_name == "ready");
+        REQUIRE(status.relay_url == fixture.relay_url);
+        REQUIRE(status.tenant == fixture.tenant);
+        REQUIRE(status.last_error.empty());
+    }
+    // 服务器侧证据：真实登录会话在线 + 完成计数。
+    REQUIRE(wait_until(
+        [&] { return fixture.server->snapshot().active_sessions >= 1U; }, 10s));
+    REQUIRE(wait_until([&] {
+        return fixture.server->snapshot().logins_completed >= 1U;
+    }, 10s));
+    print_server_snapshot(fixture.server->snapshot());
+    std::printf("    [diag] hot connect: apply->ready %lldms (same session,"
+                " no restart)\n",
+        static_cast<long long>(hot_connect_elapsed.count()));
+
+    // 幂等面（上游 already_running 短路）：同配置重复 apply 为 no-op——
+    // 不拆除重建连接（登录完成数与会话数不变，仍 ready）。
+    const std::uint64_t logins_before =
+        fixture.server->snapshot().logins_completed;
+    std::string reapply_error;
+    REQUIRE(node.apply_relay_enrollment_now(reapply_error));
+    REQUIRE(reapply_error.empty());
+    std::this_thread::sleep_for(1500ms);  // 静默窗口：重建会在期内暴露
+    {
+        const auto status = node.relay_status();
+        REQUIRE(status.state_name == "ready");
+        REQUIRE(status.enabled);
+        REQUIRE(status.last_error.empty());
+    }
+    REQUIRE(fixture.server->snapshot().logins_completed == logins_before);
+    REQUIRE(fixture.server->snapshot().active_sessions == 1U);
+
+    // 关闭序闭合（既有形态；热连接后的 Node 关闭仍闭合）。
+    const auto node_report = node.shutdown();
+    REQUIRE(node_report.node_stopped);
+    REQUIRE(node_report.runtime_stopped);
+    REQUIRE_FALSE(node_report.runtime_executor_shutdown_performed);
+
+    teardown_fixture(fixture);
+}
+
+TEST_CASE("Relay enrollment removal hot-disconnects a ready control plane",
+    "[integration][relay_password_e2e]") {
+    RelayPasswordFixture fixture;
+    if (!fixture.setup("hot-disconnect", /*turn_token_mode=*/true)) {
+        std::printf("[skip] %s; relay hot-disconnect e2e not verified in "
+                    "this environment\n",
+            fixture.skip_reason.c_str());
+        SUCCEED();
+        return;
+    }
+    auto profile = LocalProfile::open(fixture.new_node_root("hot-disc-node"),
+        "relay-pw-e2e-hotel-local");
+
+    aki::heyaki::RelayEnrollRuntime enroll_runtime{fixture.owner->executor()};
+    REQUIRE(enroll_runtime.valid());
+    auto lan_config = aki::heyaki::production_lan_configuration();
+    lan_config.enabled = false;
+    auto node = aki::heyaki::NodeSession::create(fixture.owner->executor(),
+        {.profile = &profile,
+            .lan_override = lan_config,
+            .worker_name = "aki-relay-hotdisc-node"});
+
+    // 前置：经热路径建立 ready（与上一用例同链，不依赖构造期自动登录）。
+    aki::heyaki::RelayEnrollRequest request;
+    request.relay_url = fixture.relay_url;
+    request.tenant = fixture.tenant;
+    request.bootstrap_token = fixture.bootstrap_token;
+    request.ca_file = fixture.cert_file;
+    std::string error;
+    auto view = aki::heyaki::enroll_relay_profile(
+        profile, request, error, &enroll_runtime);
+    REQUIRE(view.has_value());
+    std::string apply_error;
+    REQUIRE(node.apply_relay_enrollment_now(apply_error));
+    REQUIRE(apply_error.empty());
+    REQUIRE(wait_until(
+        [&] { return node.relay_status().state_name == "ready"; }, 60s));
+    REQUIRE(wait_until(
+        [&] { return fixture.server->snapshot().active_sessions >= 1U; }, 10s));
+
+    // 撤销记录（HostRuntime::remove_relay 的记录推进面同型 aki 包装）。
+    std::string revoke_error;
+    REQUIRE(aki::heyaki::revoke_relay_enrollment(
+        profile, fixture.relay_url, revoke_error));
+    {
+        const auto views = aki::heyaki::relay_enrollment_views(profile);
+        REQUIRE(views.size() == 1U);
+        REQUIRE(views.front().relay_url == fixture.relay_url);
+        REQUIRE(views.front().revoked);
+    }
+
+    // 热断开：同一 NodeSession 对象；无有效记录 → update_relay_config
+    //(nullopt) → disable_relay_control（bounded teardown，无 backoff 机面）。
+    const auto disconnect_started = std::chrono::steady_clock::now();
+    REQUIRE(node.apply_relay_enrollment_now(apply_error));
+    REQUIRE(apply_error.empty());
+    const bool torn_down = wait_until([&] {
+        const auto status = node.relay_status();
+        return !status.enabled && status.state_name == "disabled";
+    }, 10s);
+    const auto hot_disconnect_elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - disconnect_started);
+    if (!torn_down) {
+        const auto status = node.relay_status();
+        std::printf("    [diag] hot-disconnect node relay: enabled=%d "
+                    "state=%d(%s) url=%s tenant=%s error=%s\n",
+            status.enabled ? 1 : 0, status.state,
+            status.state_name.c_str(), status.relay_url.c_str(),
+            status.tenant.c_str(), status.last_error.c_str());
+        print_server_snapshot(fixture.server->snapshot());
+    }
+    REQUIRE(torn_down);
+    {
+        // 上游清空语义（node.cpp disable_relay_control）：snapshot 整体重置
+        // ——url/tenant/last_error 空、ICE 计数归零（干净拆除，非失败面）。
+        const auto status = node.relay_status();
+        REQUIRE_FALSE(status.enabled);
+        REQUIRE(status.state_name == "disabled");
+        REQUIRE(status.relay_url.empty());
+        REQUIRE(status.tenant.empty());
+        REQUIRE(status.last_error.empty());
+        REQUIRE(status.ice_config_updates == 0U);
+        REQUIRE(status.ice_config_servers_active == 0U);
+    }
+    // 服务器侧证据：控制面会话拆除（active_sessions 归零）。
+    REQUIRE(wait_until(
+        [&] { return fixture.server->snapshot().active_sessions == 0U; },
+        15s));
+    print_server_snapshot(fixture.server->snapshot());
+    std::printf("    [diag] hot disconnect: apply->disabled %lldms\n",
+        static_cast<long long>(hot_disconnect_elapsed.count()));
+
+    // 关闭序闭合（热断开后的 Node 关闭仍闭合）。
+    const auto node_report = node.shutdown();
+    REQUIRE(node_report.node_stopped);
+    REQUIRE(node_report.runtime_stopped);
+    REQUIRE_FALSE(node_report.runtime_executor_shutdown_performed);
+
+    // 关闭后 apply：确定性拒绝面——Node::shutdown 回收 impl_（node.cpp
+    // shutdown 尾 impl_.reset()），update_relay_config 以 node_not_running
+    // 同步失败 → false + error 可见（RULE-09 拒绝面；上游「与关闭竞争
+    // no-op」语义限于在途请求先于拆卸进入 strand 的竞态窗）。无连接面
+    // 副作用。
+    {
+        const auto snapshot_before = fixture.server->snapshot();
+        std::string post_shutdown_error;
+        REQUIRE_FALSE(node.apply_relay_enrollment_now(post_shutdown_error));
+        REQUIRE_FALSE(post_shutdown_error.empty());
+        std::printf("    [diag] post-shutdown apply rejected: %s\n",
+            post_shutdown_error.c_str());
+        std::this_thread::sleep_for(500ms);
+        const auto snapshot_after = fixture.server->snapshot();
+        REQUIRE(snapshot_after.tcp_accepted
+            == snapshot_before.tcp_accepted);  // 无新连接
+        REQUIRE(snapshot_after.active_sessions == 0U);
+    }
+
+    teardown_fixture(fixture);
+}
+
+TEST_CASE("Hot relay update to an unreachable URL surfaces the error",
+    "[integration][relay_password_e2e]") {
+    RelayPasswordFixture fixture;
+    if (!fixture.setup("hot-error", /*turn_token_mode=*/true)) {
+        std::printf("[skip] %s; relay hot-error e2e not verified in this "
+                    "environment\n",
+            fixture.skip_reason.c_str());
+        SUCCEED();
+        return;
+    }
+    auto profile = LocalProfile::open(
+        fixture.new_node_root("hot-error-node"), "relay-pw-e2e-india-local");
+    constexpr const char* dead_url = "wss://127.0.0.1:1";  // 回环连接拒绝
+
+    aki::heyaki::RelayEnrollRuntime enroll_runtime{fixture.owner->executor()};
+    REQUIRE(enroll_runtime.valid());
+    auto lan_config = aki::heyaki::production_lan_configuration();
+    lan_config.enabled = false;
+    auto node = aki::heyaki::NodeSession::create(fixture.owner->executor(),
+        {.profile = &profile,
+            .lan_override = lan_config,
+            .worker_name = "aki-relay-hoterr-node"});
+    REQUIRE(node.relay_status().state_name == "disabled");
+
+    // 空记录 apply：无有效记录 → nullopt → 上游安全降级 no-op（disabled
+    // 且无连接时直接短路，准入成功、无副作用）。
+    {
+        std::string empty_error;
+        REQUIRE(node.apply_relay_enrollment_now(empty_error));
+        REQUIRE(empty_error.empty());
+        const auto status = node.relay_status();
+        REQUIRE_FALSE(status.enabled);
+        REQUIRE(status.state_name == "disabled");
+        REQUIRE(fixture.server->snapshot().tcp_accepted == 0U);
+    }
+
+    // 直写坏记录（HostRuntime 之外的 profile 直面；语法合法 → 准入成功，
+    // 不可达性只在连接期暴露——上游「错误经 RelayNodeSnapshot.last_error
+    // 可见」语义）。
+    ::heyaki::RelayEnrollmentRecord dead;
+    dead.relay_url = dead_url;
+    dead.tenant = "aki-hot-error";
+    dead.enrollment_generation = 1U;
+    dead.auto_connect = true;
+    dead.revoked = false;
+    auto persisted = profile.store().put_relay_enrollment(dead);
+    if (!persisted) {
+        std::printf("    [diag] dead record write failed: %s\n",
+            std::string(persisted.error_if()->safe_detail()).c_str());
+    }
+    REQUIRE(persisted.has_value());
+
+    std::string apply_error;
+    REQUIRE(node.apply_relay_enrollment_now(apply_error));  // 准入成功
+    REQUIRE(apply_error.empty());
+    // 连接拒绝非 security 错误 → degraded（重连退避循环会再进 starting，
+    // 状态名瞬时读有竞态——判定与断言都在谓词内以同帧快照完成）。
+    std::string observed_state;
+    std::string observed_error;
+    bool saw_ready = false;
+    const bool error_visible = wait_until([&] {
+        const auto status = node.relay_status();
+        if (status.state_name == "ready") {
+            saw_ready = true;
+        }
+        if (!status.last_error.empty()
+            && (status.state_name == "degraded"
+                || status.state_name == "failed")) {
+            observed_state = status.state_name;
+            observed_error = status.last_error;
+            return true;
+        }
+        return false;
+    }, 15s);
+    std::printf("    [diag] unreachable hot-apply: state=%s url=%s "
+                "error=%s\n",
+        observed_state.c_str(), dead_url, observed_error.c_str());
+    if (!error_visible) {
+        print_server_snapshot(fixture.server->snapshot());
+    }
+    REQUIRE(error_visible);
+    REQUIRE_FALSE(saw_ready);
+    {
+        // enabled 保持（配置已生效，只是目标不可达）；错误语义可见。
+        const auto status = node.relay_status();
+        REQUIRE(status.enabled);
+        REQUIRE(status.relay_url == dead_url);
+        REQUIRE_FALSE(observed_error.empty());
+        REQUIRE(observed_state == "degraded");  // 拒绝 ≠ security 错误
+    }
+
+    // 错误状态不卡死：撤销坏记录 → 注册真实 relay → 再 apply → ready。
+    std::string revoke_error;
+    REQUIRE(aki::heyaki::revoke_relay_enrollment(
+        profile, dead_url, revoke_error));
+    aki::heyaki::RelayEnrollRequest request;
+    request.relay_url = fixture.relay_url;
+    request.tenant = fixture.tenant;
+    request.bootstrap_token = fixture.bootstrap_token;
+    request.ca_file = fixture.cert_file;
+    std::string error;
+    auto view = aki::heyaki::enroll_relay_profile(
+        profile, request, error, &enroll_runtime);
+    REQUIRE(view.has_value());
+    REQUIRE(node.apply_relay_enrollment_now(apply_error));
+    REQUIRE(wait_until(
+        [&] { return node.relay_status().state_name == "ready"; }, 60s));
+    REQUIRE(wait_until(
+        [&] { return fixture.server->snapshot().active_sessions >= 1U; }, 10s));
+    {
+        const auto status = node.relay_status();
+        REQUIRE(status.last_error.empty());  // 成功登录清错误
+        REQUIRE(status.relay_url == fixture.relay_url);
+    }
+
+    // ready 控制面被坏配置替换：旧连接拆除（服务器侧归零）+ 新错误可见
+    //（url 切换即替换证据；状态名读取同上竞态，判定收敛于谓词内快照）。
+    REQUIRE(aki::heyaki::revoke_relay_enrollment(
+        profile, fixture.relay_url, revoke_error));
+    dead.revoked = false;  // UPSERT 覆写撤销标记，重新激活该记录
+    REQUIRE(profile.store().put_relay_enrollment(dead).has_value());
+    REQUIRE(node.apply_relay_enrollment_now(apply_error));
+    std::string replaced_state;
+    std::string replaced_error;
+    bool replaced_saw_ready_after_swap = false;
+    const bool replaced_error_visible = wait_until([&] {
+        const auto status = node.relay_status();
+        if (status.relay_url != dead_url) {
+            return false;  // 替换尚未生效
+        }
+        if (status.state_name == "ready") {
+            replaced_saw_ready_after_swap = true;
+        }
+        if (!status.last_error.empty()
+            && (status.state_name == "degraded"
+                || status.state_name == "failed")) {
+            replaced_state = status.state_name;
+            replaced_error = status.last_error;
+            return true;
+        }
+        return false;
+    }, 15s);
+    std::printf("    [diag] replaced control plane: state=%s url=%s "
+                "error=%s\n",
+        replaced_state.c_str(), dead_url, replaced_error.c_str());
+    REQUIRE(replaced_error_visible);
+    REQUIRE_FALSE(replaced_saw_ready_after_swap);
+    {
+        const auto status = node.relay_status();
+        REQUIRE(status.enabled);
+        REQUIRE(status.relay_url == dead_url);
+        REQUIRE_FALSE(replaced_error.empty());
+    }
+    REQUIRE(wait_until(
+        [&] { return fixture.server->snapshot().active_sessions == 0U; },
+        15s));
+
+    // 关闭序闭合（错误/退避中的 Node 关闭仍闭合）。
+    const auto node_report = node.shutdown();
+    REQUIRE(node_report.node_stopped);
+    REQUIRE(node_report.runtime_stopped);
+    REQUIRE_FALSE(node_report.runtime_executor_shutdown_performed);
+
+    teardown_fixture(fixture);
+}
+
 // ---- 注入测试（HEY-20261006-002 补跑条件：「补关闭竞争测试（enroll 在途
 //      时 shutdown）」）----
 // 在途注册交换遇宿主关闭：HangingTcpListener 只 listen 不 accept（内核
