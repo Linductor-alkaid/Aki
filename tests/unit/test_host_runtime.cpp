@@ -28,9 +28,15 @@
 // M5-16（DEC-020）：Settings 改本机设备名 set_device_name——未装配/已关闭
 // 拒绝、非法名零扰动拒绝、合法名（含中文）快照改名 + 重启语义 DB 持久化、
 // 同名幂等；广播名校验由 LanNameBeacon::set_name 纯逻辑用例锁定。
+//
+// M8-04（DEC-028 决策 11 阶段 2）：enroll_relay_with_password——未装配
+// Host 拒绝、静态校验拒绝（非 wss / 空密码 / ca 缺失，同步 false）与
+// 合法提交路径（127.0.0.1:1 不可达 → SetRelayStatus 异步失败秒级可见、
+// 不落记录）。
 #include "app/lifecycle/host_runtime.hpp"
 #include "heyaki/adapter/lan_name_beacon.hpp"
 #include "heyaki/adapter/local_identity.hpp"
+#include "heyaki/session/relay_enrollment.hpp"
 
 #include <catch2/catch_session.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -122,6 +128,15 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     HostRuntime& host = HostRuntime::instance();
     // M5-16：未装配（默认构造单例）set_device_name 显式拒绝。
     REQUIRE_FALSE(host.set_device_name("pre-assembly-name"));
+    // M8-04：未装配 Host 的密码注册入口同样显式拒绝（同步 false +
+    // error 可展示——「Host is not available」路径）。
+    // M8-04：未装配 Host 的密码注册入口同样显式拒绝（同步 false +
+    // error 可展示——「Host is not available」路径）。
+    std::string pre_relay_pw_error;
+    REQUIRE_FALSE(host.enroll_relay_with_password(
+        "wss://relay.example.com", "pre-assembly-secret", "",
+        pre_relay_pw_error));
+    REQUIRE_FALSE(pre_relay_pw_error.empty());
     // 唤醒计数器经 shared_ptr 值捕获：宿主单例生命周期覆盖测试函数之外，
     // 引用捕获会在静态析构期悬垂（AppStateOwner 关闭排空仍可能触发钩子）。
     auto wake_calls = std::make_shared<std::atomic<int>>(0);
@@ -201,6 +216,23 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
         relay_error.clear();
         REQUIRE_FALSE(host.enroll_relay(
             "wss://relay.example.com", "aki", "token",
+            "/nonexistent-ca.pem", relay_error));
+        REQUIRE_FALSE(relay_error.empty());
+        // M8-04：enroll_relay_with_password 静态校验失败（同步 false +
+        // error 可展示）——非 wss URL、空密码（双凭据皆无）、ca 文件缺失
+        // 三分支（适配层 validate 面拒绝，不发任何网络请求）。
+        relay_error.clear();
+        REQUIRE_FALSE(host.enroll_relay_with_password(
+            "http://relay.example.com", "owner-password", "",
+            relay_error));
+        REQUIRE_FALSE(relay_error.empty());
+        relay_error.clear();
+        REQUIRE_FALSE(host.enroll_relay_with_password(
+            "wss://relay.example.com", "", "", relay_error));
+        REQUIRE_FALSE(relay_error.empty());
+        relay_error.clear();
+        REQUIRE_FALSE(host.enroll_relay_with_password(
+            "wss://relay.example.com", "owner-password",
             "/nonexistent-ca.pem", relay_error));
         REQUIRE_FALSE(relay_error.empty());
     }
@@ -414,6 +446,48 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
             return host.executor().get_failure_status().capacity_exhausted_count
                 >= 1;
         }, 2s));
+    }
+
+    {
+        // M8-04：enroll_relay_with_password 异步失败路径——不可达端口
+        //（127.0.0.1:1 回环连接拒绝，即时失败不走 transport 超时）。
+        // submit 面 true（admission，宿主 executor 任务内交换并传借用
+        // executor——HEY-20261006-002 收口面）；失败经 SetRelayStatus 回传
+        //（enrolled=false + last_error 非空 + relay_url 匹配），秒级可见
+        //（预算 10s 兜底 + 实测断言 <2s）；失败不落任何 enrollment 记录。
+        std::string relay_pw_error;
+        const auto submit_started = std::chrono::steady_clock::now();
+        REQUIRE(host.enroll_relay_with_password(
+            "wss://127.0.0.1:1", "test-owner-password", "", relay_pw_error));
+        REQUIRE(relay_pw_error.empty());
+        bool pw_failure_visible = false;
+        std::string pw_observed_error;
+        REQUIRE(wait_until([&] {
+            host.pump_state();
+            aki::app::AppState current;
+            if (!host.load_state_snapshot(current)) {
+                return false;
+            }
+            if (current.relay.has_value() && !current.relay->enrolled
+                && !current.relay->last_error.empty()
+                && current.relay->relay_url == "wss://127.0.0.1:1") {
+                pw_failure_visible = true;
+                pw_observed_error = current.relay->last_error;
+                return true;
+            }
+            return false;
+        }, 10s));
+        const auto pw_elapsed =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - submit_started);
+        REQUIRE(pw_failure_visible);
+        REQUIRE_FALSE(pw_observed_error.empty());
+        REQUIRE(pw_elapsed < 2s);
+        // 失败不落记录：profile 无任何 enrollment（重开只读视角验证）。
+        {
+            auto profile = aki::heyaki::LocalProfile::open(data_root.string());
+            REQUIRE(aki::heyaki::relay_enrollment_views(profile).empty());
+        }
     }
 
     // ---- ⑤+⑥ 超时与 shutdown 合并为一次受控关闭（进程级单例只有一次
