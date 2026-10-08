@@ -270,12 +270,22 @@ HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保
 
 ## HEY-20261006-002：relay enrollment WSS 客户端无法借用宿主 executor
 
-- **状态**：上游能力已落地（[Heyaki #20](https://github.com/Linductor-alkaid/heyaki/issues/20)
-  closed 2026-10-07；`RelayEnrollmentWssTransportConfig.runtime_borrowed`
-  借用注入，提交 d5be571），随 Aki pin 1b0447b 进入构建图。Aki 切换
-  借用形式并补关闭竞争测试（enroll 在途时 shutdown）随 M8-04 执行；
-  完成前本条保持未关闭（M7 端到端验证发现，Independent 验证报告
-  2026-10-06；未修改依赖）。
+- **状态**：**Resolved（2026-10-08，Aki 接入完成）**。上游能力落地见
+  [Heyaki #20](https://github.com/Linductor-alkaid/heyaki/issues/20)（closed
+  2026-10-07；`RelayEnrollmentWssTransportConfig.runtime_borrowed`，提交
+  d5be571）。Aki 切换（M8-04）：`RelayEnrollRuntime` 句柄承载借用
+  Runtime——宿主主线程构造（worker 内创建/析构会自等待并破坏后续 Node
+  关闭，IVA 实测发现并修复）、任务内只读使用、关闭序于注册任务 future
+  消费后销毁；worker 名 `aki-relay-enroll` 与 NodeSession 互异（重名
+  `asio_worker_start_failed`，IVA 实测发现并修复）。关闭竞争注入测试
+  （补跑条件兑现，HangingTcpListener 悬置 handshake）：enroll 在途时
+  shutdown 有界收敛（实测 10s ≤ 15s 预算，`shutdown(true)==Completed`、
+  生命周期 Stopped）、交换终态 `wss_connect_wait_timeout` 可见、凭据
+  擦除、零落库、句柄销毁有界、二轮注册无进程残留（M8-04 验证记录，
+  test_relay_password_e2e_loopback 第 5 用例）。**残余如实声明**：
+  「worker 回收提前打断在途交换」路径未在本环境观察到（收敛为交换
+  自身 connect deadline），其确定性覆盖需上游提供可中断的
+  connect/handshake 等待面——不阻塞本条关闭（关闭有界已证）。
 - **可复现证据**：`RelayEnrollmentWssTransportConfig`
   （`include/heyaki/relay_enrollment_client.hpp:34-43`）无 Runtime/executor
   注入字段；`make_relay_enrollment_wss_exchange` 经 `RelayWssClient::create`
@@ -300,11 +310,13 @@ HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保
 
 ## HEY-20261006-003：PairingService 审计计数器跨线程无同步
 
-- **状态**：上游已修复（[Heyaki #21](https://github.com/Linductor-alkaid/heyaki/issues/21)
+- **状态**：**Resolved（2026-10-08）**。上游已修复（[Heyaki #21](https://github.com/Linductor-alkaid/heyaki/issues/21)
   closed 2026-10-07；提交 ab6418c 计数器跨线程同步），随 Aki pin 1b0447b
-  进入构建。Aki 抑制表条目已移除（2026-10-08，cmake/tsan-suppressions.supp）；
-  tsan 门禁复跑证据见 M8-07 验证记录（本升级 MR 的 CI tsan job），
-  全绿后本条置 Resolved。
+  进入构建；抑制表两条条目已移除（cmake/tsan-suppressions.supp）并复跑：
+  本地 tsan 全量 48/48 零 ThreadSanitizer 报告（原报出点 test_host_runtime
+  专项 3 次干净；本机高熵 ASLR 内核经 setarch -R 运行）+ CI
+  [run 37719878676](https://github.com/Linductor-alkaid/Aki/actions/runs/37719878676)
+  tsan job 绿（PR #73）。
 - **可复现证据**：[PR #70](https://github.com/Linductor-alkaid/Aki/pull/70)
   CI run 37504293005 tsan job 112408875988，test_host_runtime（184 断言
   全过）后 TSAN 报 1 处 data race：主线程
@@ -328,14 +340,15 @@ HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保
 
 ## HEY-20261007-001：relay 密码准入与 `--init` 引导（Aki 侧需求）
 
-- **状态**：上游已实现（[Heyaki #22](https://github.com/Linductor-alkaid/heyaki/issues/22)
-  closed 2026-10-07；提交 3763dfd 及收尾修复 51338f6/82f10e6/1a2acdd/
-  d869bb6/482ff8a/7dcf115——`enrollment_mode = token|password|closed`、
-  `enrollment_default_tenant`、`RelayEnrollmentCredential`（token|password）、
-  Argon2id 挑战绑定证明、`EnrollmentResult` 回传 relay leaf 证书 SHA-256、
-  `--init` 首跑引导），随 Aki pin 1b0447b 进入构建图。Aki 接入 = M8-04
-  （[DEC-028](../decisions/DEC-028-relay-cross-subnet.md) 决策 11 阶段 2），
-  完成前本条保持未关闭。
+- **状态**：**Resolved（2026-10-08，Aki 接入完成）**。上游实现见
+  [Heyaki #22](https://github.com/Linductor-alkaid/heyaki/issues/22)（closed
+  2026-10-07；提交 3763dfd 及收尾修复），随 Aki pin 1b0447b 进入构建图。
+  Aki 接入 = M8-04（[DEC-028](../decisions/DEC-028-relay-cross-subnet.md)
+  决策 11 阶段 2，2026-10-08 冻结落地）：设置页密码主路径（地址 + 密码，
+  租户/令牌/证书收拢高级折叠区）+ TOFU 首连（relay 回传 leaf 指针 UPSERT
+  回写记录 pin——IVA 发现上游返回值指纹不落库并修复）+ 双凭据全退出路径
+  原位擦除断言 + 进程内 e2e（成功/借用/错密码/登录 ready 闭环）。验证
+  证据见 M8 里程碑文档 M8-04 验证记录。
 - **用户需求**：机主在 relay 首次运行时设置一个密码即完成服务端配置
   （对应上游 `heyaki-relay --init` 引导提案）；用户侧只凭「中继地址 +
   密码」完成注册——租户、bootstrap token、证书文件退出用户视野

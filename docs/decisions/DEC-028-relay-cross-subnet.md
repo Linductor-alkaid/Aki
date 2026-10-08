@@ -132,17 +132,28 @@ SCOPE-02 把发现来源设计为「局域网发现、已知设备记录、Relay
      token 制部署能力零删减（高级区回归面）。配套：enrollment wrapper 的
      bootstrap_token 改为原位擦除（全部退出路径，凭据纪律对调用方可断言
      ——阶段 2 密码擦除断言测试的同型缝合点）。
-   - **阶段 2（暂定默认值，冻结于开工前；负责人 Linductor）**：上游密码
-     准入落地并 pin 后：主视图换为 URL + 密码（secureInput，DEC-018 纪律，
-     断言测试沿 token 原位擦除同型）；租户不出现在 UI（上游落默认租户；
-     若要求显式等于默认租户则由 Adapter 层自动填充）；信任基 = 注册交换
-     实际呈现的 leaf 证书 SHA-256 以 `relay_pin` 持久化（决策 2 的 pin
-     语义不变，来源从「用户提供的 ca_file」变为「注册交换所见证书」）。
-     **TOFU 首连窗口如实披露**：安全假设为「地址 + 密码的送达渠道可信」；
-     首次连接被 MITM 时攻击者可完成准入并被锚定为 pin（注册结果回传的
-     指纹来自同一 TLS 连接，不提供额外保证），设置页文案与部署文档按此
-     表述；公网 CA relay 与严格自签部署继续走高级模式（系统信任根 /
-     显式 ca_file）。
+   - **阶段 2（Accepted，2026-10-08 随实测冻结）**：上游密码准入
+     （heyaki #22 / pin 1b0447b）落地后的主路径形态——主视图 = URL +
+     密码（secureInput，DEC-018 纪律，断言测试沿 token 原位擦除同型，
+     双凭据二选一拒绝）；**租户不出现在 UI**：上游要求客户端租户与
+     relay `enrollment_default_tenant` 严格相等（`enrollment_tenant_unknown`
+     语义），适配层对空租户归一默认值 `"default"`（relay 该键缺省即
+     `"default"`；机主自定义默认租户的部署走 token 高级模式，错误可读
+     呈现）；**信任基 = 注册交换实际呈现的 leaf 证书 SHA-256**：上游
+     `EnrollmentResult` 回传指纹，Aki 读回记录 UPSERT 回写为 `relay_pin`
+     （上游记录写入只取 `config.relay_pin`，返回值指纹不落库——2026-10-08
+     IVA 实测发现并修复）；**TOFU 首连窗口如实披露**（设置页文案）：
+     密码模式且未提供 ca_file 时交换以 `tls_verify_peer=false` 首连——
+     安全假设为「地址 + 密码的送达渠道可信」，首次连接被 MITM 时攻击者
+     可完成准入并被锚定为 pin（注册结果回传的指纹来自同一 TLS 连接，
+     不提供额外保证）；公网 CA relay 与严格自签部署继续走高级模式
+     （显式 ca_file 走链校验）。**借用 Runtime 纪律**：注册交换经
+     `RelayEnrollRuntime` 句柄借用宿主 executor 运行（HEY-20261006-002
+     收口）——句柄由宿主主线程构造/析构（heyaki Runtime 在 worker 内
+     创建/析构会自等待并破坏后续 Node 关闭，2026-10-08 IVA 实测发现），
+     关闭序于注册任务 future 消费后、executor 回收前销毁。
+     UI 路由规则：令牌草稿非空时走 token 高级路径（折叠区必填校验失败
+     自动展开），否则走密码主路径；令牌流程能力零删减。
    - **阶段 3（暂定默认值，冻结于开工前；负责人 Linductor）**：上游 ICE
      下发落地并 pin 后：relay 凭据自动参与选路，`ice-servers.txt` 降级为
      高级覆盖（合并/优先级跟随上游语义）；设置页展示当前生效 ICE 配置与

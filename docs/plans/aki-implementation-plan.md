@@ -8,6 +8,14 @@
 
 ## 当前状态
 
+- 2026-10-08：`M8-04` 阶段 2 完成（In Progress）：中继密码注册主路径
+  （地址 + 密码；TOFU 首连 + relay 回传指纹 UPSERT 锚定；令牌流程收拢
+  高级路径零删减）随 M8-07 升级落地——IVA 三轮测试 49/49 全绿，渐进
+  发现并修复三处缺陷（上游返回值指纹不落库、worker 内 Runtime 生命
+  周期、worker 名冲突）；enrollment 切换借用 Runtime（HEY-20261006-002
+  消费）。决策 11 阶段 2 条款随实测冻结。GUI 目视复核与 CI 门禁随阶段
+  2 PR 出证。详见 [M8 里程碑文档](m8-relay-simple-enrollment.md)。
+
 - 2026-10-08：`M8-07` 依赖升级：Heyaki 7e9758a → 1b0447b（v1.2.0-13；
   relay 密码准入 + `--init`、`Node::update_relay_config` 运行期更新、
   enrollment 借用 Runtime、控制面下发短时效 ICE 凭据、PairingService 计数
