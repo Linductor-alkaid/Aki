@@ -71,6 +71,9 @@ struct MainWindowModel {
     std::string settings_relay_url_draft;
     std::string settings_relay_tenant_draft = "aki";
     std::string settings_relay_token_draft;
+    // M8-04：密码模式注册主路径草稿（会话内凭据，secureInput + 用后
+    // clear_secret 擦除，DEC-018 纪律；DEC-028 决策 11 阶段 2）。
+    std::string settings_relay_password_draft;
     std::string settings_relay_ca_draft;
     // M8-01：中继高级折叠区开合（页面持有 UI 态；主视图只留地址 + 注册，
     // 租户/令牌/证书收拢进折叠区，必填校验失败自动展开——DEC-028 决策 11）。

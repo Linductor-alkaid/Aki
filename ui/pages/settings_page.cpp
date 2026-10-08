@@ -328,10 +328,11 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
         row_y += metrics.typography.caption + metrics.spacing.compact;
 
         if (!relay.has_value() || !relay->enrolled) {
-            // 注册向导（M8-01/DEC-028 决策 11 阶段 1）：主视图 = 地址 +
-            // 注册按钮；租户/令牌/证书收拢进「高级中继设置」折叠区（默认
-            // 收起，必填校验失败自动展开）。token 制部署能力零删减；阶段 2
-            // 上游密码准入落地后主视图换为地址 + 密码。
+            // 注册向导（M8-04/DEC-028 决策 11 阶段 2）：主视图 = 地址 +
+            // 注册密码 + 注册按钮；租户/令牌/证书收拢进「高级中继设置」
+            // 折叠区（默认收起）。令牌草稿非空时走 token 高级路径（折叠区
+            // 必填校验失败自动展开）；否则走密码主路径（TOFU 首连，relay
+            // 回传指纹自动锚定——文案如实披露首连窗口）。
             const float relay_url_width =
                 std::min(300.0f, content_width);
             components::input(ui, "aki.settings.relay.url")
@@ -343,14 +344,54 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
                 .onChange([&model](const std::string& value) {
                     model.settings_relay_url_draft = value;
                 }).build();
+            row_y += metrics.control.field + metrics.spacing.compact;
+            const bool password_path_available =
+                model.actions->enroll_relay_password.operator bool();
+            if (password_path_available) {
+                secureInput(ui, "aki.settings.relay.password",
+                    model.settings_relay_password_draft, tokens, pad_x,
+                    row_y, std::min(300.0f, content_width),
+                    metrics.control.field, tr("Enrollment password"));
+            }
             components::button(ui, "aki.settings.relay.enroll")
-                .position(pad_x + relay_url_width + metrics.spacing.compact,
-                    row_y)
+                .position(pad_x + std::min(300.0f, content_width)
+                    + metrics.spacing.compact, row_y)
                 .size(96.0f, metrics.control.field)
                 .text(tr("Enroll"))
                 .theme(tokens, true)
                 .textColor(semantic.primary_foreground)
-                .onClick([&model] {
+                .onClick([&model, password_path_available] {
+                    const bool password_path = password_path_available
+                        && model.settings_relay_token_draft.empty();
+                    if (password_path) {
+                        if (model.settings_relay_url_draft.empty()
+                            || model.settings_relay_password_draft.empty()) {
+                            set_feedback(model,
+                                tr("Relay address and enrollment password"
+                                   " are required."));
+                            return;
+                        }
+                        std::string error;
+                        const bool submitted =
+                            model.actions->enroll_relay_password(
+                                model.settings_relay_url_draft,
+                                model.settings_relay_password_draft,
+                                model.settings_relay_ca_draft, error);
+                        aki::ui::clear_secret(
+                            model.settings_relay_password_draft);
+                        if (!submitted) {
+                            set_feedback(model,
+                                error.empty()
+                                    ? tr("Relay enrollment request"
+                                         " rejected")
+                                    : std::move(error));
+                            return;
+                        }
+                        set_feedback(model,
+                            tr("Relay enrollment submitted; see status"
+                               " below."));
+                        return;
+                    }
                     if (model.settings_relay_url_draft.empty()
                         || model.settings_relay_tenant_draft.empty()
                         || model.settings_relay_token_draft.empty()) {
@@ -382,7 +423,23 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
                         tr("Relay enrollment submitted; see status"
                            " below."));
                 }).build();
-            row_y += metrics.control.field + metrics.spacing.compact;
+            row_y += metrics.control.field + metrics.spacing.tiny;
+            if (password_path_available) {
+                // TOFU 首连窗口披露（决策 11 阶段 2 条款，如实呈现）。
+                components::text(ui, "aki.settings.relay.tofu")
+                    .text(tr("Password enrollment trusts the relay"
+                             " certificate on first connection (TOFU);"
+                             " make sure the address and password come from"
+                             " a trusted source."))
+                    .position(pad_x, row_y)
+                    .fontSize(metrics.typography.caption)
+                    .wrap(true)
+                    .maxWidth(content_width)
+                    .color(semantic.text_subtle)
+                    .build();
+                row_y += metrics.typography.caption * 3.0f
+                    + metrics.spacing.compact;
+            }
             // §2.5 容忍翻译变长：英文标签较长，宽度给足（420 上限）。
             foldToggle(ui, "aki.settings.relay.advanced",
                 model.settings_relay_advanced_open, tokens, pad_x, row_y,
@@ -391,9 +448,8 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
                    " certificate)"));
             row_y += metrics.control.menuItem + metrics.spacing.tiny;
             if (model.settings_relay_advanced_open) {
-                // 高级区（token 制部署全保留）：租户 + 准入令牌同行，
-                // 证书路径独占一行（阶段 2 密码模式下租户由 Adapter 层
-                // 落默认值，UI 不出现）。
+                // 高级区：租户 + 准入令牌同行（token 制部署路径），证书
+                // 路径独占一行（token 链校验 / 密码模式严格部署共用）。
                 const float tenant_width = std::min(120.0f, content_width);
                 components::input(ui, "aki.settings.relay.tenant")
                     .position(pad_x, row_y)
