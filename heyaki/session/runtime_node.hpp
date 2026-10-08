@@ -236,20 +236,23 @@ public:
                 + std::string(error->safe_detail()));
         }
         return NodeSession(std::move(runtime),
-            std::move(*node_result.value_if()),
+            std::move(*node_result.value_if()), options.profile,
             aki::device::DeviceId{hh::to_string(
                 options.profile->store().device_id())});
     }
 
     NodeSession(std::unique_ptr<::heyaki::Runtime> runtime,
-        ::heyaki::Node node, aki::device::DeviceId local_id)
+        ::heyaki::Node node, LocalProfile* profile,
+        aki::device::DeviceId local_id)
         : runtime_(std::move(runtime)),
           node_(std::move(node)),
+          profile_(profile),
           local_id_(local_id) {}
 
     NodeSession(NodeSession&& other) noexcept
         : runtime_(std::move(other.runtime_)),
           node_(std::move(other.node_)),
+          profile_(other.profile_),
           local_id_(other.local_id_),
           shutdown_done_(other.shutdown_done_.load(std::memory_order_relaxed)) {
         other.shutdown_done_.store(true, std::memory_order_relaxed);
@@ -272,6 +275,48 @@ public:
 
     [[nodiscard]] bool has_lan_interfaces() const {
         return !node_.snapshot().interfaces.empty();
+    }
+
+    // 热生效（M8-08，HEY-20261006-001 收口）：按 profile 当前首条有效
+    //（auto_connect && !revoked）enrollment 记录热更新运行中 Node 的 relay
+    // 配置——字段映射镜像上游 load_relay_config_from_profile（有 pin 时
+    // tls_verify_peer=false，登录期 TOFU pin 校验）；无有效记录 → 传
+    // nullopt 断开控制面（已认证会话的直连传输保留，上游
+    // update_relay_config 语义：strand 投递、非法配置保留旧连接且错误经
+    // 快照可见、与关闭竞争为 no-op）。失败 false + error 可见（RULE-09）。
+    [[nodiscard]] bool apply_relay_enrollment_now(std::string& error) {
+        std::optional<::heyaki::RelayNodeConfig> relay_config{};
+        if (profile_ == nullptr) {
+            error = "node session: profile unavailable for relay update";
+            return false;
+        }
+        auto records = profile_->store().relay_enrollments();
+        if (!records) {
+            error = std::string(records.error_if()->safe_detail());
+            return false;
+        }
+        for (const auto& record : *records.value_if()) {
+            if (!record.auto_connect || record.revoked) {
+                continue;
+            }
+            ::heyaki::RelayNodeConfig config;
+            config.enabled = true;
+            config.relay_url = record.relay_url;
+            config.relay_pin = record.relay_pin;
+            config.tenant = record.tenant;
+            config.enrollment_generation = record.enrollment_generation;
+            if (config.relay_pin) {
+                config.tls_verify_peer = false;
+            }
+            relay_config = config;
+            break;
+        }
+        auto updated = node_.update_relay_config(std::move(relay_config));
+        if (!updated) {
+            error = std::string(updated.error_if()->safe_detail());
+            return false;
+        }
+        return true;
     }
 
     // relay 控制面运行态快照（NodeSnapshot.relay 的 aki 公开面投影）。
@@ -947,8 +992,11 @@ private:
 
     // 声明序即析构序约束：reverse 析构先 node_ 后 runtime_——Node 内部持有
     // runtime_.get() 非拥有指针（见 create 内注释），Node 必须先消亡。
+    // profile_ 为非拥有指针（HostRuntime Impl 持有 profile 且声明先于
+    // node_session，存续覆盖会话；热生效读记录用，M8-08）。
     std::unique_ptr<::heyaki::Runtime> runtime_;
     ::heyaki::Node node_;
+    LocalProfile* profile_ = nullptr;
     aki::device::DeviceId local_id_{};
     std::atomic<bool> shutdown_done_{false};
     NodeSessionShutdownReport last_report_{};

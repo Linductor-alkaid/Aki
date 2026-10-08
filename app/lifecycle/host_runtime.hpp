@@ -137,11 +137,15 @@ public:
     // ---- M7/DEC-028：relay 注册与 TURN 配置（主线程调用，沿
     // set_language/set_device_name 先例）。静态校验失败同步 false 且
     // error 可展示；enroll_relay / enroll_relay_with_password 的网络结果
-    // 异步经 RelayStatus 状态可见（SetRelayStatus），注册/移除/TURN 变更
-    // 均重启后生效（上游 Node 构造期一次性读取配置，HEY-20261006-001，
-    // 设置页如实披露）。M8-04：密码模式为主路径（DEC-028 决策 11 阶段 2
-    // ——TOFU 首连 + relay 回传指纹自动锚定；无 ca_file 时不校验链）；
-    // token 模式保留为高级路径；两种凭据均用后擦除（DEC-018 纪律）。----
+    // 异步经 RelayStatus 状态可见（SetRelayStatus）。M8-08（HEY-20261006-001
+    // 收口）：注册/移除**热生效**——enroll 任务成功后与 remove 均按 profile
+    // 当前记录热更新运行中 Node（NodeSession::apply_relay_enrollment_now
+    // → 上游 update_relay_config，strand 投递免锁），无需重启；热更新失败
+    // 经 RelayStatus.last_error 如实可见。TURN 静态配置仍重启后生效
+    //（ice-servers.txt 装配期注入，设置页文案如实披露）。M8-04：密码模式
+    // 为主路径（DEC-028 决策 11 阶段 2——TOFU 首连 + relay 回传指纹自动
+    // 锚定；无 ca_file 时不校验链）；token 模式保留为高级路径；两种凭据
+    // 均用后擦除（DEC-018 纪律）。----
     [[nodiscard]] bool enroll_relay(std::string relay_url,
         std::string tenant, std::string bootstrap_token,
         std::string ca_file, std::string& error);
