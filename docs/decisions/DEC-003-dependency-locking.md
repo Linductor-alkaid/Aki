@@ -87,3 +87,17 @@ M5-40 将 Heyaki 固定至官方已合入提交 516815cbfb76f93f60acd4b58e5b6a79
 单图只编译一份 Executor、唯一外部 owner 与 borrowed Runtime 契约不变。
 版本差异与实际门禁见 [M5-43](../plans/m5-eui-neo-ui-mvp.md) 和
 [升级审计](../supply-chain/heyaki-file-cancel-reentry.md)。
+
+## 2026-10-08：M8-07 同步依赖升级（Executor 更名 kairo）
+
+用户授权按既定顺序升级（M8 阶段 2/3 前置解锁）：Heyaki 7e9758a →
+1b0447bcf5064418cd52b829ecccb391c4d783b5（v1.2.0-13-g1b0447b），Executor
+随 heyaki lock 同步 e2362736 → d9602ea6762806be320b9543e3b36f27f7dd5b1a
+（v0.6.0——上游项目更名 kairo，`executor::` → `kairo::`、include
+`<executor/…>` → `<kairo/…>`、CMake target `executor` → `kairo`，Aki 第一方
+代码全量机械迁移并复验）。三方一致性校验（Aki lock / heyaki lock /
+heyaki checkout）与单图单副本、borrowed Runtime 契约不变；heyaki lock 另
+新增 vendored openssl 3.5.9 条目（heyaki 独立构建面；Aki 构建图仍经
+find_package 使用系统 OpenSSL，见升级审计说明）。版本差异与门禁证据见
+[M8-07](../plans/m8-relay-simple-enrollment.md) 与
+[升级审计](../supply-chain/heyaki-1b0447b-relay-upgrade.md)。

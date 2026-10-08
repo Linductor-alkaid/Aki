@@ -8,6 +8,15 @@
 
 ## 当前状态
 
+- 2026-10-08：`M8-07` 依赖升级：Heyaki 7e9758a → 1b0447b（v1.2.0-13；
+  relay 密码准入 + `--init`、`Node::update_relay_config` 运行期更新、
+  enrollment 借用 Runtime、控制面下发短时效 ICE 凭据、PairingService 计数
+  器同步），Executor 同步 v0.6.0（项目更名 kairo，Aki 第一方 42 文件全量
+  迁移）；HEY-20261006-003 tsan 抑制移除；六条台账回写上游证据（Aki 接入
+  复验前保持未关闭）。M8 阶段 2/3 前置全部解锁，见
+  [升级审计](../supply-chain/heyaki-1b0447b-relay-upgrade.md) 与
+  [M8 里程碑文档](m8-relay-simple-enrollment.md)。
+
 - 2026-10-07：M8 启动（In Progress）：中继接入简化为「地址 + 密码」
   （[DEC-028](../decisions/DEC-028-relay-cross-subnet.md) 决策 11 分阶段
   修订——阶段 1 UI 收拢 + token 原位擦除断言缝合点无上游依赖先行；
