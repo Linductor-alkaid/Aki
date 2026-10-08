@@ -110,6 +110,16 @@ struct RelayStatusView {
     std::string relay_url;
     std::string tenant;
     std::string last_error;  // 空 = 无错误
+    // M8-05：relay 下发短时效 ICE（relay_ice_config_v1）的可观测计数
+    //（上游 RelayNodeSnapshot——仅计数，凭据材料不进快照）。servers_active
+    // = 当前持有的未过期 relay 下发服务器数；expires 为最新凭据到期
+    // UNIX 秒（0 = 无）。静态 ice-servers.txt 配置不在此列（设置页高级区
+    // 展示），两者由上游 merge_relay_ice_servers 合并（静态优先、下发
+    // 追加、过期剔除、relay 断连回落静态）。
+    std::uint64_t ice_config_updates = 0;
+    std::uint64_t ice_config_rejected = 0;
+    std::size_t ice_config_servers_active = 0;
+    std::uint64_t ice_config_expires_unix_seconds = 0;
 };
 
 // 借用型 Node/Runtime 会话：构造即创建（失败抛 std::runtime_error，含
@@ -277,6 +287,12 @@ public:
         if (snapshot.relay.last_error.has_value()) {
             view.last_error = snapshot.relay.last_error->safe_detail();
         }
+        view.ice_config_updates = snapshot.relay.ice_config_updates;
+        view.ice_config_rejected = snapshot.relay.ice_config_rejected;
+        view.ice_config_servers_active =
+            snapshot.relay.ice_config_servers_active;
+        view.ice_config_expires_unix_seconds =
+            snapshot.relay.ice_config_expires_unix_seconds;
         return view;
     }
 

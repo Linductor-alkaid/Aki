@@ -2,7 +2,9 @@
 //
 // 覆盖（[skip] 受控退出纪律沿 test_relay_e2e_loopback；前四用例各自独立
 // server/owner fixture——单用例内 REQUIRE 失败不掩盖其余场景的验证证据；
-// 第五用例为关闭竞争注入测试，自持 listener/owner，见文件尾注）：
+// M8-05 增补第五用例：token 模式 + TURN 下发的 ICE 可观测投影（TSAN 档
+// 照常执行——无 Argon2id）；第六用例为关闭竞争注入测试，自持
+// listener/owner，见文件尾注）：
 //   - 真实 RelayServer 密码模式（enrollment_mode=password，仅测试目标链接
 //     heyaki::relay——DEC-028 决策 10 先例）：自签证书（含 IP:127.0.0.1 SAN）
 //     + owner 密码 verifier 经 RelayDatabase 种入（上游 `relay --init` 同型：
@@ -21,6 +23,11 @@
 //   - 错密码：认证拒绝可见（error 含上游 enrollment_password 拒绝
 //     detail，按 pinned 源码实测为 enrollment_password_rejected）、无记录
 //     落库、密码原位擦除。
+//   - M8-05（决策 11 阶段 3）：relay 下发 TURN/ICE 的消费与可观测——
+//     token 模式 + turn_credentials_enabled 的 relay 上，NodeSession 登录
+//     ready 后 relay_status() 呈现 ice_config_updates/servers_active/
+//     expires 计数（login 首发送 + heartbeat 整体换新），凭据材料不进
+//     投影（字段集静态断言为整数计数）。
 //   - 既有 token 模式 e2e 回归在 test_relay_e2e_loopback（本文件不触碰）。
 //
 // TLS 事实（沿 test_relay_e2e_loopback 2026-10-06 核实）：密码模式无
@@ -76,6 +83,7 @@
 #include <string>
 #include <system_error>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -244,6 +252,30 @@ std::uint64_t now_milliseconds() {
             .count());
 }
 
+std::uint64_t now_unix_seconds() {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count());
+}
+
+// 随机 bootstrap token（test_relay_e2e_loopback::random_bootstrap_token
+// 同型：32 hex 字符，16 字节 ≥ relay_bootstrap_token_min_bytes）。
+std::optional<std::string> random_bootstrap_token() {
+    std::array<unsigned char, 16> raw{};
+    if (RAND_bytes(raw.data(), static_cast<int>(raw.size())) != 1) {
+        return std::nullopt;
+    }
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string token;
+    token.reserve(raw.size() * 2U);
+    for (const auto byte : raw) {
+        token.push_back(hex[byte >> 4U]);
+        token.push_back(hex[byte & 0x0fU]);
+    }
+    return token;
+}
+
 // 小写 hex——上游 m3b_relay_enrollment_password_test.cpp:83-95 同款（服务端
 // verifier 输入编码，enrolling 客户端呈现的证明同此编码）。
 std::string hex_encode(const heyaki::EnrollmentPasswordProof& proof) {
@@ -322,6 +354,13 @@ void print_server_snapshot(const heyaki::RelayServerSnapshot& snapshot) {
 // Runtime RelayServer（三用例各自一份；析构按关闭序回收——RAII 之外还有
 // 用例内显式 teardown 断言，结构体仅承载资源）。skip_reason 非空表示
 // 环境性失败，调用方按 [skip] 纪律受控退出。
+//
+// turn_token_mode（M8-05，DEC-028 决策 11 阶段 3）：token 模式准入 +
+// TURN 下发使能的变体——不种密码 verifier（无 Argon2id，TSAN 档照常
+// 执行），改种 bootstrap token，并按上游 m4_node_turn_ice_test.cpp:405-435
+// fixture 惯例配置 turn_credentials_enabled / turn_secret_file /
+// turn_credential_ttl / 单条 turn_udp advertised 服务器（占位地址——
+// 本用例只验证控制面下发与投影计数，不拨测 TURN 数据面）。
 struct RelayPasswordFixture {
     std::optional<ExecutorOwner> owner;
     std::unique_ptr<heyaki::Runtime> relay_runtime;
@@ -329,6 +368,10 @@ struct RelayPasswordFixture {
     std::vector<std::string> temp_roots;
     std::string relay_url;
     std::string owner_password = "relay-pw-e2e-owner-secret";
+    // turn_token_mode 变体的种入面（token 模式租户 + 测试证书路径）。
+    std::string tenant = "aki";
+    std::string bootstrap_token;
+    std::optional<std::filesystem::path> cert_file;
     std::optional<std::vector<std::byte>> leaf_pin;
     std::string skip_reason;
 
@@ -348,7 +391,7 @@ struct RelayPasswordFixture {
         }
     }
 
-    bool setup(const std::string& tag) {
+    bool setup(const std::string& tag, bool turn_token_mode = false) {
         aki::app::ExecutorOwnerOptions owner_options;
         owner_options.executor_config.min_threads = 4;
         owner_options.executor_config.max_threads = 8;
@@ -369,20 +412,49 @@ struct RelayPasswordFixture {
             skip_reason = "OpenSSL certificate generation unavailable";
             return false;
         }
-        const auto cert_file =
+        cert_file =
             std::filesystem::path(relay_root) / "test-only-cert.pem";
-        leaf_pin = certificate_pin(cert_file);
+        leaf_pin = certificate_pin(*cert_file);
         if (!leaf_pin.has_value() || leaf_pin->size() != 32U) {
             skip_reason = "certificate pin computation failed";
             return false;
         }
-        heyaki::RelayId relay_id{};
-        std::copy(leaf_pin->begin(), leaf_pin->end(), relay_id.begin());
-        if (!provision_password_verifier(
-                std::filesystem::path(relay_root) / "relay.sqlite",
-                owner_password, relay_id)) {
-            skip_reason = "password verifier provisioning unavailable";
-            return false;
+        if (turn_token_mode) {
+            // token 种入（test_relay_e2e_loopback 同型先例）：Argon2id 全程
+            // 不触发——本变体在 TSAN 档保留执行（kTsanBuild 跳过仅限密码
+            // 交换用例）。
+            auto token = random_bootstrap_token();
+            if (!token.has_value()) {
+                skip_reason = "bootstrap token generation failed";
+                return false;
+            }
+            bootstrap_token = *token;
+            auto database = heyaki::RelayDatabase::open(
+                std::filesystem::path(relay_root) / "relay.sqlite");
+            if (!database) {
+                skip_reason = "relay database open failed";
+                return false;
+            }
+            const auto expires = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()
+                    + 10min)
+                    .count());
+            auto seeded = database.value_if()->create_bootstrap_token(
+                tenant, bootstrap_token, expires, 5U);
+            if (!seeded) {
+                skip_reason = "bootstrap token seeding failed";
+                return false;
+            }
+        } else {
+            heyaki::RelayId relay_id{};
+            std::copy(leaf_pin->begin(), leaf_pin->end(), relay_id.begin());
+            if (!provision_password_verifier(
+                    std::filesystem::path(relay_root) / "relay.sqlite",
+                    owner_password, relay_id)) {
+                skip_reason = "password verifier provisioning unavailable";
+                return false;
+            }
         }
         heyaki::RuntimeConfig relay_runtime_config;
         relay_runtime_config.worker_name = "aki-relay-pw-e2e";
@@ -395,8 +467,36 @@ struct RelayPasswordFixture {
         }
         relay_runtime = std::make_unique<heyaki::Runtime>(
             std::move(*runtime_result.value_if()));
+        auto config = test_relay_config(relay_root);
+        if (turn_token_mode) {
+            config.enrollment_mode = heyaki::RelayEnrollmentMode::token;
+            // TURN 下发（上游 m4 fixture 同型）：secret 文件须在
+            // RelayServer::create 读取前落盘；TTL 600s。
+            config.turn_credentials_enabled = true;
+            config.turn_credential_ttl = std::chrono::seconds{600};
+            heyaki::RelayTurnAdvertisedServer advertised;
+            advertised.kind = heyaki::RelayWssIceServerKind::turn_udp;
+            advertised.hostname = "127.0.0.1";
+            advertised.port = 3478U;
+            config.turn_servers.push_back(advertised);
+            config.turn_secret_file =
+                std::filesystem::path(relay_root) / "turn-secret";
+            // 测试专用占位 secret（16–256 可打印 ASCII，relay_config.cpp
+            // validate_turn_secret 域内；无真实凭据价值）。
+            const std::string test_turn_secret =
+                std::string{"aki-relay-ice-e2e-"} + "test-only-"
+                + "turn-secret-0123456789abcdef";
+            std::ofstream secret(*config.turn_secret_file,
+                std::ios::binary | std::ios::trunc);
+            secret.write(test_turn_secret.data(),
+                static_cast<std::streamsize>(test_turn_secret.size()));
+            if (!secret) {
+                skip_reason = "turn secret file write failed";
+                return false;
+            }
+        }
         auto server_result = heyaki::RelayServer::create(
-            test_relay_config(relay_root), relay_runtime.get());
+            std::move(config), relay_runtime.get());
         if (!server_result) {
             skip_reason = "relay server create failed: "
                 + std::string(server_result.error_if()->safe_detail());
@@ -720,6 +820,167 @@ TEST_CASE("Relay password enrollment with a live node session stops cleanly",
         node_report.node_stopped ? 1 : 0, node_report.runtime_stopped ? 1 : 0);
 
     // 句柄在 owner 关闭前主线程析构（声明序即析构序，teardown 前销毁）。
+    teardown_fixture(fixture);
+}
+
+// ---- M8-05（DEC-028 决策 11 阶段 3）：relay 下发 TURN/ICE 的消费与可观测 ----
+// token 模式 + TURN 下发使能的 relay 上完成注册并登录（owned 回退注册交换，
+// test_relay_e2e_loopback 同型 token 链校验路径），断言 Aki 投影面
+//（NodeSession::relay_status()——RelayStatusView）呈现上游 login_result
+// 下发与 heartbeat_ack 整体换新的 ICE 可观测计数：
+//   - ice_config_updates >= 1（login 下发到达）；心跳后 >= 2（整体换新面）；
+//   - ice_config_servers_active == advertised 数（1）——纯 relay 下发计数，
+//     本用例无静态 ice-servers 配置（NodeSession options.ice_servers 空）；
+//   - ice_config_expires_unix_seconds ∈ (now, now + ttl + 余量]——秒级
+//     UNIX 到期（毫秒误投影会在上界暴露），TTL=600s；
+//   - ice_config_rejected == 0（codec 拒绝面未触发）。
+// 凭据材料不出现在投影面：四个字段静态断言均为整数计数（上游快照与 Aki
+// 投影同纪律——凭据只存在于上游内存与 wire，永不进快照/状态）；投影的
+// 全部字符串字段（state_name/url/tenant）为已知常量、last_error 为空。
+//
+// TSAN 处置：token 种入不触达 Argon2id（上游 PasswordSecurityPolicy 下限
+// 是密码交换用例 kTsanBuild 跳过的唯一原因）——本用例无 kTsanBuild 分支，
+// TSAN 档照常执行，ICE 下发覆盖在全部四个 Linux 档位保留。
+TEST_CASE("Relay-delivered TURN/ICE counters surface through the node projection",
+    "[integration][relay_password_e2e]") {
+    using aki::heyaki::RelayStatusView;
+    // 静态断言字段集：ICE 面四个字段均为整数计数——凭据材料（用户名/
+    // 密码串）在投影类型上没有可落地的字段面。
+    STATIC_REQUIRE(std::is_integral_v<
+        decltype(RelayStatusView{}.ice_config_updates)>);
+    STATIC_REQUIRE(std::is_integral_v<
+        decltype(RelayStatusView{}.ice_config_rejected)>);
+    STATIC_REQUIRE(std::is_integral_v<
+        decltype(RelayStatusView{}.ice_config_servers_active)>);
+    STATIC_REQUIRE(std::is_integral_v<
+        decltype(RelayStatusView{}.ice_config_expires_unix_seconds)>);
+
+    RelayPasswordFixture fixture;
+    if (!fixture.setup("ice", /*turn_token_mode=*/true)) {
+        std::printf("[skip] %s; relay-delivered ICE e2e not verified in "
+                    "this environment\n",
+            fixture.skip_reason.c_str());
+        SUCCEED();
+        return;
+    }
+    auto profile = LocalProfile::open(
+        fixture.new_node_root("ice-node"), "relay-pw-e2e-foxtrot-local");
+
+    // token 注册（ca_file = 测试证书 → 交换期链校验 + relay_pin 随记录
+    // 持久化，登录期 TOFU pin 校验——test_relay_e2e_loopback 同型）。
+    aki::heyaki::RelayEnrollRequest request;
+    request.relay_url = fixture.relay_url;
+    request.tenant = fixture.tenant;
+    request.bootstrap_token = fixture.bootstrap_token;
+    request.ca_file = fixture.cert_file;
+    std::string error;
+    auto view = aki::heyaki::enroll_relay_profile(profile, request, error);
+    if (!view.has_value()) {
+        std::printf("    [diag] token enrollment failed: %s\n", error.c_str());
+        print_server_snapshot(fixture.server->snapshot());
+    }
+    REQUIRE(view.has_value());
+    REQUIRE(view->relay_url == fixture.relay_url);
+    REQUIRE(view->tenant == fixture.tenant);
+    // 凭据纪律：成功路径 token 原位擦除。
+    REQUIRE(request.bootstrap_token.empty());
+
+    // 自动登录（无静态 ICE 配置——servers_active 只计 relay 下发）。
+    auto lan_config = aki::heyaki::production_lan_configuration();
+    lan_config.enabled = false;
+    auto node = aki::heyaki::NodeSession::create(fixture.owner->executor(),
+        {.profile = &profile,
+            .lan_override = lan_config,
+            .worker_name = "aki-relay-pw-e2e-ice-node"});
+
+    // login_result 携带首次 ICE 下发：ready 与 updates>=1 同点收敛。
+    const bool login_ready = wait_until([&] {
+        const auto status = node.relay_status();
+        return status.state_name == "ready"
+            && status.ice_config_updates >= 1U;
+    }, 60s);
+    if (!login_ready) {
+        const auto status = node.relay_status();
+        std::printf("    [diag] node relay: enabled=%d state=%d(%s) "
+                    "url=%s tenant=%s error=%s ice_updates=%llu "
+                    "ice_rejected=%llu ice_servers=%zu ice_expires=%llu\n",
+            status.enabled ? 1 : 0, status.state,
+            status.state_name.c_str(), status.relay_url.c_str(),
+            status.tenant.c_str(), status.last_error.c_str(),
+            static_cast<unsigned long long>(status.ice_config_updates),
+            static_cast<unsigned long long>(status.ice_config_rejected),
+            status.ice_config_servers_active,
+            static_cast<unsigned long long>(
+                status.ice_config_expires_unix_seconds));
+        print_server_snapshot(fixture.server->snapshot());
+    }
+    REQUIRE(login_ready);
+
+    {
+        const auto status = node.relay_status();
+        REQUIRE(status.enabled);
+        REQUIRE(status.relay_url == fixture.relay_url);
+        REQUIRE(status.tenant == fixture.tenant);
+        // 首次下发（login_result）的计数事实。
+        REQUIRE(status.ice_config_updates >= 1U);
+        REQUIRE(status.ice_config_rejected == 0U);
+        REQUIRE(status.ice_config_servers_active >= 1U);
+        REQUIRE(status.ice_config_servers_active == 1U);  // == advertised 数
+        // 到期为秒级 UNIX 且在 (now, now+TTL+余量] 域内——毫秒误投影、
+        // 未投影（0）、陈旧值分别在下界/上界暴露。
+        const std::uint64_t now = now_unix_seconds();
+        REQUIRE(status.ice_config_expires_unix_seconds > now);
+        REQUIRE(status.ice_config_expires_unix_seconds <= now + 600U + 5U);
+        // 投影字符串面为已知常量——无凭据材料搭载面。
+        REQUIRE(status.last_error.empty());
+        std::printf("    [diag] login-delivered ICE: updates=%llu "
+                    "rejected=%llu servers_active=%zu expires=%llu "
+                    "(now=%llu ttl=600s)\n",
+            static_cast<unsigned long long>(status.ice_config_updates),
+            static_cast<unsigned long long>(status.ice_config_rejected),
+            status.ice_config_servers_active,
+            static_cast<unsigned long long>(
+                status.ice_config_expires_unix_seconds),
+            static_cast<unsigned long long>(now));
+    }
+
+    // heartbeat_ack 整体换新（缺省 15s 心跳；预算覆盖两个周期）：updates
+    // 递增、服务器数与拒收计数不漂移、新到期仍在有效域内。
+    const bool refreshed = wait_until([&] {
+        return node.relay_status().ice_config_updates >= 2U;
+    }, 40s);
+    if (!refreshed) {
+        const auto status = node.relay_status();
+        std::printf("    [diag] heartbeat refresh did not land: "
+                    "ice_updates=%llu state=%s\n",
+            static_cast<unsigned long long>(status.ice_config_updates),
+            status.state_name.c_str());
+        print_server_snapshot(fixture.server->snapshot());
+    }
+    REQUIRE(refreshed);
+    {
+        const auto status = node.relay_status();
+        REQUIRE(status.ice_config_updates >= 2U);
+        REQUIRE(status.ice_config_rejected == 0U);
+        REQUIRE(status.ice_config_servers_active == 1U);
+        const std::uint64_t now = now_unix_seconds();
+        REQUIRE(status.ice_config_expires_unix_seconds > now);
+        REQUIRE(status.ice_config_expires_unix_seconds <= now + 600U + 5U);
+        std::printf("    [diag] heartbeat-refreshed ICE: updates=%llu "
+                    "servers_active=%zu expires=%llu (now=%llu)\n",
+            static_cast<unsigned long long>(status.ice_config_updates),
+            status.ice_config_servers_active,
+            static_cast<unsigned long long>(
+                status.ice_config_expires_unix_seconds),
+            static_cast<unsigned long long>(now));
+    }
+
+    // 关闭序闭合（借用语义；与第 4 用例同断言面）。
+    const auto node_report = node.shutdown();
+    REQUIRE(node_report.node_stopped);
+    REQUIRE(node_report.runtime_stopped);
+    REQUIRE_FALSE(node_report.runtime_executor_shutdown_performed);
+
     teardown_fixture(fixture);
 }
 

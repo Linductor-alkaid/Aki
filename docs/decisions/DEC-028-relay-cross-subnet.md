@@ -154,12 +154,22 @@ SCOPE-02 把发现来源设计为「局域网发现、已知设备记录、Relay
      关闭序于注册任务 future 消费后、executor 回收前销毁。
      UI 路由规则：令牌草稿非空时走 token 高级路径（折叠区必填校验失败
      自动展开），否则走密码主路径；令牌流程能力零删减。
-   - **阶段 3（暂定默认值，冻结于开工前；负责人 Linductor）**：上游 ICE
-     下发落地并 pin 后：relay 凭据自动参与选路，`ice-servers.txt` 降级为
-     高级覆盖（合并/优先级跟随上游语义）；设置页展示当前生效 ICE 配置与
-     来源（静态文件 / relay 下发，决策 8 可观测同款精神）；短时效凭据的
-     续期触发与过期时进行中 allocation 的存活语义随上游定型后在本决策
-     补记。
+   - **阶段 3（Accepted，2026-10-08 随实测冻结）**：上游 ICE 下发
+     （heyaki 1b0447b `relay_ice_config_v1`）的消费形态——**选路零接线**：
+     上游 Node 在 transport 启动时自动合并静态策略服务器与 relay 下发
+     条目（`merge_relay_ice_servers`：静态优先、下发追加、过期剔除、
+     8 服务器冻结上限；每次 `login_result`/`heartbeat_ack` 整体换新，
+     relay 会话失败即清空并回落静态——node.cpp:3108-3114/6872-6876
+     语义引用），Aki 不建任何转发/合并层。**静态降级为高级覆盖**：
+     `ice-servers.txt` + 设置页 TURN 高级区原样保留（其条目因「静态
+     优先」自然成为覆盖）；提示文案更新为「中继下发自动生效，此处为
+     覆盖」。**来源与到期可观测（决策 8 同款精神）**：
+     `RelayStatusView`/AppState `RelayStatus` 增 relay 下发 ICE 计数
+     （updates/rejected/servers_active/expires UNIX 秒——上游快照仅
+     计数，凭据材料不进快照），设置页中继区在持有下发服务器时展示
+     「TURN（中继下发）：N · 到期 HH:MM:SS」；短时效凭据的续期由
+     relay 心跳推送承载（整体换新），过期语义即「servers_active 归零
+     + ICE 回落静态」——无需 Aki 侧定时器。
    - 原 token 流程降级为高级路径**全程保留**（多租户、严格证书分发部署）；
      本修订不改变决策 2/7 已落地行为的语义，执行链（executor 任务、重启
      生效披露）不变。

@@ -374,3 +374,13 @@ chevron-right（收起）图标双态（§2.6 登记码点 `f077`/`f054`，2026-
 决策 11 阶段 2 条款如实呈现）；上游认证类错误（如
 enrollment_password_rejected / enrollment_tenant_unknown / 限速）经
 last_action_feedback 原文可见。i18n 新增「注册密码」等词条。
+
+## 2026-10-08：中继下发 TURN 的来源与到期展示（M8-05，决策 11 阶段 3）
+
+选路零接线（上游 Node 自动合并静态与下发 ICE，静态优先）；Aki 侧仅增
+可观测：中继区状态行下，当 relay 已注册且持有未过期下发服务器时展示
+「TURN（中继下发）：N · 到期 HH:MM:SS」（mono caption `text_subtle`，
+计数与到期时刻来自 RelayStatus 新增的 relay 下发 ICE 计数——凭据材料
+不进快照/状态，不展示主机名/凭据）。TURN 高级区标题不变，提示文案
+更新为「中继下发的短时效服务器自动生效；此处配置作为覆盖（重启后
+生效）」；i18n 词条相应增改。

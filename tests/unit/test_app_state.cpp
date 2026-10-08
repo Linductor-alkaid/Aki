@@ -1023,10 +1023,22 @@ TEST_CASE("Local chat preferences survive connection updates and reveal atomical
 // M7（DEC-028 决策 8）：relay 控制面状态整体替换——首次提交后快照可见、
 // 同值幂等（apply 吸收但不置脏，即不触发快照发布）、不同值整体替换；
 // 初始无注册时快照 relay 保持 nullopt。
+// M8-05（DEC-028 决策 11 阶段 3）扩展：relay 下发 ICE 的 4 个可观测计数
+//（updates/rejected/servers_active/expires）随同一整体替换/幂等语义流转；
+// 静态断言四者均为整数计数——凭据材料（用户名/密码串）没有可落地的
+// 字段面（上游快照与 Aki 投影均只携计数，relay_enrollment.hpp 头注纪律）。
 TEST_CASE("SetRelayStatus replaces wholesale, is idempotent and starts unset",
     "[unit][app_state][m7_relay]") {
     using aki::app::RelayStatus;
     using aki::app::SetRelayStatus;
+    STATIC_REQUIRE(std::is_integral_v<
+        decltype(RelayStatus{}.ice_config_updates)>);
+    STATIC_REQUIRE(std::is_integral_v<
+        decltype(RelayStatus{}.ice_config_rejected)>);
+    STATIC_REQUIRE(std::is_integral_v<
+        decltype(RelayStatus{}.ice_config_servers_active)>);
+    STATIC_REQUIRE(std::is_integral_v<
+        decltype(RelayStatus{}.ice_config_expires_unix_seconds)>);
     AppStateOwner owner;
 
     // 初始：未注册 = 缺省展示（nullopt）。
@@ -1035,7 +1047,8 @@ TEST_CASE("SetRelayStatus replaces wholesale, is idempotent and starts unset",
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE_FALSE(snapshot.value.relay.has_value());
 
-    // 首次提交：快照 relay 可见且字段逐项一致。
+    // 首次提交：快照 relay 可见且字段逐项一致（含非零 ICE 计数——
+    // 首推即携带登录期下发事实，而非仅失败回填路径才出现）。
     RelayStatus status;
     status.enrolled = true;
     status.relay_url = "wss://relay.example.com";
@@ -1043,6 +1056,10 @@ TEST_CASE("SetRelayStatus replaces wholesale, is idempotent and starts unset",
     status.connection_state = 2;
     status.connection_state_name = "ready";
     status.last_error.clear();
+    status.ice_config_updates = 3;
+    status.ice_config_rejected = 0;
+    status.ice_config_servers_active = 2;
+    status.ice_config_expires_unix_seconds = 1893456000U;  // 2030-01-01
     REQUIRE(owner.submit_update(SetRelayStatus{status}));
     owner.drain();
     REQUIRE(owner.try_load_snapshot(snapshot));
@@ -1054,8 +1071,15 @@ TEST_CASE("SetRelayStatus replaces wholesale, is idempotent and starts unset",
     REQUIRE(snapshot.value.relay->connection_state == 2);
     REQUIRE(snapshot.value.relay->connection_state_name == "ready");
     REQUIRE(snapshot.value.relay->last_error.empty());
+    REQUIRE(snapshot.value.relay->ice_config_updates == 3U);
+    REQUIRE(snapshot.value.relay->ice_config_rejected == 0U);
+    REQUIRE(snapshot.value.relay->ice_config_servers_active == 2U);
+    REQUIRE(snapshot.value.relay->ice_config_expires_unix_seconds
+        == 1893456000U);
 
     // 同值重复提交：幂等 no-op——updates_applied 吸收、不发布新快照。
+    // 相等判定含 4 个 ICE 计数（defaulted operator==）：任一计数漂移即
+    // 视为不同值（下方换值段验证其确实触发发布）。
     const auto applied_before = owner.stats().updates_applied;
     const auto published_before = owner.stats().snapshots_published;
     REQUIRE(owner.submit_update(SetRelayStatus{status}));
@@ -1078,10 +1102,32 @@ TEST_CASE("SetRelayStatus replaces wholesale, is idempotent and starts unset",
     REQUIRE_FALSE(snapshot.value.relay->enrolled);
     REQUIRE(snapshot.value.relay->last_error == "bootstrap token rejected");
 
+    // M8-05：ICE 计数换值整体替换——servers_active 2→1、expires 前移、
+    // updates 递增（心跳下发一次新凭据的形态）。单一计数变化即触发
+    // 快照发布（非同值吸收），旧值不得残留。
+    RelayStatus refreshed = failed;
+    refreshed.enrolled = true;
+    refreshed.connection_state = 2;
+    refreshed.connection_state_name = "ready";
+    refreshed.last_error.clear();
+    refreshed.ice_config_updates = 4;
+    refreshed.ice_config_servers_active = 1;
+    refreshed.ice_config_expires_unix_seconds = 1893456600U;
+    const auto replace_published_before = owner.stats().snapshots_published;
+    REQUIRE(owner.submit_update(SetRelayStatus{refreshed}));
+    owner.drain();
+    REQUIRE(owner.stats().snapshots_published == replace_published_before + 1);
+    REQUIRE(owner.try_load_snapshot(snapshot));
+    REQUIRE(*snapshot.value.relay == refreshed);
+    REQUIRE(snapshot.value.relay->ice_config_updates == 4U);
+    REQUIRE(snapshot.value.relay->ice_config_servers_active == 1U);
+    REQUIRE(snapshot.value.relay->ice_config_expires_unix_seconds
+        == 1893456600U);
+
     // 与其他 Store 更新同批次互不干扰：设备行更新不触碰 relay 字段。
     REQUIRE(owner.submit_update(UpsertDevice{make_device("relay-local")}));
     owner.drain();
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.devices.devices.size() == 1);
-    REQUIRE(*snapshot.value.relay == failed);
+    REQUIRE(*snapshot.value.relay == refreshed);
 }

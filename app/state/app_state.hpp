@@ -11,6 +11,7 @@
 #include "app/state/local_transfer_artifact.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -67,6 +68,13 @@ struct RelayStatus {
     int connection_state = 0;             // RelayNodeState 数值（0=disabled）
     std::string connection_state_name;    // 语义名（disabled/ready/…）
     std::string last_error;               // 最近一次注册/连接错误（可展示）
+    // M8-05（DEC-028 决策 11 阶段 3）：relay 下发短时效 ICE 的可观测计数
+    //（仅计数，凭据不进状态）。servers_active=当前未过期下发服务器数；
+    // expires=最新凭据到期 UNIX 秒（0=无下发）。
+    std::uint64_t ice_config_updates = 0;
+    std::uint64_t ice_config_rejected = 0;
+    std::size_t ice_config_servers_active = 0;
+    std::uint64_t ice_config_expires_unix_seconds = 0;
 
     friend bool operator==(const RelayStatus&, const RelayStatus&) = default;
 };
