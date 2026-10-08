@@ -175,6 +175,10 @@ TEST_CASE("HostRuntime assembles ice config and surfaces relay enrollment state"
     const auto& closed = host.shutdown_with_report();
     REQUIRE(closed.attempted);
     REQUIRE(closed.hook_sequence_completed);
+    // M8-04 复验面：注册任务（launch_relay_enroll 传宿主 executor 借用
+    // Runtime）之后 Node 会话仍须可停（关闭路径闭合，AGENTS 完成定义）。
+    REQUIRE(closed.node_stopped);
+    REQUIRE(closed.runtime_stopped);
     REQUIRE(closed.write_settle_failures == 0);
     REQUIRE(closed.write_enqueue_rejected == 0);
     REQUIRE(closed.db_failed == 0);

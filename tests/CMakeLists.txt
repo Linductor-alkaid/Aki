@@ -589,6 +589,32 @@ set_tests_properties(test_relay_e2e_loopback PROPERTIES
     LABELS "integration"
     TIMEOUT 300)
 
+# M8-04（DEC-028 决策 11 阶段 2）：relay 密码准入端到端回环——密码模式
+# RelayServer（enrollment_mode=password + verifier 种入，上游 --init 同型）+
+# aki 包装面 password enrollment（TOFU 首连 / 借用 Runtime / 错密码拒绝）。
+# 链接形态沿 test_relay_e2e_loopback（heyaki::relay 内部头 + OpenSSL 显式
+# find_package）。三个 TEST_CASE 各自独立 fixture（[skip] 受控退出互不掩盖，
+# 单场景 REQUIRE 失败不遮蔽其余场景证据；owner 用例间全量关闭，纪律同
+# test_app_managers 独立 owner 先例）。
+add_executable(test_relay_password_e2e_loopback
+    integration/test_relay_password_e2e_loopback.cpp)
+target_compile_features(test_relay_password_e2e_loopback PRIVATE cxx_std_20)
+aki_apply_warnings(test_relay_password_e2e_loopback PRIVATE)
+target_link_libraries(test_relay_password_e2e_loopback PRIVATE
+    Catch2::Catch2WithMain
+    aki_app
+    aki_heyaki
+    heyaki::client
+    heyaki::relay
+    OpenSSL::SSL
+    OpenSSL::Crypto)
+aki_deploy_openssl_dlls(test_relay_password_e2e_loopback)
+add_test(NAME test_relay_password_e2e_loopback
+    COMMAND test_relay_password_e2e_loopback)
+set_tests_properties(test_relay_password_e2e_loopback PROPERTIES
+    LABELS "integration"
+    TIMEOUT 300)
+
 # M5-02：主题档位覆写回归对照（aki_ui_design §2.1/§2.2/§2.3 独立抄录期望值
 # vs ui/theme/aki_theme_values.hpp 数值权威表；不链 eui——上游默认档对拍由
 # GUI 宿主 aki-run.log 归档承载）。

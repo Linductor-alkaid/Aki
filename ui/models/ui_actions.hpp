@@ -84,6 +84,12 @@ struct UiActions {
     std::function<bool(std::string, std::string, std::string, std::string,
         std::string&)>
         enroll_relay;
+    // M8-04（DEC-028 决策 11 阶段 2）：密码模式注册主路径
+    // enroll_relay_password(url, password, ca, error)——TOFU 首连 + relay
+    // 回传指纹自动锚定；密码为会话内凭据（secureInput，页面在结果落地后
+    // 擦除草稿，DEC-018 纪律）。
+    std::function<bool(std::string, std::string, std::string, std::string&)>
+        enroll_relay_password;
     std::function<bool(std::string&)> remove_relay;
     std::function<bool(std::string, unsigned, std::string, std::string,
         std::string&)>

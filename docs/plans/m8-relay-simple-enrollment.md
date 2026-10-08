@@ -66,12 +66,19 @@ bootstrap token、证书文件退出主视图（降级为高级路径全程保�
   002 台账条目、UI 规范 §2.6/§4 与落地记录、总计划当前状态与里程碑索引。
 - [ ] `M8-04` 密码模式注册主路径（阶段 2；上游能力已随 pin 1b0447b 落地
   ——HEY-20261007-001/heyaki #22：`enrollment_mode=password`、
-  `RelayEnrollmentCredential`、`EnrollmentResult` 回传 leaf 指纹；待启动）：
-  主视图 URL + 密码 secureInput；租户不出现在 UI（上游
-  `enrollment_default_tenant` 落默认，客户端不传）；TOFU pin 锚定注册交换
-  所见 leaf 证书；TOFU 首连窗口文案如实披露；密码擦除断言测试；错误码
-  对齐（密码错误/限速/未启用密码模式）；配套 enrollment WSS 客户端切换
-  借用 Runtime（HEY-20261006-002 收口）。
+  `RelayEnrollmentCredential`、`EnrollmentResult` 回传 leaf 指纹）：
+  主视图 URL + 密码 secureInput；租户不出现在 UI（适配层空租户归一
+  `"default"`，上游要求与 `enrollment_default_tenant` 严格相等）；TOFU
+  pin 锚定注册交换所见 leaf 证书（relay 回传指纹 UPSERT 回写记录）；
+  TOFU 首连窗口文案如实披露；密码擦除断言测试；错误码对齐
+  （enrollment_password_rejected / enrollment_tenant_unknown / 限速原文
+  可见）；配套 enrollment WSS 客户端切换借用 Runtime（HEY-20261006-002
+  收口，`RelayEnrollRuntime` 句柄）。
+  （实现与全部自动化验证完成，2026-10-08：IVA 三轮测试 49/49 全绿，
+  三处缺陷（TOFU pin 不落库 / worker 内 Runtime 生命周期 / worker 名
+  冲突）发现并修复；GUI 目视复核因本机无截图/输入注入工具未执行，
+  补跑条件：图形会话运行 `build/debug/aki` → Settings → 中继区复核
+  密码行/TOFU 披露/令牌高级路径，负责人 Linductor。）
 - [ ] `M8-05` TURN 自动化（阶段 3；上游能力已随 pin 1b0447b 落地——
   HEY-20261007-002：relay_ice_config_v1 下发 + 快照计数器 +
   `merge_relay_ice_servers`；待启动）：relay 凭据自动参与选路；静态
@@ -82,12 +89,15 @@ bootstrap token、证书文件退出主视图（降级为高级路径全程保�
   回归项。
   （debug 48/48 与 CI run 37627726846/37630681885 已过，2026-10-07；
   GUI 视觉复核补跑条件见验证记录。）
-- [ ] `M8-07` 依赖升级 M8 前置解锁（2026-10-08）：Heyaki 7e9758a →
+- [x] `M8-07` 依赖升级 M8 前置解锁（2026-10-08）：Heyaki 7e9758a →
   1b0447b、Executor 同步升级 v0.6.0（更名 kairo，Aki 第一方 42 文件全量
   迁移 `executor::`→`kairo::`/include/CMake target/定时器与 `_ex` API）；
   移除 HEY-20261006-003 tsan 抑制并复跑 tsan；六条台账回写上游证据；
   supply-chain 审计登记（[heyaki-1b0447b-relay-upgrade.md]
   (../supply-chain/heyaki-1b0447b-relay-upgrade.md)）。
+  （PR #73 / CI [run 37719878676]
+  (https://github.com/Linductor-alkaid/Aki/actions/runs/37719878676) 七项
+  全绿，Squash 合入 c92bb8a；本地 tsan 全量 48/48 零报告。）
 
 ## 风险与阻塞
 
@@ -114,6 +124,68 @@ bootstrap token、证书文件退出主视图（降级为高级路径全程保�
   明确可观测。
 
 ## 验证记录
+
+### 2026-10-08：M8-04 密码模式注册主路径（阶段 2）
+
+- 环境：Ubuntu 24.04 / x86_64 / GCC 13.3.0 / CMake 3.28.3 / debug
+  preset；heyaki 1b0447b（密码准入/enrollment 凭据/借用 Runtime/回传
+  指纹）。
+- 实现：`heyaki/session/relay_enrollment.hpp`（凭据二选一 + 密码 256B
+  上限 + 空租户归一 `"default"`、统一 `credential_exchange`、TOFU 首连
+  `tls_verify_peer=false`、`RelayEnrollRuntime` 借用句柄、双凭据全退出
+  路径原位擦除、TOFU 指针 UPSERT 回写）；`HostRuntime` 共享注册管线
+  `launch_relay_enroll` + `enroll_relay_with_password` 入口 + 关闭序句柄
+  销毁；`UiActions::enroll_relay_password` + `main.cpp` 绑定 +
+  `settings_page` 密码主路径（令牌草稿非空走高级路径）+ i18n 5 词条；
+  决策 11 阶段 2 冻结回填、UI 规范 2026-10-08 落地记录、台账
+  HEY-20261007-001 与 HEY-20261006-002/003 收口。
+- 测试（Independent-Verification-Agent 三轮，渐进发现并修复三处产品
+  缺陷后全绿）：
+  - **缺陷①（TOFU pin 不落库）**：上游记录写入只取 `config.relay_pin`
+    （relay_enrollment_client.cpp:382），返回值 `relay_certificate_sha256`
+    不持久化——密码模式「能注册、不能连接」。修复：Aki 层读回记录
+    UPSERT 同代回写（IVA 指出任务简报与 pinned 源码不符，已核实）。
+  - **缺陷②（worker 内 Runtime 生命周期）**：在 executor worker 内
+    创建/析构借用 Runtime 使 teardown 自等待，后续 `Node::shutdown`
+    确定性超时（IVA 对照实验隔离归因）。修复：`RelayEnrollRuntime`
+    句柄主线程构造/关闭序销毁（任务 future 消费后、executor 回收前）。
+  - **缺陷③（worker 名冲突）**：句柄缺省 worker 名与 NodeSession 同为
+    `"heyaki-asio"` → `asio_worker_start_failed` → 两注册入口全拒绝。
+    修复：显式 `worker_name="aki-relay-enroll"`。
+  - 新增/扩展测试：`test_relay_integration`（validate 二选一/256B/归一
+    6 SECTION + 擦除镜像 7 SECTION，18 用例/210 断言）、新
+    `test_relay_password_e2e_loopback`（owned 成功 TOFU pin 对拍/借用
+    成功/错密码 `enrollment_password_rejected` 零落库/句柄+NodeSession
+    共存且自动登录收敛 ready 后干净关闭；4 用例/84 断言）、
+    `test_host_runtime`（密码入口静态拒绝 + 异步失败 <2s + 注册后
+    `node_stopped`；199 断言）、`test_host_relay_config`（token 入路
+    关闭断言补强；36 断言）。
+  - 全量 `ctest --preset debug` **49/49**；生命周期敏感二进制复跑
+    （host_relay_config ×2 / host_runtime ×2 / password e2e ×1）无抖动。
+  - **在途关闭注入（HEY-20261006-002 补跑条件兑现，第 4 轮追加）**：
+    第 5 e2e 用例（HangingTcpListener 悬置 handshake，上游 borrow 测试
+    同型）——enroll 在途时宿主关闭有界收敛（实测 10s ≤ 15s，
+    shutdown Completed / 生命周期 Stopped），交换终态
+    `wss_connect_wait_timeout` 可见、凭据擦除、零落库、句柄销毁有界
+    （2.0s）、二轮注册毫秒级干净失败、无进程残留；password e2e 达
+    5 用例/107 断言，全量维持 **49/49**。「worker 回收提前打断」路径
+    未观察到（需上游可中断等待面），台账 002 残余声明如实记录。
+    本注入用例的悬置 listener 为 POSIX 实现，**Windows 编译面跳过**
+    （MSVC 无 arpa/inet.h；CI Windows 档不含本用例）——Windows 等价
+    （Winsock 悬置 listener）为补跑项，负责人 Linductor。
+- CI 时序处置（2026-10-08 第二轮 run 37732041555）：①Windows 档
+  `pw_elapsed < 2s` 断言余量不足（实测 2027ms），放宽至 `< 5s`（语义
+  边界为「远低于 transport 12s 上界」，非精确 2s）；②tsan 档密码
+  交换用例失败——上游 `PasswordSecurityPolicy` 将 Argon2id 参数下限
+  钉死（≥2 ops / ≥64MiB，`validate_security_policy` 强制），TSAN 放大
+  下双端派生/校验超注册交换接收超时（服务端 `enroll_ok=1` 而客户端
+  `wss_receive_timeout`）——**密码交换 4 用例在 TSAN 构建下编译期
+  跳过**（`__SANITIZE_THREAD__` 守卫），覆盖由 debug/asan/ubsan 与
+  Windows debug 档承担；注入用例（不触达密码交换）TSAN 下保留。
+  tsan 档的密码交换覆盖为已登记限制，补跑需上游放宽策略下限或提供
+  测试注入面。
+- 残余未验证（如实登记）：pin 回写失败分支（读回缺失/UPSERT 失败）仅
+  静态走查；GUI 目视复核未执行（补跑条件见 M8-04 工作项注）。
 
 ### 2026-10-08：M8-07 依赖升级（Heyaki 1b0447b + Executor v0.6.0 kairo）
 

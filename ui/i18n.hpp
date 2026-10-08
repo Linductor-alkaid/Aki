@@ -178,6 +178,14 @@ inline std::string tr(std::string_view english) {
         {"Relay certificate file (optional)", "中继证书文件（可选）"},
         {"Advanced relay settings (tenant / token / certificate)",
          "高级中继设置（租户 / 令牌 / 证书）"},
+        {"Enrollment password", "注册密码"},
+        {"Relay address and enrollment password are required.",
+         "请填写中继地址与注册密码。"},
+        {"Password enrollment trusts the relay certificate on first"
+         " connection (TOFU); make sure the address and password come from"
+         " a trusted source.",
+         "密码注册在首次连接时信任中继证书（TOFU），请确认地址与密码来源"
+         "可信。"},
         {"Enroll", "注册"},
         {"Remove enrollment", "移除注册"},
         {"Relay enrollment removed. Restart Aki to disconnect.",

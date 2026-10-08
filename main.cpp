@@ -337,11 +337,17 @@ void app::compose(eui::Ui& ui, const eui::Screen& screen) {
             };
             // M7/DEC-028：relay 注册/移除与 TURN 配置出站面绑定（同
             // set_language 先例——组合根直绑 HostRuntime，页面不持有宿主）。
+            // M8-04：密码模式注册主路径（决策 11 阶段 2，TOFU 首连）。
             ui_actions()->enroll_relay = [&host](std::string url,
                 std::string tenant, std::string token, std::string ca,
                 std::string& error) {
                 return host.enroll_relay(std::move(url), std::move(tenant),
                     std::move(token), std::move(ca), error);
+            };
+            ui_actions()->enroll_relay_password = [&host](std::string url,
+                std::string password, std::string ca, std::string& error) {
+                return host.enroll_relay_with_password(std::move(url),
+                    std::move(password), std::move(ca), error);
             };
             ui_actions()->remove_relay = [&host](std::string& error) {
                 return host.remove_relay(error);

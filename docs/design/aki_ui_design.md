@@ -362,3 +362,15 @@ chevron-right（收起）图标双态（§2.6 登记码点 `f077`/`f054`，2026-
 令牌同行、证书独占一行，令牌仍走 secureInput；token 制部署能力零删减。
 阶段 2（上游密码准入落地后）主视图换为地址 + 密码，租户由 Adapter 层
 落默认值。TURN 高级区本阶段不变。
+
+## 2026-10-08：中继密码注册主路径（M8-04，DEC-028 决策 11 阶段 2）
+
+未注册态主视图 = 地址 input + 注册密码 secureInput + 注册 primary 按钮
+（M8-01 的折叠区保留为「高级中继设置」：租户/准入令牌/证书路径，token
+制部署零删减）。路由规则：令牌草稿非空走 token 高级路径（必填校验失败
+自动展开折叠区），否则走密码主路径（地址 + 密码必填，反馈文案引导）。
+密码为会话内凭据（secureInput + 提交后 clear_secret 擦除，DEC-018）。
+密码行下方新增 TOFU 首连窗口披露文案（`text_subtle` caption 两行内，
+决策 11 阶段 2 条款如实呈现）；上游认证类错误（如
+enrollment_password_rejected / enrollment_tenant_unknown / 限速）经
+last_action_feedback 原文可见。i18n 新增「注册密码」等词条。

@@ -7,11 +7,15 @@
 //     优先 + "lan:" 前缀；trusted/非 32 字节公钥/消失回落语义不变；
 //   - validate_relay_enroll_request 静态校验各拒绝分支与合法分支
 //     （relay_enrollment.hpp，含 ca_file 存在性）；
+//   - M8-04（DEC-028 决策 11 阶段 2）：凭据二选一契约（双空/双非空拒绝、
+//     password ≤256B、password 模式空租户归一 "default"、token 模式租户
+//     仍必填）；
 //   - enroll_relay_profile 对不可达地址失败可见且 profile 不落记录
 //     （阻塞调用，超时上界由上游 transport 配置约束，见头注）；
 //   - enroll_relay_profile 全部失败退出路径原位擦除调用方持有的
-//     bootstrap_token（M8-02/DEC-018：校验拒绝 ×3、非 PEM pin 失败、
-//     不可达交换失败，兼回归 nullopt + error 非空 + 不落记录）；
+//     bootstrap_token 与 enrollment_password（M8-02/DEC-018：校验拒绝、
+//     非 PEM pin 失败、不可达交换失败，兼回归 nullopt + error 非空 +
+//     不落记录；M8-04 密码镜像 + 双凭据拒绝路径两凭据均擦除）；
 //   - revoke_relay_enrollment：无记录 false；put 造记录后撤销成功、视图
 //     revoked 可见（relay_enrollment_views 投影）；
 //   - ICE 配置（ice_config.hpp）：parse 各合法/非法行、invalid_lines 计数、
@@ -293,6 +297,82 @@ TEST_CASE("validate_relay_enroll_request accepts valid requests",
     std::filesystem::remove_all(root, ec);
 }
 
+// M8-04（DEC-028 决策 11 阶段 2）：凭据二选一契约。token 与
+// enrollment_password 恰好一个在场；password 模式空租户由 validate 非 const
+// 引用原位归一为 "default"（与 relay enrollment_default_tenant 缺省对齐），
+// token 模式租户仍必填；密码 ≤256B（kRelayEnrollmentPasswordMaxBytes）。
+TEST_CASE(
+    "validate_relay_enroll_request enforces exactly-one credential and"
+    " password bounds",
+    "[unit][relay_integration][m8_relay]") {
+    // 双凭据同时为空：拒绝（无任何准入凭据）。
+    SECTION("no credential at all is rejected") {
+        RelayEnrollRequest request;
+        request.relay_url = "wss://relay.example.com/relay";
+        request.tenant = "aki";
+        const auto error =
+            aki::heyaki::validate_relay_enroll_request(request);
+        REQUIRE(error.has_value());
+        REQUIRE_FALSE(error->empty());
+        // 双空路径租户未被归一（拒绝先于归一，无副作用推进）。
+        REQUIRE(request.tenant == "aki");
+    }
+    // 双凭据同时非空：拒绝（XOR 契约——密码模式不得携带 token）。
+    SECTION("both credentials present is rejected") {
+        RelayEnrollRequest request;
+        request.relay_url = "wss://relay.example.com/relay";
+        request.tenant = "aki";
+        request.bootstrap_token = "bootstrap-token";
+        request.enrollment_password = "owner-password";
+        REQUIRE(aki::heyaki::validate_relay_enroll_request(request)
+            .has_value());
+    }
+    // password 超上限（256B）：拒绝且文案可展示（含上限值）。
+    SECTION("oversized enrollment password is rejected") {
+        RelayEnrollRequest request;
+        request.relay_url = "wss://relay.example.com/relay";
+        request.enrollment_password.assign(
+            aki::heyaki::kRelayEnrollmentPasswordMaxBytes + 1U, 'x');
+        const auto error =
+            aki::heyaki::validate_relay_enroll_request(request);
+        REQUIRE(error.has_value());
+        REQUIRE(error->find("256") != std::string::npos);
+    }
+    // password 恰在上限（256B）：合法；空租户被原位归一为 "default"。
+    SECTION("password at the bound defaults an empty tenant") {
+        RelayEnrollRequest request;
+        request.relay_url = "wss://relay.example.com/relay";
+        request.enrollment_password.assign(
+            aki::heyaki::kRelayEnrollmentPasswordMaxBytes, 'x');
+        REQUIRE_FALSE(
+            aki::heyaki::validate_relay_enroll_request(request).has_value());
+        REQUIRE(request.tenant
+            == std::string(aki::heyaki::kRelayPasswordDefaultTenant));
+        REQUIRE(request.tenant == "default");
+    }
+    // password 模式显式租户：保留不覆盖（自定义默认租户部署经显式输入）。
+    SECTION("password mode keeps an explicit tenant") {
+        RelayEnrollRequest request;
+        request.relay_url = "wss://relay.example.com/relay";
+        request.tenant = "custom-tenant";
+        request.enrollment_password = "owner-password";
+        REQUIRE_FALSE(
+            aki::heyaki::validate_relay_enroll_request(request).has_value());
+        REQUIRE(request.tenant == "custom-tenant");
+    }
+    // token 模式空租户：仍拒绝（既有语义回归）。
+    SECTION("token mode still requires a tenant") {
+        RelayEnrollRequest request;
+        request.relay_url = "wss://relay.example.com/relay";
+        request.bootstrap_token = "bootstrap-token";
+        const auto error =
+            aki::heyaki::validate_relay_enroll_request(request);
+        REQUIRE(error.has_value());
+        REQUIRE_FALSE(error->empty());
+        REQUIRE(request.tenant.empty());  // token 模式不做租户归一
+    }
+}
+
 TEST_CASE("enroll_relay_profile fails visibly against an unreachable relay",
     "[unit][relay_integration][m7_relay]") {
     const auto root = make_temp_root("enroll-unreachable");
@@ -391,6 +471,86 @@ TEST_CASE("enroll_relay_profile scrubs the bootstrap token on every failure path
         request.relay_url = "wss://127.0.0.1:1";
         std::string error;
         expect_failed_and_scrubbed(request, error);
+    }
+
+    // ---- M8-04（决策 11 阶段 2）密码镜像：同一组失败退出路径，凭据换为
+    //      enrollment_password（空租户经 validate 归一，不构成拒绝）。----
+    const auto expect_password_failed_and_scrubbed =
+        [&profile](RelayEnrollRequest& request, std::string& error) {
+            REQUIRE_FALSE(request.enrollment_password.empty());  // 前置
+            REQUIRE(request.bootstrap_token.empty());
+            const auto result =
+                aki::heyaki::enroll_relay_profile(profile, request, error);
+            REQUIRE_FALSE(result.has_value());
+            REQUIRE_FALSE(error.empty());
+            REQUIRE(request.enrollment_password.empty());
+            REQUIRE(request.bootstrap_token.empty());
+            REQUIRE(aki::heyaki::relay_enrollment_views(profile).empty());
+        };
+
+    RelayEnrollRequest password_base;
+    password_base.relay_url = "wss://relay.example.com/relay";
+    password_base.enrollment_password = "owner-enroll-secret";
+
+    // 静态校验拒绝：URL 非 wss://。
+    SECTION("password mode non-wss url is rejected and scrubbed") {
+        auto request = password_base;
+        request.relay_url = "http://relay.example.com";
+        std::string error;
+        expect_password_failed_and_scrubbed(request, error);
+    }
+    // 静态校验拒绝：password 超过 256B 上限（validate 面早退）。
+    SECTION("oversized password is rejected and scrubbed") {
+        auto request = password_base;
+        request.enrollment_password.assign(
+            aki::heyaki::kRelayEnrollmentPasswordMaxBytes + 1U, 'x');
+        std::string error;
+        expect_password_failed_and_scrubbed(request, error);
+    }
+    // 校验拒绝：ca_file 不存在。
+    SECTION("password mode missing ca file is rejected and scrubbed") {
+        auto request = password_base;
+        request.ca_file = std::filesystem::path{
+            "/nonexistent/aki-relay-scrub-ca.pem"};
+        std::string error;
+        expect_password_failed_and_scrubbed(request, error);
+    }
+    // pin 失败：文件存在但非 PEM（validate 通过、pin 同步拒绝）。
+    SECTION("password mode non-PEM ca file fails the pin and scrubs") {
+        const auto pem_root = make_temp_root("enroll-scrub-pw-notpem");
+        const auto not_pem = pem_root / "not-a-cert.pem";
+        {
+            std::ofstream out(not_pem, std::ios::binary);
+            out << "this is not a PEM certificate\n";
+        }
+        auto request = password_base;
+        request.ca_file = not_pem;
+        std::string error;
+        expect_password_failed_and_scrubbed(request, error);
+        std::error_code pem_ec;
+        std::filesystem::remove_all(pem_root, pem_ec);
+    }
+    // 上游 WSS 交换失败：127.0.0.1:1 不可达（password 模式无 ca_file →
+    // TOFU 首连 verify_peer=false，仍即时连接拒绝）。
+    SECTION("password mode unreachable relay exchange failure scrubs") {
+        auto request = password_base;
+        request.relay_url = "wss://127.0.0.1:1";
+        std::string error;
+        expect_password_failed_and_scrubbed(request, error);
+    }
+    // 双凭据拒绝（XOR 违约）：两凭据都必须被原位擦除（拒绝路径同样不落库）。
+    SECTION("dual-credential rejection scrubs both secrets") {
+        auto request = password_base;
+        request.tenant = "aki";
+        request.bootstrap_token = "bootstrap-secret-token";
+        std::string error;
+        const auto result =
+            aki::heyaki::enroll_relay_profile(profile, request, error);
+        REQUIRE_FALSE(result.has_value());
+        REQUIRE_FALSE(error.empty());
+        REQUIRE(request.bootstrap_token.empty());
+        REQUIRE(request.enrollment_password.empty());
+        REQUIRE(aki::heyaki::relay_enrollment_views(profile).empty());
     }
 
     std::error_code ec;
