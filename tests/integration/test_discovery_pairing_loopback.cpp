@@ -109,7 +109,7 @@ DeviceIdentity identity_of(const aki::heyaki::LocalIdentity& identity,
 // out = Snapshot{std::move(...)}），旧 AppState 的 vector 缓冲随即销毁，
 // 不得跨重载持有（否则 heap-use-after-free）。
 const DeviceIdentity* find_device(
-    const executor::comm::Snapshot<aki::app::AppState>& snapshot,
+    const kairo::comm::Snapshot<aki::app::AppState>& snapshot,
     const DeviceId& id) {
     for (const auto& device : snapshot.value.devices.devices) {
         if (device.id == id) {
@@ -180,7 +180,7 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
 
     // 拒绝路径：未运行 executor 的借用创建可见失败（DEC-006 前置）。
     {
-        executor::Executor stopped_executor;
+        kairo::Executor stopped_executor;
         bool rejected_visible = false;
         try {
             (void)aki::heyaki::NodeSession::create(stopped_executor,
@@ -202,7 +202,7 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
     auto control = std::make_shared<aki::persistence::DatabaseWorkerControl>(
         std::make_unique<aki::persistence::Repositories>(
             std::move(database)));
-    executor::BlockingWorkerSpec worker_spec;
+    kairo::BlockingWorkerSpec worker_spec;
     worker_spec.name = "aki.db-worker";
     worker_spec.config.thread_name = "aki-db-worker";
     worker_spec.worker =
@@ -266,7 +266,7 @@ TEST_CASE("Two nodes discover, pair and trust through the borrowed runtime",
 
     // 事件计数达标与 drain 之间仍有入队窗口（回调先 submit 后自增）——
     // 谓词内 drain+load+查找按截止时间收敛，而非单次快照。
-    executor::comm::Snapshot<aki::app::AppState> snapshot;
+    kairo::comm::Snapshot<aki::app::AppState> snapshot;
     REQUIRE(wait_until([&] {
         state_owner.drain();
         if (!state_owner.try_load_snapshot(snapshot)) {

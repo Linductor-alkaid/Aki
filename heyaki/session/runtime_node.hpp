@@ -32,7 +32,7 @@
 #include <heyaki/node.hpp>
 #include <heyaki/runtime.hpp>
 
-#include <executor/executor.hpp>
+#include <kairo/executor.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -141,7 +141,7 @@ public:
     };
 
     // 前置：executor 已 Running（ExecutorOwner.initialize() 之后）。
-    [[nodiscard]] static NodeSession create(executor::Executor& executor,
+    [[nodiscard]] static NodeSession create(kairo::Executor& executor,
         const Options& options) {
         namespace hh = ::heyaki;
         hh::RuntimeConfig runtime_config{};

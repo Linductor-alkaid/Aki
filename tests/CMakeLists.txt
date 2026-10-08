@@ -77,7 +77,7 @@ aki_add_unit_test(test_transfer_state unit/test_transfer_state.cpp)
 
 # M1-02：Application State 单写者边界测试。本测试进程的唯一 Executor owner 是
 # 测试自身的 main()（AGENTS.md 规则 7；正式 owner 由 M1-04 提供），因此链接
-# Catch2 无 main 变体并自带 main；executor::executor 经 aki_app 传播。
+# Catch2 无 main 变体并自带 main；kairo::kairo 经 aki_app 传播。
 add_executable(test_app_state unit/test_app_state.cpp)
 target_compile_features(test_app_state PRIVATE cxx_std_20)
 aki_apply_warnings(test_app_state PRIVATE)
@@ -93,7 +93,7 @@ set_tests_properties(test_app_state PROPERTIES LABELS "unit")
 
 # M1-03：Heyaki Adapter SPI 与 FakeHeyakiAdapter 测试。同为自带 main 的
 # Executor owner（AGENTS.md 规则 7）；aki_heyaki 经仓库根 include 目录使用
-# 头文件形式接入，链接经 aki_app 传播 executor::executor。
+# 头文件形式接入，链接经 aki_app 传播 kairo::kairo。
 add_executable(test_heyaki_adapter unit/test_heyaki_adapter.cpp)
 target_compile_features(test_heyaki_adapter PRIVATE cxx_std_20)
 aki_apply_warnings(test_heyaki_adapter PRIVATE)

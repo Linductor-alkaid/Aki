@@ -225,7 +225,7 @@ struct SendPathStack {
         adapter.set_sink(&sink);
         // 装配序（§11.1③）：TM 构造（事件投递面注册）先于 worker 启动。
         auto runnable = std::make_unique<TransferIoRunnable>(io->impl());
-        executor::BlockingWorkerSpec spec;
+        kairo::BlockingWorkerSpec spec;
         spec.name = "aki.transfer-io";
         spec.config.thread_name = "aki-transfer-io";
         spec.worker = std::move(runnable);
@@ -323,7 +323,7 @@ void run_chunk_case(SendPathStack& stack, const FileMetadata& file,
     REQUIRE(stack.adapter.inject_transfer_completed(id, TransferState::Completed));
     stack.quiesce();
     {
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         REQUIRE(stack.state_owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.size() == 1);
         REQUIRE(snapshot.value.transfers.transfers.front().state
@@ -427,7 +427,7 @@ TEST_CASE("Hash-first image flow carries stored_sha256 in the message",
     const auto expected_hash = sha256_hex(read_bytes(source));
     REQUIRE(wait_until([&] {
         stack.state_owner.drain();
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         if (!stack.state_owner.try_load_snapshot(snapshot)) {
             return false;
         }
@@ -478,7 +478,7 @@ TEST_CASE("Progress coalescing applies at most one update per drain and "
     stack.quiesce();
     // latest-wins：终值不丢（进度槽语义）。
     {
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         REQUIRE(stack.state_owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.front().transferred == 24);
     }
@@ -533,7 +533,7 @@ TEST_CASE("Wire commit reconciles a paused row while preserving the archive gate
     const FileMetadata file{"gate.bin", 40, "application/octet-stream", ""};
     const auto settle = [&] { REQUIRE(transfers.flush(2s)); owner.drain(); };
     const auto state = [&] {
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.size() == 1);
         REQUIRE(snapshot.value.transfers.transfers.front().file == file);
@@ -652,7 +652,7 @@ TEST_CASE("IO failure surfaces as a failed event and the worker survives",
     REQUIRE(stack.adapter.inject_transfer_completed(id, TransferState::Completed));
     stack.quiesce();
     {
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         REQUIRE(stack.state_owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.front().state
             == TransferState::Completed);
@@ -962,14 +962,14 @@ TEST_CASE("Send archive completes through the DB terminal job group and "
     adapter.set_sink(&sink);
 
     auto io_runnable = std::make_unique<TransferIoRunnable>(io->impl());
-    executor::BlockingWorkerSpec io_spec;
+    kairo::BlockingWorkerSpec io_spec;
     io_spec.name = "aki.transfer-io";
     io_spec.config.thread_name = "aki-transfer-io";
     io_spec.worker = std::move(io_runnable);
     REQUIRE(host.start_blocking_worker(std::move(io_spec)));
     auto db_runnable =
         std::make_unique<aki::persistence::DatabaseWorkerRunnable>(db);
-    executor::BlockingWorkerSpec db_spec;
+    kairo::BlockingWorkerSpec db_spec;
     db_spec.name = "aki.db-worker";
     db_spec.config.thread_name = "aki-db-worker";
     db_spec.worker = std::move(db_runnable);
@@ -1007,7 +1007,7 @@ TEST_CASE("Send archive completes through the DB terminal job group and "
     REQUIRE(wait_until([&] {
         (void)transfers.flush(100ms);
         state_owner.drain();
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         return state_owner.try_load_snapshot(snapshot)
             && snapshot.value.transfers.transfers.front().transferred == 40;
     }, 5s));
@@ -1017,7 +1017,7 @@ TEST_CASE("Send archive completes through the DB terminal job group and "
     REQUIRE(wait_until([&] {
         (void)transfers.flush(100ms);
         state_owner.drain();
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         return state_owner.try_load_snapshot(snapshot)
             && snapshot.value.transfers.transfers.front().state
                 == TransferState::Completed;

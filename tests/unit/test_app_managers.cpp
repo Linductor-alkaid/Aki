@@ -504,7 +504,7 @@ TEST_CASE("Recovered conversations follow link events without losing their IDs o
             *stack.messages, *stack.transfers);
     };
     const auto check = [&](ConversationState expected) {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(stack.state_owner.try_load_snapshot(snapshot));
         const auto& rows = snapshot.value.conversations.conversations;
         REQUIRE(rows.size() == 2);
@@ -562,7 +562,7 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
     REQUIRE(fake.inject_device_discovered(make_discovered("dev-a")));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.size() == 1);
         REQUIRE(snapshot.value.devices.devices.front().id == DeviceId{"dev-a"});
@@ -574,7 +574,7 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
     REQUIRE(fake.inject_device_connected(DeviceId{"dev-a"}, ConnectionPath::Lan));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.front().presence == PresenceState::Online);
         REQUIRE(snapshot.value.conversations.conversations.empty());
@@ -584,7 +584,7 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
     REQUIRE(stack.conversations->ensure_conversation(DeviceId{"local-1"}, DeviceId{"dev-a"}));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.conversations.conversations.size() == 1);
         REQUIRE(snapshot.value.conversations.conversations.front().id
@@ -597,7 +597,7 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
     REQUIRE(fake.inject_device_disconnected(DeviceId{"dev-a"}));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.front().presence == PresenceState::Offline);
         REQUIRE(snapshot.value.conversations.conversations.front().state
@@ -608,7 +608,7 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
     REQUIRE(fake.inject_device_connected(DeviceId{"dev-a"}, ConnectionPath::P2p));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.conversations.conversations.size() == 1);
         REQUIRE(snapshot.value.conversations.conversations.front().state
@@ -623,7 +623,7 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
     REQUIRE(fake.inject_message_received(make_message("m-in")));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.messages.messages.size() == 1);
         REQUIRE(snapshot.value.messages.messages.front().state == DeliveryState::Delivered);
@@ -636,7 +636,7 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
     REQUIRE(stack.messages->send_text(DeviceId{"beta"}, MessageId{"m-out"}, "hello"));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         bool seen = false;
         for (const auto& message : snapshot.value.messages.messages) {
@@ -655,7 +655,7 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
     REQUIRE(fake.inject_message_delivered(ConversationId{"conv-beta"}, MessageId{"m-out"}));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         for (const auto& message : snapshot.value.messages.messages) {
             if (message.id == MessageId{"m-out"}) {
@@ -674,7 +674,7 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
         ConversationId{"conv-beta"}, MessageId{"m-fail"}));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         bool seen = false;
         for (const auto& message : snapshot.value.messages.messages) {
@@ -697,7 +697,7 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
     REQUIRE(fake.inject_transfer_progress(TransferId{"t-1"}, 512, 1024));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.size() == 1);
         REQUIRE(snapshot.value.transfers.transfers.front().state
@@ -708,7 +708,7 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
     REQUIRE(fake.inject_transfer_paused(TransferId{"t-1"}));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.front().state
             == TransferState::Paused);
@@ -716,7 +716,7 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
     REQUIRE(fake.inject_transfer_paused(TransferId{"t-1"}));
     settle();  // 同态重复：幂等
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.front().state
             == TransferState::Paused);
@@ -725,7 +725,7 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
     REQUIRE(fake.inject_transfer_progress(TransferId{"t-1"}, 768, 1024));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.front().state
             == TransferState::Transferring);
@@ -734,7 +734,7 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
     REQUIRE(fake.inject_transfer_completed(TransferId{"t-1"}, TransferState::Completed));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.front().state == TransferState::Completed);
     }
@@ -743,7 +743,7 @@ TEST_CASE("RouterSink routes the twelve sink methods to per-domain stores in FIF
     REQUIRE(fake.inject_connection_path_changed(DeviceId{"dev-a"}, ConnectionPath::P2p,
         ConnectionPath::Relay));
     settle();
-    executor::comm::Snapshot<AppState> path_snapshot;
+    kairo::comm::Snapshot<AppState> path_snapshot;
     int path_attempts = 0;
     while (!owner.try_load_snapshot(path_snapshot) && path_attempts < 64) {
         ++path_attempts;
@@ -804,7 +804,7 @@ TEST_CASE("Device presence fallback routes to a volatile SetPresence without a m
     REQUIRE(stack.devices->enqueue_discovered(make_discovered("dev-a")));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.size() == 1);
         REQUIRE(snapshot.value.devices.devices.front().presence
@@ -820,7 +820,7 @@ TEST_CASE("Device presence fallback routes to a volatile SetPresence without a m
         DeviceId{"dev-a"}, PresenceState::Offline));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.size() == 1);
         REQUIRE(snapshot.value.devices.devices.front().presence
@@ -833,7 +833,7 @@ TEST_CASE("Device presence fallback routes to a volatile SetPresence without a m
         DeviceId{"dev-a"}, PresenceState::Online));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.front().presence
             == PresenceState::Online);
@@ -845,7 +845,7 @@ TEST_CASE("Device presence fallback routes to a volatile SetPresence without a m
         DeviceId{"ghost"}, PresenceState::Offline));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.size() == 1);
     }
@@ -881,7 +881,7 @@ TEST_CASE("Signed peer name and local remark retain separate device fields",
         discovered.identity.public_key, "客厅电脑"));
     REQUIRE(stack.devices->set_remark(DeviceId{"dev-named"}, "小主机"));
     settle();
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(stack.state_owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.devices.devices.front().display_name == "客厅电脑");
     REQUIRE(snapshot.value.devices.devices.front().remark == "小主机");
@@ -918,7 +918,7 @@ TEST_CASE("Session authorization keeps local trust Pending until local pairing s
     REQUIRE(stack.devices->enqueue_pairing_ready(DeviceId{"dev-peer"}));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.size() == 1);
         REQUIRE(snapshot.value.devices.devices.front().trust_state
@@ -933,7 +933,7 @@ TEST_CASE("Session authorization keeps local trust Pending until local pairing s
         ConnectionPath::Lan));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.size() == 1);
         REQUIRE(snapshot.value.devices.devices.front().trust_state
@@ -969,7 +969,7 @@ TEST_CASE("Session authorization keeps local trust Pending until local pairing s
         ConnectionPath::Lan));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.front().trust_state
             == TrustState::Pending);
@@ -987,7 +987,7 @@ TEST_CASE("Session authorization keeps local trust Pending until local pairing s
         ConnectionPath::Lan));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         bool seen = false;
         for (const auto& device : snapshot.value.devices.devices) {
@@ -1013,7 +1013,7 @@ TEST_CASE("Session authorization keeps local trust Pending until local pairing s
         ConnectionPath::Lan));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.size() == 2);
         for (const auto& device : snapshot.value.devices.devices) {
@@ -1044,7 +1044,7 @@ TEST_CASE("Connected calibrates inbound trust and nullopt queries submit nothing
             aki::app::UpsertDevice{std::move(row)}));
     };
     const auto inbound_of = [](AppStateOwner& owner) {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         return snapshot.value.devices.devices.front().inbound_trust;
     };
@@ -1064,7 +1064,7 @@ TEST_CASE("Connected calibrates inbound trust and nullopt queries submit nothing
             ConnectionPath::Lan));
         quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
             *stack.transfers);
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.front().presence
             == PresenceState::Online);
@@ -1092,7 +1092,7 @@ TEST_CASE("Connected calibrates inbound trust and nullopt queries submit nothing
             ConnectionPath::Lan));
         quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
             *stack.transfers);
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.front().presence
             == PresenceState::Online);
@@ -1122,7 +1122,7 @@ TEST_CASE("Connected calibrates inbound trust and nullopt queries submit nothing
         REQUIRE(stack.devices->revoke_device(DeviceId{"peer"}));
         quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
             *stack.transfers);
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.front().trust_state
             == TrustState::Revoked);
@@ -1191,7 +1191,7 @@ TEST_CASE("Concurrent senders never lose a work item (single-flight pump)",
     // FK 前置校验拒绝在此用例中必须为零（会话先行已在上方保证）——精确
     // 诊断位，避免退化成难以解读的快照计数失败。
     REQUIRE(owner.stats().updates_rejected == 0);
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.messages.messages.size() == kSenders * kPerSender + 10);
     REQUIRE(stack.adapter.sent_texts().size() == kSenders * kPerSender + 10);
@@ -1235,7 +1235,7 @@ TEST_CASE("DOD-02 task exception on the manager drain path is visible and self-h
     REQUIRE(stats.processed == 1);     // m-ok 成功处理；m-boom 未落地。
 
     drain_until_idle(owner);
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.messages.messages.size() == 1);
     REQUIRE(snapshot.value.messages.messages.front().id == MessageId{"m-ok"});
@@ -1284,7 +1284,7 @@ TEST_CASE("DOD-02 submit rejection: admission limit and inbox backpressure are v
         REQUIRE(stats.inbox_rejections == 0);
 
         drain_until_idle(owner);
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.messages.messages.size() == 2);
 
@@ -1318,7 +1318,7 @@ TEST_CASE("DOD-02 submit rejection: admission limit and inbox backpressure are v
         REQUIRE(stats.enqueued == 2);
         REQUIRE(stats.processed == 2);
         drain_until_idle(stack.state_owner);
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(stack.state_owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.messages.messages.size() == 2);
 
@@ -1348,7 +1348,7 @@ TEST_CASE("DOD-02 in-flight cancellation: transfer session observes the stop tok
     REQUIRE(fake.transfer_session_known("t-1"));
     quiesce(owner, *stack.devices, *stack.conversations, *stack.messages, transfers);
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.size() == 1);
         REQUIRE(snapshot.value.transfers.transfers.front().state == TransferState::Queued);
@@ -1374,7 +1374,7 @@ TEST_CASE("DOD-02 in-flight cancellation: transfer session observes the stop tok
     REQUIRE(fake.inject_transfer_completed(TransferId{"t-1"}, TransferState::Cancelled));
     quiesce(owner, *stack.devices, *stack.conversations, *stack.messages, transfers);
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.front().state == TransferState::Cancelled);
     }
@@ -1418,7 +1418,7 @@ TEST_CASE("Duplicate transfer id is rejected without replacing the live session"
     // 本地记录不受重复发起影响：仍是一条 Queued 记录（守卫先于 Upsert）。
     quiesce(owner, *stack.devices, *stack.conversations, *stack.messages, transfers);
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.size() == 1);
         REQUIRE(snapshot.value.transfers.transfers.front().state == TransferState::Queued);
@@ -1473,7 +1473,7 @@ TEST_CASE("DOD-02 timeout: queued drain killed by soft timeout self-heals withou
          }, 100ms); ++attempt) {
         try {
             saturate.get();  // 消费排队软超时的 TimedOutException 后重试。
-        } catch (const executor::TimedOutException&) {
+        } catch (const kairo::TimedOutException&) {
         }
         saturate = submit_saturate();
     }
@@ -1496,7 +1496,7 @@ TEST_CASE("DOD-02 timeout: queued drain killed by soft timeout self-heals withou
     REQUIRE(stats.processed == 2);   // 被击杀排空的存量经重排完成。
 
     drain_until_idle(owner);
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.messages.messages.size() == 2);
     REQUIRE(stack.adapter.sent.size() == 2);
@@ -1549,7 +1549,7 @@ TEST_CASE("DOD-02 shutdown: the composition hook cancels, drains, and closes in 
     REQUIRE_FALSE(fake.inject_message_received(make_message("m-late")));
 
     // 末次快照可读：存量已在钩子内排空并经 close 发布。
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.devices.devices.size() == 1);
     REQUIRE(snapshot.value.devices.devices.front().presence == PresenceState::Online);
@@ -1583,7 +1583,7 @@ TEST_CASE("Late transfer events cannot revive a terminal transfer (RULE-08)",
     REQUIRE(fake.inject_transfer_completed(TransferId{"t-1"}, TransferState::Cancelled));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.transfers.transfers.front().state == TransferState::Cancelled);
     }
@@ -1595,7 +1595,7 @@ TEST_CASE("Late transfer events cannot revive a terminal transfer (RULE-08)",
     REQUIRE(fake.inject_transfer_completed(TransferId{"t-1"}, TransferState::Completed));
     settle();
 
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.transfers.transfers.front().state == TransferState::Cancelled);
     REQUIRE(snapshot.value.transfers.transfers.front().transferred == 0);
@@ -1618,7 +1618,7 @@ TEST_CASE("Late delivery report cannot revive a failed message (RULE-08)",
     REQUIRE(messages.flush(2s));
     drain_until_idle(owner);
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.messages.messages.size() == 1);
         REQUIRE(snapshot.value.messages.messages.front().state == DeliveryState::Failed);
@@ -1629,7 +1629,7 @@ TEST_CASE("Late delivery report cannot revive a failed message (RULE-08)",
     REQUIRE(messages.flush(2s));
 
     drain_until_idle(owner);
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.messages.messages.front().state == DeliveryState::Failed);
     REQUIRE(owner.stats().updates_rejected == 1);
@@ -1655,7 +1655,7 @@ TEST_CASE("Send-failure report maps to Failed and a late report cannot revive De
     REQUIRE(messages.flush(2s));
     drain_until_idle(owner);
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.messages.messages.size() == 1);
         REQUIRE(snapshot.value.messages.messages.front().state == DeliveryState::Failed);
@@ -1681,7 +1681,7 @@ TEST_CASE("Send-failure report maps to Failed and a late report cannot revive De
     REQUIRE(messages.flush(2s));
     drain_until_idle(owner);
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         for (const auto& message : snapshot.value.messages.messages) {
             if (message.id == MessageId{"m-d"}) {
@@ -1731,7 +1731,7 @@ TEST_CASE("Image send routes through MessageManager with terminal idempotency",
             DeviceId{"beta"}, MessageId{"m-img"}, media, TransferId{"t-img"}));
         settle();
         {
-            executor::comm::Snapshot<AppState> snapshot;
+            kairo::comm::Snapshot<AppState> snapshot;
             REQUIRE(owner.try_load_snapshot(snapshot));
             REQUIRE(snapshot.value.messages.messages.size() == 1);
             const auto& row = snapshot.value.messages.messages.front();
@@ -1758,7 +1758,7 @@ TEST_CASE("Image send routes through MessageManager with terminal idempotency",
             ConversationId{"conv-beta"}, MessageId{"m-img"}));
         settle();
         {
-            executor::comm::Snapshot<AppState> snapshot;
+            kairo::comm::Snapshot<AppState> snapshot;
             REQUIRE(owner.try_load_snapshot(snapshot));
             REQUIRE(snapshot.value.messages.messages.front().state
                 == DeliveryState::Delivered);
@@ -1774,7 +1774,7 @@ TEST_CASE("Image send routes through MessageManager with terminal idempotency",
         REQUIRE(fake.inject_message_received(std::move(inbound)));
         settle();
         {
-            executor::comm::Snapshot<AppState> snapshot;
+            kairo::comm::Snapshot<AppState> snapshot;
             REQUIRE(owner.try_load_snapshot(snapshot));
             REQUIRE(snapshot.value.messages.messages.size() == 2);
             const auto& row = snapshot.value.messages.messages.back();
@@ -1797,7 +1797,7 @@ TEST_CASE("Image send routes through MessageManager with terminal idempotency",
                 FileMetadata{"photo.png", 1, "image/png", ""}, TransferId{"t-img"}));
             REQUIRE(stack.messages->flush(2s));
             drain_until_idle(stack.state_owner);
-            executor::comm::Snapshot<AppState> snapshot;
+            kairo::comm::Snapshot<AppState> snapshot;
             REQUIRE(stack.state_owner.try_load_snapshot(snapshot));
             REQUIRE(snapshot.value.messages.messages.front().state
                 == DeliveryState::Failed);
@@ -1880,7 +1880,7 @@ TEST_CASE("Image send flow gates on transfer admission before the message",
         {
             // 消息行 Failed（Queued -> Failed 合法边）；Adapter 零 send 调用
             //（闸门断言对象，§6.1②）。
-            executor::comm::Snapshot<AppState> snapshot;
+            kairo::comm::Snapshot<AppState> snapshot;
             REQUIRE(owner.try_load_snapshot(snapshot));
             REQUIRE(snapshot.value.messages.messages.size() == 1);
             REQUIRE(snapshot.value.messages.messages.front().id
@@ -1945,7 +1945,7 @@ TEST_CASE("Image send flow gates on transfer admission before the message",
             // 图片消息从未进入系统（无 m-gate-2 行）；cancel_transfer 到达
             // Adapter（闸门第 2 步的因果链断言——传输行终态经标准事件路径
             // 推进，§7.1②）。
-            executor::comm::Snapshot<AppState> snapshot;
+            kairo::comm::Snapshot<AppState> snapshot;
             REQUIRE(owner.try_load_snapshot(snapshot));
             for (const auto& message : snapshot.value.messages.messages) {
                 REQUIRE(message.id != MessageId{"m-gate-2"});
@@ -2002,7 +2002,7 @@ TEST_CASE("Image send flow gates on transfer admission before the message",
         quiesce(owner, *stack.devices, *stack.conversations, *stack.messages,
             *stack.transfers);
         {
-            executor::comm::Snapshot<AppState> snapshot;
+            kairo::comm::Snapshot<AppState> snapshot;
             REQUIRE(owner.try_load_snapshot(snapshot));
             // 消息照常发送并记录 Sent（引用既有 TransferId）。
             REQUIRE(snapshot.value.messages.messages.size() == 1);
@@ -2086,7 +2086,7 @@ TEST_CASE("Image send flow gates on transfer admission before the message",
         {
             // 降级①后置结果：无 m-gate-3 消息行（只有两条占位文本）；Adapter
             // 零图片 send 调用（闸门断言对象不变，§6.1②）。
-            executor::comm::Snapshot<AppState> snapshot;
+            kairo::comm::Snapshot<AppState> snapshot;
             REQUIRE(owner.try_load_snapshot(snapshot));
             REQUIRE(snapshot.value.messages.messages.size() == 2);
             for (const auto& message : snapshot.value.messages.messages) {
@@ -2167,7 +2167,7 @@ TEST_CASE("Image send flow gates on transfer admission before the message",
         {
             // 降级②后置结果：补偿取消丢失——t-flow-4 传输行照常落库并停留
             // Queued（非 Cancelled）；m-gate-4 消息行未产生。
-            executor::comm::Snapshot<AppState> snapshot;
+            kairo::comm::Snapshot<AppState> snapshot;
             REQUIRE(owner.try_load_snapshot(snapshot));
             const auto& transfer_rows = snapshot.value.transfers.transfers;
             REQUIRE(transfer_rows.size() == 2);
@@ -2237,7 +2237,7 @@ TEST_CASE("Image message delivery and transfer terminal states stay orthogonal "
         == aki::app::ImageSendFlowResult::Submitted);
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.messages.messages.size() == 1);
         REQUIRE(snapshot.value.transfers.transfers.size() == 1);
@@ -2262,7 +2262,7 @@ TEST_CASE("Image message delivery and transfer terminal states stay orthogonal "
     REQUIRE(fake.inject_transfer_completed(TransferId{"t-img"}, TransferState::Failed));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.messages.messages.front().state
             == DeliveryState::Delivered);
@@ -2285,7 +2285,7 @@ TEST_CASE("Image message delivery and transfer terminal states stay orthogonal "
         TransferId{"t-rx"}, TransferState::Completed));
     settle();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         const auto& messages = snapshot.value.messages.messages;
         REQUIRE(messages.size() == 2);
@@ -2329,7 +2329,7 @@ TEST_CASE("First inbound message creates its conversation before the message upd
     REQUIRE(stack.conversations->flush(2s));
     REQUIRE(stack.messages->flush(2s));
     stack.state_owner.drain();
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(stack.state_owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.conversations.conversations.size() == 1);
     REQUIRE(snapshot.value.conversations.conversations.front().id == ConversationId{"conv-alpha"});

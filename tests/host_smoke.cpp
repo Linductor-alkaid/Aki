@@ -216,7 +216,7 @@ int main(int argc, char** argv) {
         reopened_state.transfers.transfers = reopened.state.transfers;
         aki::app::AppStateOwner reopened_owner{aki::app::AppStateOwnerOptions{},
             reopened_state};
-        executor::comm::Snapshot<aki::app::AppState> seeded;
+        kairo::comm::Snapshot<aki::app::AppState> seeded;
         bool seeded_readable = false;
         for (int attempt = 0; attempt < 64 && !seeded_readable; ++attempt) {
             seeded_readable = reopened_owner.try_load_snapshot(seeded);

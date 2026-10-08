@@ -241,7 +241,7 @@ TEST_CASE("Two-node send-side transfer chain over the borrowed runtime",
     }};
 
     auto io_runnable = std::make_unique<TransferIoRunnable>(io->impl());
-    executor::BlockingWorkerSpec io_spec;
+    kairo::BlockingWorkerSpec io_spec;
     io_spec.name = "aki.transfer-io";
     io_spec.config.thread_name = "aki-transfer-io";
     io_spec.worker = std::move(io_runnable);

@@ -366,7 +366,7 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
         std::atomic<bool> loop_entered{false};
         std::atomic<bool> loop_exited{false};
         auto submission = host.executor().submit_cancellable(
-            [&loop_entered, &loop_exited](executor::StopToken token) {
+            [&loop_entered, &loop_exited](kairo::StopToken token) {
                 loop_entered.store(true);
                 while (!token.stop_requested()) {
                     std::this_thread::yield();
@@ -380,7 +380,7 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
         const auto response =
             host.executor().request_task_cancel(submission.handle);
         INFO("cancel response: "
-            << executor::to_string(response.result));
+            << kairo::to_string(response.result));
         REQUIRE(response.accepted());
         REQUIRE(submission.future.get() == 7);  // 协作退出，正常返回值结算。
         REQUIRE(loop_exited.load());
@@ -406,7 +406,7 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
             return 1;
         });
         auto rejected = host.executor().submit_auto([] { return 2; });
-        REQUIRE_THROWS_AS(rejected.get(), executor::CapacityExhaustedException);
+        REQUIRE_THROWS_AS(rejected.get(), kairo::CapacityExhaustedException);
         release_held.store(true);
         REQUIRE(held.get() == 1);
         host.executor().set_max_in_flight_tasks(0);  // 恢复未启用（0）。
@@ -466,7 +466,7 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
     REQUIRE(report.executor_report.blocking_workers_requested == 2);
     REQUIRE(report.executor_report.blocking_workers_stopped == 2);
     REQUIRE(report.executor_report.lifecycle_after
-        == executor::ExecutorLifecycleState::Stopped);
+        == kairo::ExecutorLifecycleState::Stopped);
 
     // 写路径（DEC-009 ①）：本地身份 UpsertDevice 已 admit 并零丢失落库。
     REQUIRE(report.write_admitted > 0);

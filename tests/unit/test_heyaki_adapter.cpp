@@ -22,7 +22,7 @@
 #include "heyaki/adapter/fake_heyaki_adapter.hpp"
 #include "heyaki/adapter/heyaki_adapter.hpp"
 
-#include <executor/executor.hpp>
+#include <kairo/executor.hpp>
 
 #include <catch2/catch_session.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -41,18 +41,18 @@
 
 namespace {
 
-executor::Executor* g_test_executor = nullptr;
+kairo::Executor* g_test_executor = nullptr;
 
 }  // namespace
 
 namespace aki::test {
 
 // 本进程唯一 Executor owner 是 main()（见文件末尾）；用例经此获取执行上下文。
-[[nodiscard]] executor::Executor& executor() {
+[[nodiscard]] kairo::Executor& executor() {
     return *g_test_executor;
 }
 
-void use_executor(executor::Executor& executor) {
+void use_executor(kairo::Executor& executor) {
     g_test_executor = &executor;
 }
 
@@ -320,7 +320,7 @@ TEST_CASE("Injected discovery reaches the AppState snapshot and the event outbox
     REQUIRE(injected.get());
     owner.drain();
 
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.devices.devices.size() == 1);
     REQUIRE(snapshot.value.devices.devices.front().id == DeviceId{"dev-1"});
@@ -362,7 +362,7 @@ TEST_CASE("Injected connection path change drives the LatestMailbox summary",
 
     // 逐设备路径（DEC-015）：两台设备两条不同路径同时正确——全局单值摘要
     // 无法表达的形态。
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     int attempts = 0;
     while (!owner.try_load_snapshot(snapshot) && attempts < 64) {
         ++attempts;
@@ -427,7 +427,7 @@ TEST_CASE("Late injected events cannot revive terminal entities (RULE-08)",
         REQUIRE(fake.inject_transfer_progress(TransferId{"t-1"}, 999, 1024));
         owner.drain();
 
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         const auto& transfers = snapshot.value.transfers.transfers;
         REQUIRE(transfers.size() == 1);
@@ -449,7 +449,7 @@ TEST_CASE("Late injected events cannot revive terminal entities (RULE-08)",
         REQUIRE(fake.inject_device_discovered(make_discovered("dev-1", TrustState::Trusted)));
         owner.drain();
 
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.devices.devices.front().trust_state == TrustState::Revoked);
         REQUIRE(owner.stats().updates_rejected == 1);
@@ -477,7 +477,7 @@ TEST_CASE("Send-failure report maps to SetDeliveryState(Failed) on the bridge (D
     REQUIRE(bridge.on_message_send_failed(ConversationId{"conv-test"}, MessageId{"m-1"}));
     owner.drain();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         REQUIRE(snapshot.value.messages.messages.size() == 1);
         REQUIRE(snapshot.value.messages.messages.front().state == DeliveryState::Failed);
@@ -499,7 +499,7 @@ TEST_CASE("Send-failure report maps to SetDeliveryState(Failed) on the bridge (D
     REQUIRE(bridge.on_message_send_failed(ConversationId{"conv-test"}, MessageId{"m-2"}));
     owner.drain();
     {
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         REQUIRE(owner.try_load_snapshot(snapshot));
         for (const auto& message : snapshot.value.messages.messages) {
             if (message.id == MessageId{"m-2"}) {
@@ -642,7 +642,7 @@ TEST_CASE("DOD-02 in-flight cancellation: close releases a waiting event consume
     owner.close();
     const auto result = consumer.get();
     REQUIRE_FALSE(result.ok);
-    REQUIRE(result.error_code == executor::comm::CommErrorCode::Closed);
+    REQUIRE(result.error_code == kairo::comm::CommErrorCode::Closed);
 
     // 关闭后的注入路径同样明确拒绝（不再有事件入口）。
     REQUIRE_FALSE(fake.inject_message_received(make_message("m-late")));
@@ -654,7 +654,7 @@ TEST_CASE("DOD-02 timeout: waiting on a quiet event outbox returns Timeout",
     AppEvent event;
     const auto result = owner.receive_event_for(event, 20ms);
     REQUIRE_FALSE(result.ok);
-    REQUIRE(result.error_code == executor::comm::CommErrorCode::Timeout);
+    REQUIRE(result.error_code == kairo::comm::CommErrorCode::Timeout);
     REQUIRE(owner.event_outbox_stats().timeout_count == 1);
 }
 
@@ -677,13 +677,13 @@ TEST_CASE("DOD-02 shutdown: close drains injected backlog and rejects new work",
     REQUIRE(event.sequence == 2);
     const auto after_drain = owner.receive_event_for(event, 20ms);
     REQUIRE_FALSE(after_drain.ok);
-    REQUIRE(after_drain.error_code == executor::comm::CommErrorCode::Closed);
+    REQUIRE(after_drain.error_code == kairo::comm::CommErrorCode::Closed);
 
     REQUIRE_FALSE(fake.inject_message_received(make_message("m-3")));
     drain_until_idle(owner);
     REQUIRE(owner.stats().events_forwarded == 2);
 
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(owner.try_load_snapshot(snapshot));  // 末次快照仍可读。
     (void) fake.sink();
 }
@@ -693,10 +693,10 @@ int main(int argc, char* argv[]) {
     // owner 纪律落点说明（设计第 8.2 节）：此处的裸 Executor 实例是 M1-03 落地时
     // 的测试形态——正式 owner 为 app/lifecycle 的 ExecutorOwner（M1-04 已交付，
     // 见 test_executor_lifecycle）；自 M1-06 冒烟宿主起进程内改用 ExecutorOwner。
-    executor::Executor executor;
-    const auto initialized = executor.initialize_ex({});
+    kairo::Executor executor;
+    const auto initialized = executor.initialize({});
     if (!initialized.ok) {
-        std::fputs("executor initialize_ex failed\n", stderr);
+        std::fputs("executor initialize failed\n", stderr);
         return 1;
     }
     aki::test::use_executor(executor);

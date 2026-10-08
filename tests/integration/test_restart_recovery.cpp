@@ -162,14 +162,14 @@ TEST_CASE("Restart recovery restores every domain after a drained shutdown",
 
     // 播种对接：加载结果经 AppStateOwner 构造入参成为初始快照（立即可读）。
     AppStateOwner state_owner{AppStateOwnerOptions{}, seed_from(first.state)};
-    executor::comm::Snapshot<AppState> seeded;
+    kairo::comm::Snapshot<AppState> seeded;
     REQUIRE(state_owner.try_load_snapshot(seeded));
     REQUIRE(seeded.value.messages.messages.empty());
 
     // 恢复完成后注册 DatabaseWorker（§11.1 ②③；单一连接整体移交）。
     auto control = std::make_shared<DatabaseWorkerControl>(
         std::move(first.repositories));
-    executor::BlockingWorkerSpec spec;
+    kairo::BlockingWorkerSpec spec;
     spec.name = "aki.db-worker";
     spec.config.thread_name = "aki-db-worker";
     spec.worker = std::make_unique<DatabaseWorkerRunnable>(control);
@@ -341,7 +341,7 @@ TEST_CASE("Restart recovery restores every domain after a drained shutdown",
     // 播种对接：恢复结果构造 AppStateOwner，初始快照立即可读（§11.1 ②）。
     AppStateOwner reopened_owner{AppStateOwnerOptions{},
         seed_from(reopened.state)};
-    executor::comm::Snapshot<AppState> snapshot;
+    kairo::comm::Snapshot<AppState> snapshot;
     REQUIRE(reopened_owner.try_load_snapshot(snapshot));
     REQUIRE(snapshot.value.devices.devices.size() == 2);
     REQUIRE(snapshot.value.messages.messages.size() == 2);
@@ -420,7 +420,7 @@ TEST_CASE("Host-style shutdown drain loses no admitted jobs",
     RecoveryResult recovery = perform_startup_recovery(root);
     auto control = std::make_shared<DatabaseWorkerControl>(
         std::move(recovery.repositories));
-    executor::BlockingWorkerSpec spec;
+    kairo::BlockingWorkerSpec spec;
     spec.name = "aki.db-worker";
     spec.config.thread_name = "aki-db-worker";
     spec.worker = std::make_unique<DatabaseWorkerRunnable>(control);
@@ -471,7 +471,7 @@ TEST_CASE("Local identity provisions once and lands in the device store",
 
     auto control = std::make_shared<DatabaseWorkerControl>(
         std::move(first.repositories));
-    executor::BlockingWorkerSpec spec;
+    kairo::BlockingWorkerSpec spec;
     spec.name = "aki.db-worker";
     spec.config.thread_name = "aki-db-worker";
     spec.worker = std::make_unique<DatabaseWorkerRunnable>(control);

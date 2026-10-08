@@ -50,12 +50,12 @@ struct FakeWorkerState {
     std::atomic<std::uint64_t> wake_requests{0};
 };
 
-class FakeBlockingWorker final : public executor::IBlockingIoWorker {
+class FakeBlockingWorker final : public kairo::IBlockingIoWorker {
 public:
     explicit FakeBlockingWorker(std::shared_ptr<FakeWorkerState> state)
         : state_(std::move(state)) {}
 
-    void run(executor::StopToken stop_token) override {
+    void run(kairo::StopToken stop_token) override {
         state_->running.store(true);
         std::unique_lock<std::mutex> lock(state_->mutex);
         // wakeup() 必须解除当前等待（blocking_io.hpp 契约）；StopToken 不能中断
@@ -118,7 +118,7 @@ TEST_CASE("EXEC-01 five-step shutdown drains admitted work with full evidence",
     REQUIRE(report.completion_wait_completed);
     REQUIRE_FALSE(report.completion_wait_timed_out);
     REQUIRE(report.executor_shutdown_completed);
-    REQUIRE(report.lifecycle_after == executor::ExecutorLifecycleState::Stopped);
+    REQUIRE(report.lifecycle_after == kairo::ExecutorLifecycleState::Stopped);
     REQUIRE(report.wait_timeout_count == 0);
     REQUIRE(report.fully_stopped());  // Completed + Stopped + wait_timeout_count==0
 
@@ -137,7 +137,7 @@ TEST_CASE("Owner rejects re-initialization before and after shutdown",
 
     (void)owner.shutdown();
 
-    // 关闭后同一 Executor 不可重建（initialize_ex 返回 AlreadyShutdown）。
+    // 关闭后同一 Executor 不可重建（initialize 返回 AlreadyShutdown）。
     REQUIRE_FALSE(owner.initialize());
 }
 
@@ -193,7 +193,7 @@ TEST_CASE("Blocking worker is registered, unblocked by request_stop, and joined"
 
     auto state = std::make_shared<FakeWorkerState>();
     auto worker = std::make_unique<FakeBlockingWorker>(state);
-    executor::BlockingWorkerSpec spec;
+    kairo::BlockingWorkerSpec spec;
     spec.name = "aki.fake_blocking";
     spec.config.thread_name = "aki-fake-blocking";  // thread_name 必填（executor.cpp 校验）。
     spec.worker = std::move(worker);
@@ -260,7 +260,7 @@ TEST_CASE("DOD-02 timeout: expired owner wait budget is recorded honestly",
 
     // 步骤 5 仍由 shutdown(true) 完成等待（库内上限内任务完成）。
     REQUIRE(report.executor_shutdown_completed);
-    REQUIRE(report.lifecycle_after == executor::ExecutorLifecycleState::Stopped);
+    REQUIRE(report.lifecycle_after == kairo::ExecutorLifecycleState::Stopped);
     REQUIRE(slow.get() == 7);
 }
 

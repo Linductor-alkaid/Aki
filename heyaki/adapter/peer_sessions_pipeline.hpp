@@ -21,8 +21,8 @@
 #include "device/device/device_types.hpp"
 #include "heyaki/session/runtime_node.hpp"
 
-#include <executor/executor.hpp>
-#include <executor/timer.hpp>
+#include <kairo/executor.hpp>
+#include <kairo/timer.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -178,7 +178,7 @@ inline void diff_peer_sessions(
 // 周期轮询管道（EXEC-04 timer；TimerHandle 由管道持有，EXEC-07）。
 class PeerSessionPipeline {
 public:
-    explicit PeerSessionPipeline(executor::Executor& executor,
+    explicit PeerSessionPipeline(kairo::Executor& executor,
         aki::heyaki::NodeSession& session, PeerSessionEvents events)
         : executor_(executor), session_(session),
           events_(std::move(events)) {}
@@ -197,7 +197,7 @@ public:
             return false;
         }
         const auto generation = ++generation_;
-        timer_ = executor_.submit_periodic_with_handle(
+        timer_ = executor_.submit_periodic(
             static_cast<std::int64_t>(period.count()),
             [this, generation] { poll(generation); });
         return timer_.valid();
@@ -207,7 +207,7 @@ public:
         std::lock_guard<std::mutex> guard(mutex_);
         if (timer_.valid()) {
             (void)timer_.cancel();
-            timer_ = executor::TimerHandle{};
+            timer_ = kairo::TimerHandle{};
         }
     }
 
@@ -231,12 +231,12 @@ private:
         }
     }
 
-    executor::Executor& executor_;
+    kairo::Executor& executor_;
     aki::heyaki::NodeSession& session_;
     PeerSessionEvents events_;
     mutable std::mutex mutex_;
     std::vector<NodeSession::PeerSessionView> previous_;
-    executor::TimerHandle timer_;
+    kairo::TimerHandle timer_;
     std::uint64_t generation_{0};
 };
 

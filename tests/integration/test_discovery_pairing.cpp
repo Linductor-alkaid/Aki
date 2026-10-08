@@ -50,7 +50,7 @@ TEST_CASE("DOD-02 six items along the periodic discovery path",
 
     // 正常完成：周期 tick 连续触发。
     std::atomic<int> ticks{0};
-    auto handle = owner.executor().submit_periodic_with_handle(
+    auto handle = owner.executor().submit_periodic(
         20, [&ticks] { ticks.fetch_add(1); });
     REQUIRE(handle.valid());
     REQUIRE(wait_until([&] { return ticks.load() >= 3; }, 2s));
@@ -59,7 +59,7 @@ TEST_CASE("DOD-02 six items along the periodic discovery path",
     // 执行中取消：在飞 tick 完成后不再有后续 tick（cancel 不抹除在飞回调）。
     std::atomic<bool> first_running{false};
     std::atomic<bool> first_done{false};
-    auto latched = owner.executor().submit_periodic_with_handle(50,
+    auto latched = owner.executor().submit_periodic(50,
         [&first_running, &first_done] {
             if (!first_done.exchange(true)) {
                 first_running.store(true);
@@ -68,7 +68,7 @@ TEST_CASE("DOD-02 six items along the periodic discovery path",
         });
     REQUIRE(wait_until([&] { return first_running.load(); }, 2s));
     REQUIRE(latched.cancel()
-        != executor::TimerOperationResult::NotFound);  // 取消可见（句柄在册）
+        != kairo::TimerOperationResult::NotFound);  // 取消可见（句柄在册）
     std::this_thread::sleep_for(150ms);  // 取消时第一 tick 仍在飞
     first_running.store(false);
     REQUIRE(wait_until([&] { return first_done.load(); }, 2s));  // 在飞完成
@@ -79,7 +79,7 @@ TEST_CASE("DOD-02 six items along the periodic discovery path",
     // 任务异常：tick 异常进入 executor failure 体系（EXEC-06 可见）。
     const auto failures_before =
         owner.executor().get_failure_status().task_exception_count;
-    auto throwing = owner.executor().submit_periodic_with_handle(
+    auto throwing = owner.executor().submit_periodic(
         20, [] { throw std::runtime_error("tick defect (dod02)"); });
     REQUIRE(wait_until([&] {
         return owner.executor().get_failure_status().task_exception_count
@@ -97,7 +97,7 @@ TEST_CASE("DOD-02 six items along the periodic discovery path",
     const auto shutdown_report = owner.shutdown([&] {
         (void)handle.cancel();
         (void)throwing.cancel();
-        auto late = owner.executor().submit_periodic_with_handle(20, [&ticks] {
+        auto late = owner.executor().submit_periodic(20, [&ticks] {
             ticks.fetch_add(1);
         });
         (void)late.cancel();
@@ -108,5 +108,5 @@ TEST_CASE("DOD-02 six items along the periodic discovery path",
     REQUIRE(ticks.load() == ticks_at_shutdown);  // 停止后零 tick
 }
 
-// DOD-02 六项沿新并发路径（EXEC-04 timer：submit_periodic_with_handle）。
+// DOD-02 六项沿新并发路径（EXEC-04 timer：submit_periodic）。
 // 双节点回环（发现/信任、presence/path）见同目录 *_loopback 二进制。

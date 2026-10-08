@@ -24,7 +24,7 @@
 
 #include "device/device/device_types.hpp"
 
-#include <executor/executor.hpp>
+#include <kairo/executor.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -75,7 +75,7 @@ public:
         RecoveryCheck is_recovered;
     };
 
-    explicit ReconnectCoordinator(executor::Executor& executor,
+    explicit ReconnectCoordinator(kairo::Executor& executor,
         ReconnectCoordinatorOptions options = {})
         : executor_(executor), options_(options) {}
 
@@ -113,7 +113,7 @@ public:
             loops_.erase(existing);
         }
         auto submission = executor_.submit_cancellable(
-            [this, key, hooks](executor::StopToken stop_token) {
+            [this, key, hooks](kairo::StopToken stop_token) {
                 run_loop(key, hooks.try_reconnect, hooks.is_recovered,
                     std::move(stop_token));
             });
@@ -180,12 +180,12 @@ public:
 
 private:
     struct LoopRecord {
-        executor::TaskHandle handle;
+        kairo::TaskHandle handle;
         std::future<void> future;
     };
 
     void run_loop(const std::string& key, const Attempt& try_reconnect,
-        const RecoveryCheck& is_recovered, executor::StopToken stop_token) {
+        const RecoveryCheck& is_recovered, kairo::StopToken stop_token) {
         const auto deadline =
             std::chrono::steady_clock::now() + options_.recovery_budget;
         while (!stop_token.stop_requested()) {
@@ -222,7 +222,7 @@ private:
         // 记录保留至 stop_all/start 就地消费（future 消费纪律，AGENTS 规则 3）。
     }
 
-    executor::Executor& executor_;
+    kairo::Executor& executor_;
     ReconnectCoordinatorOptions options_;
     mutable std::mutex mutex_;
     std::map<std::string, LoopRecord> loops_;

@@ -74,7 +74,7 @@ class ConversationManager {
 public:
     using Options = ConversationManagerOptions;
 
-    ConversationManager(executor::Executor& executor, AppStateOwner& state_owner,
+    ConversationManager(kairo::Executor& executor, AppStateOwner& state_owner,
         ConversationManagerOptions options = {})
         : options_(std::move(options)),
           state_owner_(state_owner),

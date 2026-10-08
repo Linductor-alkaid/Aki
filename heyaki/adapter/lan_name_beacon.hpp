@@ -4,8 +4,8 @@
 
 #include "heyaki/adapter/lan_name_protocol.hpp"
 
-#include <executor/executor.hpp>
-#include <executor/timer.hpp>
+#include <kairo/executor.hpp>
+#include <kairo/timer.hpp>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -31,7 +31,7 @@ class LanNameBeacon {
 public:
     using Sink = std::function<bool(SignedLanName)>;
 
-    LanNameBeacon(executor::Executor& executor,
+    LanNameBeacon(kairo::Executor& executor,
         ::heyaki::IdentityKeyPair identity, std::string name, Sink sink)
         : executor_(executor), identity_(std::move(identity)),
           name_(std::move(name)), sink_(std::move(sink)) {}
@@ -82,7 +82,7 @@ public:
         if (fcntl(socket_, F_SETFL, fcntl(socket_, F_GETFL, 0) | O_NONBLOCK)
             != 0) { close_locked(); return false; }
 #endif
-        timer_ = executor_.submit_periodic_with_handle(1000,
+        timer_ = executor_.submit_periodic(1000,
             [this] { tick(); });
         if (!timer_.valid()) { close_locked(); return false; }
         return true;
@@ -92,7 +92,7 @@ public:
         std::lock_guard guard(mutex_);
         if (timer_.valid()) {
             (void)timer_.cancel();
-            timer_ = executor::TimerHandle{};
+            timer_ = kairo::TimerHandle{};
         }
         close_locked();
     }
@@ -165,13 +165,13 @@ private:
 #endif
     }
 
-    executor::Executor& executor_;
+    kairo::Executor& executor_;
     ::heyaki::IdentityKeyPair identity_;
     std::string name_;
     Sink sink_;
     std::mutex mutex_;
     Socket socket_ = kInvalidSocket;
-    executor::TimerHandle timer_;
+    kairo::TimerHandle timer_;
 #ifdef _WIN32
     bool wsa_started_ = false;
 #endif

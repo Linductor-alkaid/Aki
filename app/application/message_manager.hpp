@@ -96,7 +96,7 @@ class MessageManager {
 public:
     using Options = MessageManagerOptions;
 
-    MessageManager(executor::Executor& executor, AppStateOwner& state_owner,
+    MessageManager(kairo::Executor& executor, AppStateOwner& state_owner,
         aki::heyaki::HeyakiAdapter& adapter, MessageManagerOptions options = {})
         : options_(std::move(options)),
           state_owner_(state_owner),

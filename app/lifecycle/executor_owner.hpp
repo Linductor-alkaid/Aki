@@ -1,7 +1,7 @@
 // Executor 生命周期 owner（设计第 8.2 节，EXEC-01/EXEC-07，AGENTS 规则 7/8）。
 //
 // Aki 进程内每个 executor 生命周期有且仅有一个 owner：本类以独立实例持有 pinned
-// executor 的 Executor facade（非单例，资源隔离），显式 initialize_ex，受控关闭。
+// executor 的 Executor facade（非单例，资源隔离），显式 initialize，受控关闭。
 // 依赖经构造参数或明确 context 传递；blocking worker 句柄由 owner 注册并持有。
 // 禁止其他组件隐藏 Executor 生命周期或私调 enable_monitoring 切换。
 //
@@ -11,10 +11,10 @@
 // 默认配置懒初始化，绕过 owner 纪律，调用方必须先 initialize()。
 #pragma once
 
-#include <executor/blocking_io.hpp>
-#include <executor/config.hpp>
-#include <executor/executor.hpp>
-#include <executor/types.hpp>
+#include <kairo/blocking_io.hpp>
+#include <kairo/config.hpp>
+#include <kairo/executor.hpp>
+#include <kairo/types.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -42,14 +42,14 @@ struct ExecutorShutdownReport {
     // 步骤 5：shutdown(true) 返回 Completed（非 worker 线程执行）。
     bool executor_shutdown_completed = false;
     // 关闭证据（EXEC-06）：快照生命周期 + 等待超时计数。
-    executor::ExecutorLifecycleState lifecycle_after = executor::ExecutorLifecycleState::Created;
+    kairo::ExecutorLifecycleState lifecycle_after = kairo::ExecutorLifecycleState::Created;
     std::uint64_t wait_timeout_count = 0;
 
     // 干净关闭：五步全部完成且无等待超时。预算耗尽时本值为 false（证据不伪造），
     // 但 shutdown 本身仍按上表字段如实记录。
     [[nodiscard]] bool fully_stopped() const noexcept {
         return producers_stopped && executor_shutdown_completed
-            && lifecycle_after == executor::ExecutorLifecycleState::Stopped
+            && lifecycle_after == kairo::ExecutorLifecycleState::Stopped
             && wait_timeout_count == 0;
     }
 };
@@ -58,8 +58,8 @@ struct ExecutorShutdownReport {
 // （同 app_state_owner.hpp 的 AppStateOwnerOptions 处理）。
 struct ExecutorOwnerOptions {
     // 透传 pinned executor 配置；enable_monitoring 默认开启（config.hpp），
-    // 随 initialize_ex 传入，运行期切换（如有）归 owner。
-    executor::ExecutorConfig executor_config{};
+    // 随 initialize 传入，运行期切换（如有）归 owner。
+    kairo::ExecutorConfig executor_config{};
     // 步骤 4 的 owner 等待预算：区别于库内 shutdown 的 300s 不可配内部上限，
     // 业务等待策略由 owner 显式预算（production-readiness：budget every wait）。
     std::chrono::milliseconds completion_wait_budget{3000};
@@ -87,12 +87,12 @@ public:
     }
 
     // 显式初始化（唯一初始化入口）。重复初始化或关闭后重建返回 false
-    // （pinned executor：关闭后 initialize_ex 返回 AlreadyShutdown，不可重建）。
+    // （pinned executor：关闭后 initialize 返回 AlreadyShutdown，不可重建）。
     [[nodiscard]] bool initialize() {
         if (initialized_ || shutdown_done_) {
             return false;
         }
-        const auto result = executor_.initialize_ex(options_.executor_config);
+        const auto result = executor_.initialize(options_.executor_config);
         initialized_ = result.ok;
         return initialized_;
     }
@@ -131,7 +131,7 @@ public:
         // 任务；blocking worker 已在步骤 3 join）。超时记录 WaitResult 作证据，
         // 不在此处静默转非等待路径。
         const auto wait =
-            executor_.wait_for_completion_ex(options_.completion_wait_budget);
+            executor_.wait_for_completion(options_.completion_wait_budget);
         report.completion_wait_completed = wait.completed;
         report.completion_wait_timed_out = wait.timed_out;
         report.completion_wait_budget = options_.completion_wait_budget;
@@ -139,7 +139,7 @@ public:
         // EXEC-01 步骤 5：非 worker 线程执行最终 shutdown(true)。返回 Completed
         // 才算关闭完成；RequestedFromWorker 表示从池 worker 内调用（禁止）。
         const auto result = executor_.shutdown(true);
-        report.executor_shutdown_completed = (result == executor::ShutdownResult::Completed);
+        report.executor_shutdown_completed = (result == kairo::ShutdownResult::Completed);
 
         // 关闭证据读取：状态记账（lifecycle、failure 计数）相对 shutdown 返回值
         // 异步收敛，owner 以短预算轮询至 Stopped 或预算耗尽；读不到 Stopped 时
@@ -150,7 +150,7 @@ public:
             const auto snapshot = executor_.get_snapshot();
             report.lifecycle_after = snapshot.lifecycle;
             report.wait_timeout_count = executor_.get_failure_status().wait_timeout_count;
-            if (snapshot.lifecycle == executor::ExecutorLifecycleState::Stopped
+            if (snapshot.lifecycle == kairo::ExecutorLifecycleState::Stopped
                 || std::chrono::steady_clock::now() >= evidence_deadline) {
                 break;
             }
@@ -165,7 +165,7 @@ public:
     // M1 不启用，M2 起按负载启用（设计第 8.2/8.3 节）：blocking worker 注册
     // （EXEC-04/EXEC-07）。句柄归 owner，关闭顺序中由 owner 统一
     // request_stop/stop；业务侧只经 spec.worker 轮询。
-    [[nodiscard]] bool start_blocking_worker(executor::BlockingWorkerSpec spec) {
+    [[nodiscard]] bool start_blocking_worker(kairo::BlockingWorkerSpec spec) {
         auto handle = executor_.start_worker(std::move(spec));
         if (!handle.started()) {
             return false;  // 启动 admission 失败对调用方可见（RULE-09）。
@@ -175,7 +175,7 @@ public:
     }
 
     // 前置条件：initialize() 已成功（见类注释的懒初始化禁令）。
-    [[nodiscard]] executor::Executor& executor() noexcept { return executor_; }
+    [[nodiscard]] kairo::Executor& executor() noexcept { return executor_; }
 
     [[nodiscard]] bool is_initialized() const noexcept { return initialized_; }
     [[nodiscard]] bool is_shutdown() const noexcept { return shutdown_done_; }
@@ -188,8 +188,8 @@ public:
 
 private:
     Options options_;
-    executor::Executor executor_;
-    std::vector<executor::WorkerHandle> blocking_workers_;
+    kairo::Executor executor_;
+    std::vector<kairo::WorkerHandle> blocking_workers_;
     bool initialized_ = false;
     bool shutdown_done_ = false;
     ExecutorShutdownReport last_report_{};

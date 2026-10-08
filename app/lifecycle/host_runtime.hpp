@@ -180,7 +180,7 @@ public:
 
     // 宿主 executor 访问（前置 assembled；DOD-02 沿宿主生命周期路径提交任务的
     // 测试面；executor 类型属 app 接线层公开面，同 executor_owner.hpp）。
-    [[nodiscard]] executor::Executor& executor();
+    [[nodiscard]] kairo::Executor& executor();
 
     // ---- M5-03 消费面/出站面装配访问器（组合根公开面；前置 assembled）----
     // 生命周期：全部指向 Impl 内成员（host 单例进程生命周期覆盖），调用方

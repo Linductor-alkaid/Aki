@@ -117,7 +117,7 @@ struct WorkerFixture {
 
     // 注册（EXEC-07 唯一入口）。thread_name 缺失即干净失败（不静默降级）。
     [[nodiscard]] bool register_worker() {
-        executor::BlockingWorkerSpec spec;
+        kairo::BlockingWorkerSpec spec;
         spec.name = "aki.db-worker";
         spec.config.thread_name = "aki-db-worker";
         spec.worker = std::move(runnable);
@@ -483,7 +483,7 @@ TEST_CASE("Drain budget anchors at the drain request, not worker start",
 TEST_CASE("Registration failure is a clean failure without silent degrade",
     "[unit][database_worker]") {
     WorkerFixture fx("reg-fail");
-    executor::BlockingWorkerSpec spec;
+    kairo::BlockingWorkerSpec spec;
     spec.name = "aki.db-worker";
     // spec.config.thread_name 故意缺失（库校验必填项）。
     spec.worker = std::move(fx.runnable);

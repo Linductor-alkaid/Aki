@@ -273,7 +273,7 @@ TEST_CASE("Disconnect recovery: reconnect loop restores the session (SCOPE-11)",
     // 断连回调先 submit_update 后自增计数（test_peer_sessions_loopback 同
     // 族）：事件达标时更新未经 drain 应用，单次快照必读旧值——谓词内
     // drain+load 按截止时间等 Offline 生效。
-    executor::comm::Snapshot<aki::app::AppState> snapshot;
+    kairo::comm::Snapshot<aki::app::AppState> snapshot;
     REQUIRE(wait_until([&] {
         state_owner.drain();
         if (!state_owner.try_load_snapshot(snapshot)) {

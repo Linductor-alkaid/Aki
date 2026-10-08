@@ -35,10 +35,10 @@
 #include "persistence/storage/sha256.hpp"
 #include "transfer/storage/transfer_io.hpp"
 
-#include <executor/blocking_io.hpp>
-#include <executor/comm/channel.hpp>
-#include <executor/comm/types.hpp>
-#include <executor/stop_token.hpp>
+#include <kairo/blocking_io.hpp>
+#include <kairo/comm/channel.hpp>
+#include <kairo/comm/types.hpp>
+#include <kairo/stop_token.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -87,14 +87,14 @@ public:
             TransferIoWorkerOptions worker_options)
             : store(std::move(worker_store)),
               options(worker_options),
-              channel(executor::comm::ChannelOptions{
+              channel(kairo::comm::ChannelOptions{
                   .capacity = worker_options.channel_capacity,
                   .enable_stats = true,
                   .name = "aki.transfer-io.jobs"}) {}
 
         std::shared_ptr<const FileStore> store;
         TransferIoWorkerOptions options;
-        executor::comm::MpscChannel<Job> channel;
+        kairo::comm::MpscChannel<Job> channel;
         std::function<void(const aki::transfer::TransferIoEvent&)> sink;
         std::mutex sink_mutex;
         std::atomic<bool> stop_requested{false};
@@ -186,7 +186,7 @@ private:
 
 // IBlockingIoWorker 适配器：单一 worker 串行消费作业通道 + 会话状态私有
 //（EXEC-04；对象所有权归 executor facade，宿主仅经 TransferIoControl 交互）。
-class TransferIoRunnable final : public executor::IBlockingIoWorker {
+class TransferIoRunnable final : public kairo::IBlockingIoWorker {
 public:
     explicit TransferIoRunnable(std::shared_ptr<TransferIoControl::Impl> impl)
         : impl_(std::move(impl)) {}
@@ -197,7 +197,7 @@ public:
     // 消费循环（DatabaseWorker 同款轮询环）：作业间检查停止请求/StopToken；
     // 退出路径清理存量会话（.part 幂等删除）并以 cancelled 事件结算未执行
     // 作业（回调不悬挂，RULE-09）。
-    void run(executor::StopToken stop_token) override {
+    void run(kairo::StopToken stop_token) override {
         for (;;) {
             if (impl_->stop_requested.load(std::memory_order_acquire)) {
                 drain_and_cancel();

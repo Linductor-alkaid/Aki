@@ -38,7 +38,7 @@
 #include "transfer/storage/transfer_io.hpp"
 #include "transfer/transfer/transfer_types.hpp"
 
-#include <executor/executor.hpp>
+#include <kairo/executor.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -152,7 +152,7 @@ class TransferManager {
 public:
     using Options = TransferManagerOptions;
 
-    TransferManager(executor::Executor& executor, AppStateOwner& state_owner,
+    TransferManager(kairo::Executor& executor, AppStateOwner& state_owner,
         aki::heyaki::HeyakiAdapter& adapter, TransferManagerOptions options = {})
         : options_(std::move(options)),
           state_owner_(state_owner),

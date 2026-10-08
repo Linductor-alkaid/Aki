@@ -11,7 +11,7 @@
 //   - handler_ 与收件箱消费：仅排空任务上下文（单飞保证同一 Manager 时刻至多
 //     一个排空任务在飞）。
 //   - pending_futures_ 句柄槽由 futures_mutex_ 保护：只裁决排空任务 future 的
-//     所有权移交（入队者生产、flush 消费），不是对 executor::comm 的替代——
+//     所有权移交（入队者生产、flush 消费），不是对 kairo::comm 的替代——
 //     跨上下文数据通道只有 MpscChannel。
 //   - 排队软超时（task_timeout_ms）击杀、或提交即拒（max_in_flight_tasks 耗尽
 //     → CapacityExhaustedException 即时就绪）的排空任务永远不会运行，也就不会
@@ -21,10 +21,10 @@
 //     task_exception_count 同时可见（AGENTS 规则 9，事实源是 Executor 设施）。
 #pragma once
 
-#include <executor/comm/channel.hpp>
-#include <executor/comm/types.hpp>
-#include <executor/executor.hpp>
-#include <executor/types.hpp>
+#include <kairo/comm/channel.hpp>
+#include <kairo/comm/types.hpp>
+#include <kairo/executor.hpp>
+#include <kairo/types.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -114,11 +114,11 @@ class ManagerPump {
 public:
     using Handler = std::function<bool(Work&)>;
 
-    ManagerPump(executor::Executor& executor, ManagerPumpOptions options,
+    ManagerPump(kairo::Executor& executor, ManagerPumpOptions options,
         Handler handler)
         : executor_(executor),
           options_(std::move(options)),
-          inbox_(executor::comm::ChannelOptions{.capacity = options_.inbox_capacity,
+          inbox_(kairo::comm::ChannelOptions{.capacity = options_.inbox_capacity,
               .enable_stats = true,
               .name = options_.name + ".inbox"}),
           handler_(std::move(handler)) {}
@@ -173,7 +173,7 @@ public:
         return stats_.snapshot();
     }
 
-    [[nodiscard]] executor::comm::CommStats inbox_stats() const noexcept {
+    [[nodiscard]] kairo::comm::CommStats inbox_stats() const noexcept {
         return inbox_.stats();
     }
 
@@ -208,9 +208,9 @@ private:
     void consume_drain_future(std::future<void> future) {
         try {
             future.get();
-        } catch (const executor::CapacityExhaustedException&) {
+        } catch (const kairo::CapacityExhaustedException&) {
             stats_.add_submit_rejections();  // max_in_flight_tasks 准入拒绝。
-        } catch (const executor::TimedOutException&) {
+        } catch (const kairo::TimedOutException&) {
             stats_.add_drain_timeouts();
             stats_.add_drain_failures();
         } catch (...) {
@@ -330,9 +330,9 @@ private:
     }
 
     // 成员声明顺序即初始化顺序（GCC -Werror=reorder）：inbox_ 先于 handler_。
-    executor::Executor& executor_;
+    kairo::Executor& executor_;
     ManagerPumpOptions options_;
-    executor::comm::MpscChannel<Work> inbox_;
+    kairo::comm::MpscChannel<Work> inbox_;
     Handler handler_;
     // 单飞标志与代号合一：0 = 无在飞，非 0 = 在飞排空的代号。CAS 仲裁唯一
     // 排空任务；排队软超时/提交即拒的任务由消费其 future 的一方复位（自愈）。

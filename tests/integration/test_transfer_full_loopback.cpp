@@ -288,7 +288,7 @@ TEST_CASE("Two-node full transfer chain: image message, archive, control, "
         transfer_options};
     aki::app::RouterSink router{devices, conversations, messages, transfers};
     adapter.set_sink(&router);
-    executor::BlockingWorkerSpec db_spec;
+    kairo::BlockingWorkerSpec db_spec;
     db_spec.name = "aki.test-db";
     db_spec.config.thread_name = "aki-test-db";
     db_spec.worker = std::make_unique<aki::persistence::DatabaseWorkerRunnable>(db);
@@ -299,7 +299,7 @@ TEST_CASE("Two-node full transfer chain: image message, archive, control, "
     state_owner.drain();
 
     auto io_runnable = std::make_unique<TransferIoRunnable>(io->impl());
-    executor::BlockingWorkerSpec io_spec;
+    kairo::BlockingWorkerSpec io_spec;
     io_spec.name = "aki.transfer-io";
     io_spec.config.thread_name = "aki-transfer-io";
     io_spec.worker = std::move(io_runnable);
@@ -340,7 +340,7 @@ TEST_CASE("Two-node full transfer chain: image message, archive, control, "
         source) == aki::app::ImageSendFlowResult::Submitted);
     REQUIRE(wait_until([&] {
         state_owner.drain();
-        executor::comm::Snapshot<aki::app::AppState> snapshot;
+        kairo::comm::Snapshot<aki::app::AppState> snapshot;
         if (!state_owner.try_load_snapshot(snapshot)) {
             return false;
         }
@@ -382,7 +382,7 @@ TEST_CASE("Two-node full transfer chain: image message, archive, control, "
     //    （发送侧 complete 作业组 .part 供源回写；Aki 侧归档完成后 committed
     //    事件由 wire 经 Adapter/RouterSink 分发，不注入伪造终态）。
     REQUIRE(wait_until([&] { return transfers.flush(200ms); }, 5s));
-    executor::comm::Snapshot<aki::app::AppState> terminal_snapshot;
+    kairo::comm::Snapshot<aki::app::AppState> terminal_snapshot;
     const bool terminal_seen = wait_until([&] {
         (void)transfers.flush(100ms);
         state_owner.drain();
@@ -428,7 +428,7 @@ TEST_CASE("Two-node full transfer chain: image message, archive, control, "
     adapter.set_sink(nullptr);
     (void)domain_a.owner.shutdown();
     (void)domain_b.owner.shutdown();
-    executor::comm::Snapshot<aki::app::AppState> final_snapshot;
+    kairo::comm::Snapshot<aki::app::AppState> final_snapshot;
     REQUIRE(state_owner.try_load_snapshot(final_snapshot));
     // 终态行 + 消息行（含 stored_sha256）在关闭后的快照中保持。
     bool row_terminal = false;

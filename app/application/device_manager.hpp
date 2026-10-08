@@ -131,7 +131,7 @@ using DeviceManagerWork = std::variant<DeviceDiscoveredWork,
 
 class DeviceManager {
 public:
-    DeviceManager(executor::Executor& executor, AppStateOwner& state_owner,
+    DeviceManager(kairo::Executor& executor, AppStateOwner& state_owner,
         aki::heyaki::HeyakiAdapter& adapter, ManagerPumpOptions pump_options = {})
         : state_owner_(state_owner),
           adapter_(adapter),
@@ -248,7 +248,7 @@ private:
         }
         // Discovery is a whole-row upsert; keep local-only remarks and a
         // previously verified name when the transport advertises no name.
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         if (state_owner_.try_load_snapshot(snapshot)) {
             for (const auto& existing : snapshot.value.devices.devices) {
                 if (existing.id == work.device.identity.id) {
@@ -357,7 +357,7 @@ private:
     bool handle(BeginPairingWork& work) {
         if (work.device.empty() || !adapter_.begin_pairing(work.device))
             return false;
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         if (!state_owner_.try_load_snapshot(snapshot))
             return false;
         for (const auto& existing : snapshot.value.devices.devices) {
@@ -371,7 +371,7 @@ private:
 
     bool handle(PairingReadyWork& work) {
         if (work.device.empty()) return false;
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         int attempts = 0;
         while (!state_owner_.try_load_snapshot(snapshot) && attempts < 64) {
             ++attempts;
@@ -433,7 +433,7 @@ private:
         if (device.empty()) {
             return false;
         }
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         int attempts = 0;
         while (!state_owner_.try_load_snapshot(snapshot) && attempts < 64) {
             ++attempts;
@@ -479,7 +479,7 @@ private:
         // wire 面撤销全部有效 grant（无 grant 时 false 可见）。本机持有
         // 对端 grant 时 Trusted→Revoked；仅本机签发 grant 时清除
         // inbound_trust，不伪造 Unknown/Pending→Revoked 边。
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         if (!state_owner_.try_load_snapshot(snapshot)) return false;
         const aki::device::DeviceIdentity* existing = nullptr;
         for (const auto& device : snapshot.value.devices.devices) {
@@ -515,7 +515,7 @@ private:
         }
         const bool cleared = state_owner_.submit_update(
             SetPairingFailure{work.device, false});
-        executor::comm::Snapshot<AppState> snapshot;
+        kairo::comm::Snapshot<AppState> snapshot;
         if (state_owner_.try_load_snapshot(snapshot)) {
             for (const auto& existing : snapshot.value.devices.devices)
                 if (existing.id == work.device
