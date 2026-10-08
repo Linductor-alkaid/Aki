@@ -482,7 +482,10 @@ TEST_CASE("HostRuntime lifecycle carries DOD-02 six paths and the 8.3 hook order
                 std::chrono::steady_clock::now() - submit_started);
         REQUIRE(pw_failure_visible);
         REQUIRE_FALSE(pw_observed_error.empty());
-        REQUIRE(pw_elapsed < 2s);
+        // 语义边界：异步失败「即时可见」（远低于 transport 12s 上界），
+        // 不是精确到 2s——Windows runner 实测 connect 拒绝往返 ~2.03s
+        //（PR #74 CI run 37732041555），预算放宽到 5s 排除调度抖动。
+        REQUIRE(pw_elapsed < 5s);
         // 失败不落记录：profile 无任何 enrollment（重开只读视角验证）。
         {
             auto profile = aki::heyaki::LocalProfile::open(data_root.string());

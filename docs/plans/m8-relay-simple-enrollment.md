@@ -173,6 +173,17 @@ bootstrap token、证书文件退出主视图（降级为高级路径全程保�
     本注入用例的悬置 listener 为 POSIX 实现，**Windows 编译面跳过**
     （MSVC 无 arpa/inet.h；CI Windows 档不含本用例）——Windows 等价
     （Winsock 悬置 listener）为补跑项，负责人 Linductor。
+- CI 时序处置（2026-10-08 第二轮 run 37732041555）：①Windows 档
+  `pw_elapsed < 2s` 断言余量不足（实测 2027ms），放宽至 `< 5s`（语义
+  边界为「远低于 transport 12s 上界」，非精确 2s）；②tsan 档密码
+  交换用例失败——上游 `PasswordSecurityPolicy` 将 Argon2id 参数下限
+  钉死（≥2 ops / ≥64MiB，`validate_security_policy` 强制），TSAN 放大
+  下双端派生/校验超注册交换接收超时（服务端 `enroll_ok=1` 而客户端
+  `wss_receive_timeout`）——**密码交换 4 用例在 TSAN 构建下编译期
+  跳过**（`__SANITIZE_THREAD__` 守卫），覆盖由 debug/asan/ubsan 与
+  Windows debug 档承担；注入用例（不触达密码交换）TSAN 下保留。
+  tsan 档的密码交换覆盖为已登记限制，补跑需上游放宽策略下限或提供
+  测试注入面。
 - 残余未验证（如实登记）：pin 回写失败分支（读回缺失/UPSERT 失败）仅
   静态走查；GUI 目视复核未执行（补跑条件见 M8-04 工作项注）。
 
