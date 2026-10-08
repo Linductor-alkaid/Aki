@@ -277,7 +277,7 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
 
     // ---- 中继服务器（M7/DEC-028；M8-01 决策 11 阶段 1 收拢）：注册/移除
     // 与运行态。未注册主视图 = 地址 + 注册按钮，租户/令牌/证书收拢进高级
-    // 折叠区（默认收起，必填校验失败自动展开）。enrollment 变更重启生效
+    // 折叠区（默认收起，必填校验失败自动展开）。enrollment 变更热生效
     // （HEY-20261006-001——文案如实披露）；连接事实经 RelayStatus 状态行
     // 展示（AppState 易失字段 → 快照派生）。URL/CA 为技术内容用 mono
     // （§2.1）；token 走 secureInput（DEC-018 凭据纪律）。----
@@ -301,7 +301,7 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
             status_text = tr("connected") + std::string(": ")
                 + relay->relay_url;
         } else {
-            status_text = tr("Enrolled. Restart Aki to connect.")
+            status_text = tr("Enrolled.")
                 + std::string(" (")
                 + relay_connection_label(relay->connection_state_name)
                 + std::string(")");
@@ -526,8 +526,7 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
             }
             components::text(ui, "aki.settings.relay.hint")
                 .text(tr("Devices discover each other through the relay"
-                         " across networks.\nEnrollment changes take effect"
-                         " after restart."))
+                         " across networks."))
                 .position(pad_x, row_y)
                 .fontSize(metrics.typography.caption)
                 .wrap(true)
@@ -546,9 +545,7 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
                 .onClick([&model] {
                     std::string error;
                     if (model.actions->remove_relay(error)) {
-                        set_feedback(model,
-                            tr("Relay enrollment removed. Restart Aki to"
-                               " disconnect."));
+                        set_feedback(model, tr("Relay enrollment removed."));
                     } else {
                         set_feedback(model,
                             error.empty()
@@ -559,8 +556,7 @@ void composeSettingsPage(eui::Ui& ui, const ThemeColorTokens& tokens,
             row_y += metrics.control.field + metrics.spacing.tiny;
             components::text(ui, "aki.settings.relay.removed.hint")
                 .text(tr("Devices discover each other through the relay"
-                         " across networks.\nEnrollment changes take effect"
-                         " after restart."))
+                         " across networks."))
                 .position(pad_x, row_y)
                 .fontSize(metrics.typography.caption)
                 .wrap(true)
