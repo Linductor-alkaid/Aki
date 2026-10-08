@@ -103,6 +103,13 @@ bootstrap token、证书文件退出主视图（降级为高级路径全程保�
   (https://github.com/Linductor-alkaid/Aki/actions/runs/37719878676) 七项
   全绿，Squash 合入 c92bb8a；本地 tsan 全量 48/48 零报告。）
 
+- [ ] `M8-08` 注册/移除热生效（HEY-20261006-001 收口，2026-10-08）：
+  `NodeSession::apply_relay_enrollment_now`（按 profile 首条有效记录镜像
+  上游字段映射热更新；无记录传 nullopt 断开）+ enroll 任务成功后热连接 +
+  remove 后热断开（失败经 RelayStatus.last_error 可见）+ 设置页全部
+  「重启生效」文案废止（TURN 静态配置除外）+ 决策 3 修订。
+  （实现完成，2026-10-08；测试与回归见验证记录。）
+
 ## 风险与阻塞
 
 - **阶段 2/3 上游前置已落地**（2026-10-08 pin 1b0447b）：剩余风险从
@@ -128,6 +135,36 @@ bootstrap token、证书文件退出主视图（降级为高级路径全程保�
   明确可观测。
 
 ## 验证记录
+
+### 2026-10-08：M8-08 注册/移除热生效（HEY-20261006-001 收口）
+
+- 环境：Ubuntu 24.04 / GCC 13.3.0 / CMake 3.28.3 / debug + tsan 预设；
+  heyaki 1b0447b。
+- 实现：`NodeSession::apply_relay_enrollment_now`（+ profile_ 成员与
+  构造/移动传递；字段映射镜像上游 load_relay_config_from_profile，有
+  pin 时 tls_verify_peer=false，无有效记录传 nullopt）+ HostRuntime
+  enroll 任务成功后热连接 / remove 后热断开（失败进
+  RelayStatus.last_error，操作本身仍成功）+ 决策 3 修订 + 文案废止
+  （"Enrolled."/"Relay enrollment removed."/hint 去 restart 句）。
+- 测试（Independent-Verification-Agent，**token 模式——tsan 档保留
+  覆盖**）：password e2e 新增 3 用例/116 断言——热连接（同会话 apply →
+  ready ~10ms，服务器 login_ok/active_sessions 佐证；同配置二次 apply
+  no-op 不拆重建）、热断开（撤销 → apply → disabled 亚毫秒，上游
+  清空语义 url/tenant/last_error/ICE 计数归零 + 服务器会话归零；关闭后
+  apply 以 node_not_running 可见拒绝——IVA 核实上游 shutdown 尾部
+  impl_.reset() 后的确定性拒绝语义，任务描述的「关闭竞争 no-op」仅限
+  在途竞态窗，已按实际语义断言）、错误可见（坏记录热更新 degraded +
+  wss_connection_failed，可恢复可替换，空记录 nullopt 安全降级）；
+  test_host_relay_config 增进程内 relay fixture（+310 行）——Host 级
+  全闭环：enroll → 装配期 NodeSession 热连接（SetRelayStatus + sweep
+  收敛 ready）→ remove → 热断开 + revoked 持久化 + 服务器归零
+  （36→52 断言）。tsan 档 4 用例/152 断言实测通过零报告。
+- 全量：`ctest --preset debug` **49/49**；password e2e 二进制 9 用例/
+  259 断言复跑通过。
+- 残余未验证（如实登记）：asan/ubsan/Windows 档归本 PR CI 门禁；
+  host 层 hot-apply/hot-disconnect 失败分支仅 profile 读失败或 node
+  已停时可达（健康态公开 API 不可达），未注入；UI 文案变更经 diff
+  核对与全量 ui 测试回归，无 GUI 自动化断言。
 
 ### 2026-10-08：M8-05 relay 下发 TURN 的消费与可观测（阶段 3）
 

@@ -241,12 +241,21 @@ HEY-20261002-002 Resolved；已有第三方 UBSAN 对齐限制和 Heyaki #15 保
 
 ## HEY-20261006-001：Node 运行期不可启用或更新 relay enrollment
 
-- **状态**：上游能力已落地（[Heyaki #19](https://github.com/Linductor-alkaid/heyaki/issues/19)
-  closed 2026-10-07；`Node::update_relay_config(std::optional<RelayNodeConfig>)`
-  公开 API，提交 82147d5），随 Aki pin 1b0447b 进入构建图。Aki 接入
-  （HostRuntime 热生效 + 注册/移除/失败/恢复测试 + DEC-028 决策 3 修订）
-  立为独立工作项；完成前本条保持未关闭。
-  关联 [DEC-028](../decisions/DEC-028-relay-cross-subnet.md) 决策 3。
+- **状态**：**Resolved（2026-10-08，Aki 接入完成）**。上游能力落地见
+  [Heyaki #19](https://github.com/Linductor-alkaid/heyaki/issues/19)（closed
+  2026-10-07；`Node::update_relay_config(std::optional<RelayNodeConfig>)`，
+  提交 82147d5）。Aki 接入 = M8-08
+  （[DEC-028](../decisions/DEC-028-relay-cross-subnet.md) 决策 3 修订）：
+  `NodeSession::apply_relay_enrollment_now`（字段映射镜像上游
+  load_relay_config_from_profile；无有效记录传 nullopt 断开，已认证会话
+  直连传输保留）+ enroll 任务成功后热连接 + remove 后热断开（失败经
+  RelayStatus.last_error 可见）+ 设置页「重启生效」文案废止（TURN 静态
+  配置除外）。验证（Independent-Verification-Agent，token 模式——tsan
+  保留覆盖）：同会话热连接 ready 收敛 ~10ms、热断开亚毫秒且服务器侧
+  active_sessions 归零、坏记录热更新 degraded + last_error 可见且可恢复
+  可替换、同配置二次 apply no-op、关闭后 apply 以 node_not_running 可见
+  拒绝、Host 级进程内 relay 全闭环（注册→热连接→移除→热断开）；
+  49/49 全量回归。证据见 M8 里程碑文档 M8-08 验证记录。
 - **可复现证据**：relay enrollment 只在 `Node::create` 的
   `initialize_relay()`（`third_party/heyaki/src/client/node.cpp:1011/1102`）
   读取 profile 首条 `auto_connect && !revoked` 记录；`include/heyaki/node.hpp`
